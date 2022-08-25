@@ -28,6 +28,8 @@ from qgis.PyQt import uic
 from qgis.PyQt import QtWidgets
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
+
+
 FORM_CLASS, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), 'TPU_dialog_base.ui'))
 
@@ -42,3 +44,13 @@ class tpuDialog(QtWidgets.QDialog, FORM_CLASS):
         # http://qt-project.org/doc/qt-4.8/designer-using-a-ui-file.html
         # #widgets-and-dialogs-with-auto-connect
         self.setupUi(self)
+        self.gtfs_insert_button.clicked.connect(self.gtfsClicked)
+        self.data_insert_button.clicked.connect(self.dataClicked)
+
+    def gtfsClicked(self):
+        gtfs_path = self.gtfs_widget.filePath()
+        print(gtfs_path)
+
+    def dataClicked(self):
+        data_path = self.data_widget.filePath()
+        print(data_path)
