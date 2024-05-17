@@ -29,3 +29,4 @@ congonhas = processing.run(
 )['OUTPUT']
 
 print(congonhas)
+print("ok")

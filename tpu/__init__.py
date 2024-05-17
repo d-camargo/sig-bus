@@ -22,7 +22,8 @@
  ***************************************************************************/
  This script initializes the plugin, making it known to QGIS.
 """
-
+import os
+import sys
 
 # noinspection PyPep8Naming
 def classFactory(iface):  # pylint: disable=invalid-name
@@ -32,5 +33,5 @@ def classFactory(iface):  # pylint: disable=invalid-name
     :type iface: QgsInterface
     """
     #
-    from .TPU import tpu
-    return tpu(iface)
+    from .TPU import TPU
+    return TPU(iface)

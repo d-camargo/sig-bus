@@ -24,15 +24,22 @@
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
+from qgis._core import QgsProject, QgsVectorLayer
+from qgis._gui import QgsMapCanvas
+from qgis.utils import active_plugins
+from qgis.core import Qgis
+import pandas as pd
+import re
 
 # Initialize Qt resources from file resources.py
 from .resources import *
 # Import the code for the dialog
 from .TPU_dialog import tpuDialog
+
 import os.path
 
 
-class tpu:
+class TPU:
     """QGIS Plugin Implementation."""
 
     def __init__(self, iface):
@@ -66,6 +73,7 @@ class tpu:
         # Check if plugin was started the first time in current QGIS session
         # Must be set in initGui() to survive plugin reloads
         self.first_start = None
+
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -179,15 +187,26 @@ class tpu:
                 action)
             self.iface.removeToolBarIcon(action)
 
-
     def run(self):
         """Run method that performs all the real work"""
-
+        listplugins = [active_plugins]
+        search_gtfs = 'GTFS_Loader'
+        find = 'no'
+        for i in listplugins:
+            if search_gtfs in i:
+                find = 'yes'
+                break
+        if find=='yes':
+            pass
+        else:
+            self.iface.messageBar().pushMessage("Você deve instalar o GTFS Loader", level=Qgis.Critical)
         # Create the dialog with elements (after translation) and keep reference
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start == True:
             self.first_start = False
             self.dlg = tpuDialog()
+            self.dlg.gtfs_widget.setFilter("ZipeFile (*.zip)")
+            self.dlg.data_widget.setFilter("CSV (*.csv)")
 
         # show the dialog
         self.dlg.show()
@@ -196,6 +215,35 @@ class tpu:
         # See if OK was pressed
         if result:
 
+            def search(lista, valor):
+                return [(lista.index(x)) for x in lista if valor in x]
+
+            registry = QgsProject.instance()
+            mapcanvas = QgsMapCanvas()
+            names = [layer.name() for layer in QgsProject.instance().mapLayers().values()]
+            layer_path = [layer.source() for layer in registry.mapLayers().values()]
+            demanda_path = layer_path[search(names, 'dados_demanda')[0]]
+            route_path = layer_path[search(names, 'route')[0]]
+            pontos = QgsVectorLayer(demanda_path,'dados_demanda','ogr')
+            linhas = QgsVectorLayer(route_path,'linhas','ogr')
+            for feature in pontos.getFeatures() == 1:
+                exp = ' "LINHA"= {0} AND "SUBLINHA"={1} AND "PC"={2}'.format(feature["LINHA"], feature["SUBLINHA"],
+                                                                             feature["PC"])
+                linha_id = feature["LINHA"]+' '+0+feature["SUBLINHA"]
+                exp2 = ' "route_id"={0} '
+                pontos.selectByExpression(exp)
+                linhas.selectByExpression()
+
+
+            '''
+            demanda_path = re.findall('file:///(.*)\?', csv_path)[0]
+            df = pd.read_csv(demanda_path, delimiter=';', encoding='Windows-1252')
+
+            df.loc[df['PC'] == 1, 'I/D'] = 'I'
+            df.fillna('V', inplace=True)
+            df['indet'] = df['LINHA'].map(str) + '-' + '0' + df['SUBLINHA'].map(str) + df['I/D'].map(str)
+            print(df.loc[df['LINHA'] == '1505'])'''
             # Do something useful here - delete the line containing pass and
             # substitute with your code.
             pass
+

@@ -23,12 +23,30 @@
 """
 
 import os
+import subprocess
+import shutil
+from importlib import reload
+from zipfile import ZipFile
+import zipfile
+import pyplugin_installer
+import platform
+import sys
+import tempfile
+from qgis.PyQt import uic, QtWidgets
+from qgis._core import QgsProject, QgsVectorLayer, QgsFields, QgsField, QgsCoordinateReferenceSystem, \
+    QgsVectorFileWriter, QgsWkbTypes, QgsCoordinateTransformContext, QgsApplication
+from qgis.utils import plugins, iface
+from qgis.core import Qgis, QgsMessageLog, QgsGeometry
+from qgis.PyQt.QtCore import QVariant
+from qgis.gui import QgsMessageBar
 
-from qgis.PyQt import uic
-from qgis.PyQt import QtWidgets
+
+#from GTFS-GO-master.gtfs_go_dialog import GTFSGoDialog
+
+reload(os)
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
-
+TEMP_DIR = os.path.join(tempfile.gettempdir(), 'TPU')
 
 FORM_CLASS, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), 'TPU_dialog_base.ui'))
@@ -38,19 +56,153 @@ class tpuDialog(QtWidgets.QDialog, FORM_CLASS):
     def __init__(self, parent=None):
         """Constructor."""
         super(tpuDialog, self).__init__(parent)
-        # Set up the user interface from Designer through FORM_CLASS.
-        # After self.setupUi() you can access any designer object by doing
-        # self.<objectname>, and you can use autoconnect slots - see
-        # http://qt-project.org/doc/qt-4.8/designer-using-a-ui-file.html
-        # #widgets-and-dialogs-with-auto-connect
         self.setupUi(self)
         self.gtfs_insert_button.clicked.connect(self.gtfsClicked)
         self.data_insert_button.clicked.connect(self.dataClicked)
+        self.extrapackages.clicked.connect(self.installGTFS)
+        self.installOsm.clicked.connect(self.installOsm2gmns)
+        self.button_gtfsgo.clicked.connect(self.gtfsgo_func)
+        #Mudança de camada
+        layer = self.mMapLayerComboBox.currentLayer()
+        self.mMapLayerComboBox.layerChanged.connect(self.map_changed)
+        self.mFieldComboBox.fieldChanged.connect(self.field_select)
+        self.mFeatureListComboBox.currentFeatureChanged.connect(self.field_select)
+        #self.mFeatureListComboBox.setSourceLayer(self.mMapLayerComboBox.currentLayer())
+
+        #self.mFeatureListComboBox.currentIndexChanged.connect(self.feature_select)
+        #self.mFieldComboBox.indexChanged.connect(self.field_select)
+
+    def field_select(self):
+        #field = self.mFieldComboBox.fields()
+        field = self.mFieldComboBox.currentField()
+        self.mFieldComboBox.setField(field)
+        self.mFeatureListComboBox.setDisplayExpression(field)
+        #https://gis.stackexchange.com/questions/409517/database-form-as-qgis-plugin-with-pyqgis-and-qtdesigner
+
+
+    def map_changed(self):
+        layer = self.mMapLayerComboBox.currentLayer()
+        self.mFieldComboBox.setLayer(layer)
+        field = self.mFieldComboBox.currentField()
+        self.mFeatureListComboBox.setSourceLayer(layer)
+
+
 
     def gtfsClicked(self):
+        self.iface = iface
         gtfs_path = self.gtfs_widget.filePath()
+        #pf = os.path.normpath(gtfs_path)
+        ph = os.path.dirname(gtfs_path)
+        print('antes', os.getcwd())
+        os.chdir(ph)
+        print('depois', os.getcwd())
+        with ZipFile(gtfs_path) as baba:
+            print(baba.namelist())
+            listfileszip = baba.namelist()
+            s = 'calendar_dates.txt'
+
+            for i in listfileszip:
+                if s in i:
+                    print(listfileszip.index(s))
+                    baba.extractall()
+                    #shutil.copyfile('calendar_dates.txt', 'calendar.txt')
+                    with ZipFile('gtfs_corrigido.zip', 'w', zipfile.ZIP_DEFLATED) as z:
+                        for i in listfileszip:
+                            if i == 'calendar_dates.txt':
+                                os.rename(s, 'calendar.txt')
+                                z.write('calendar.txt')
+                                os.remove('calendar.txt')
+                                self.iface.messageBar().pushMessage("Info",
+                                                                    "O GTFS foi corrigido. Utilize o arquivo 'gtfs_corrigido.zip' ",
+                                                                    level=Qgis.Info, duration=10)
+                            else:
+                                y = listfileszip.index(i)
+                                z.write(listfileszip[y])
+                                os.remove(listfileszip[y])
+                        z.close()
+                        print(z.namelist())
+                else:
+                    pass
         print(gtfs_path)
 
     def dataClicked(self):
         data_path = self.data_widget.filePath()
-        print(data_path)
+        ph = os.path.dirname(data_path)
+        print('antes', os.getcwd())
+        os.chdir(ph)
+        print('depois', os.getcwd())
+        #Create GPKG file
+        out_layer = 'sigt.gpkg'
+        schema = QgsFields()
+        schema.append(QgsField('id', QVariant.Int))
+
+        crs = QgsCoordinateReferenceSystem('epsg:31983')
+        options = QgsVectorFileWriter.SaveVectorOptions()
+        options.driverName = "GPKG"
+        options.fileEncoding = 'windows-1252'
+
+        fw = QgsVectorFileWriter.create(
+            fileName=out_layer,
+            fields=schema,
+            geometryType=QgsWkbTypes.Point,
+            srs=crs,
+            transformContext=QgsCoordinateTransformContext(),
+            options=options)
+        del fw
+        lyr = QgsVectorLayer("sigt.gpkg", 'dados_demanda', 'ogr')
+        #QgsProject.instance().addMapLayer(lyr)
+
+        #Load CSV file
+        enc = 'windows-1252'
+        crs1 = 'EPSG:31983'
+        uri = "file:///"+data_path+"?encoding={}&type=csv&delimiter={}&xField={}&yField={}&geomType=point&crs={}&spatialIndex=yes".format(enc,";", "X", "Y",crs1)
+        opt = QgsVectorFileWriter.SaveVectorOptions()
+        opt.EditionCapability = QgsVectorFileWriter.CanAddNewLayer
+        opt.layerName = "dados_demanda"
+        opt.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+        vlayer = QgsVectorLayer(uri, "dados_demanda", "delimitedtext")
+        QgsVectorFileWriter.writeAsVectorFormatV3(vlayer, 'sigt.gpkg', QgsCoordinateTransformContext(), opt)
+        iface.addVectorLayer(ph+"\\"+out_layer+'|layername=dados_demanda',"dados_demanda","ogr")
+        #QgsProject.instance().addMapLayer(vlayer)
+        #layer = iface.activeLayers()
+        #layer.selectByExpression("\"LINHA\"=1502")
+
+    def installGTFS(self):
+        #pyplugin_installer.instance().fetchAvailablePlugins(False)
+        #pyplugin_installer.instance().installPlugin('GTFS-GO-master')
+        user_directory = QgsApplication.qgisSettingsDirPath()
+        gtfs_install_path = "{0}python/plugins/tpu/GTFS_Loader.zip".format(user_directory)
+        pyplugin_installer.instance().installFromZipFile(gtfs_install_path)
+
+    def gtfsgo_func(self):
+        gtfsPlugin = plugins['GTFS_Loader'] # plugin instance
+        gtfsPlugin.run()
+
+    def installOsm2gmns(self):
+        try:
+            import remotior_sensus
+        except ModuleNotFoundError:
+            if platform.system() == 'Windows':
+                subprocess.call([sys.exec_prefix + '/python', "-m", 'pip', 'install', 'remotior_sensus'])
+            else:
+                subprocess.call(['python3', '-m', 'pip', 'install', 'remotior_sensus'])
+            import remotior_sensus
+        print("Erro1")
+        try:
+            import zipfile
+        except ModuleNotFoundError:
+            if platform.system() == 'Windows':
+                subprocess.call([sys.exec_prefix + '/python', "-m", 'pip', 'install', 'zipfile'])
+            else:
+                subprocess.call(['python3', '-m', 'pip', 'install', 'zipfile'])
+            import zipfile
+        print("Erro2")
+        try:
+            import pandas
+        except ModuleNotFoundError:
+            if platform.system() == 'Windows':
+                subprocess.call([sys.exec_prefix + '/python', "-m", 'pip', 'install', 'pandas'])
+            else:
+                subprocess.call(['python3', '-m', 'pip', 'install', 'pandas'])
+            import pandas
+        print("Erro3")
