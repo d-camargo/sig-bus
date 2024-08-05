@@ -66,26 +66,55 @@ class tpuDialog(QtWidgets.QDialog, FORM_CLASS):
         layer = self.mMapLayerComboBox.currentLayer()
         self.mMapLayerComboBox.layerChanged.connect(self.map_changed)
         self.mFieldComboBox.fieldChanged.connect(self.field_select)
-        self.mFeatureListComboBox.currentFeatureChanged.connect(self.field_select)
+        self.mFeaturePickerWidget.featureChanged.connect(self.field_select)
         #self.mFeatureListComboBox.setSourceLayer(self.mMapLayerComboBox.currentLayer())
-
+        #Filter Button
+        self.filterButton.clicked.connect(self.filterClicked)
         #self.mFeatureListComboBox.currentIndexChanged.connect(self.feature_select)
         #self.mFieldComboBox.indexChanged.connect(self.field_select)
 
     def field_select(self):
         #field = self.mFieldComboBox.fields()
+        layer = self.mMapLayerComboBox.currentLayer()
         field = self.mFieldComboBox.currentField()
         self.mFieldComboBox.setField(field)
-        self.mFeatureListComboBox.setDisplayExpression(field)
-        #https://gis.stackexchange.com/questions/409517/database-form-as-qgis-plugin-with-pyqgis-and-qtdesigner
+        picker = self.mFeaturePickerWidget
+        picker.setLayer(layer)
+        picker.setDisplayExpression(field)
+        feature = picker.feature()
+        #print(feature[1])
 
+        #Solução encontrada. Link para ajuda abaixo
+        #https://qgis.org/pyqgis/master/core/QgsFeature.html#qgis.core.QgsFeature
+        #https://gis.stackexchange.com/questions/409517/database-form-as-qgis-plugin-with-pyqgis-and-qtdesigner
+        #Está saindo o número da posição do dado, precisa transformar no próprio dado. Ou não... Na verdade precisa
+        #o próximo passo
+        #self.mFeatureListComboBox.setDisplayExpression(field)
+    #https://gis.stackexchange.com/questions/409517/database-form-as-qgis-plugin-with-pyqgis-and-qtdesigner
+
+    def filterClicked(self):
+        vlayer = self.mMapLayerComboBox.currentLayer()
+        field = self.mFieldComboBox.currentField()
+        picker = self.mFeaturePickerWidget
+        feature = picker.feature()
+        #layer.setSubsetString(feature[1])
+        exp = 'shape_id="{0}"'.format(feature[1])
+        print(exp)
+        vlayer.setSubsetString(exp)
+        dlayers = QgsProject.instance().mapLayersByName('dados_demanda')[0]
+        dlayers.setSubsetString(exp)
 
     def map_changed(self):
         layer = self.mMapLayerComboBox.currentLayer()
         self.mFieldComboBox.setLayer(layer)
+        self.mFieldComboBox.currentField()
         field = self.mFieldComboBox.currentField()
-        self.mFeatureListComboBox.setSourceLayer(layer)
-
+        picker = self.mFeaturePickerWidget
+        picker.setLayer(layer)
+        picker.setDisplayExpression(field)
+        feature = picker.feature()
+        #value = self.mFeatureListComboBox.setCurrentFeature()
+        #print(value)
 
 
     def gtfsClicked(self):
@@ -152,7 +181,7 @@ class tpuDialog(QtWidgets.QDialog, FORM_CLASS):
         lyr = QgsVectorLayer("sigt.gpkg", 'dados_demanda', 'ogr')
         #QgsProject.instance().addMapLayer(lyr)
 
-        #Load CSV file
+        #Load CSV file QGIS
         enc = 'windows-1252'
         crs1 = 'EPSG:31983'
         uri = "file:///"+data_path+"?encoding={}&type=csv&delimiter={}&xField={}&yField={}&geomType=point&crs={}&spatialIndex=yes".format(enc,";", "X", "Y",crs1)
@@ -163,9 +192,23 @@ class tpuDialog(QtWidgets.QDialog, FORM_CLASS):
         vlayer = QgsVectorLayer(uri, "dados_demanda", "delimitedtext")
         QgsVectorFileWriter.writeAsVectorFormatV3(vlayer, 'sigt.gpkg', QgsCoordinateTransformContext(), opt)
         iface.addVectorLayer(ph+"\\"+out_layer+'|layername=dados_demanda',"dados_demanda","ogr")
-        #QgsProject.instance().addMapLayer(vlayer)
-        #layer = iface.activeLayers()
-        #layer.selectByExpression("\"LINHA\"=1502")
+        # Concatenar novo campo
+        dlayers = QgsProject.instance().mapLayersByName('dados_demanda')[0]
+        layer_provider = dlayers.dataProvider()
+        layer_provider.addAttributes([QgsField("shape_id", QVariant.String)])
+        dlayers.updateFields()
+        features = dlayers.getFeatures()
+        dlayers.startEditing()
+        for f in features:
+            if f['PC'] == 1:
+                result = 'I'
+            else:
+                result = 'V'
+            f['shape_id'] = f['LINHA'] + '-' + '0' + str(f['SUBLINHA']) + result
+            dlayers.updateFeature(f)
+        dlayers.commitChanges()
+
+        
 
     def installGTFS(self):
         #pyplugin_installer.instance().fetchAvailablePlugins(False)

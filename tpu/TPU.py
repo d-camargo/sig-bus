@@ -213,7 +213,7 @@ class TPU:
         # Run the dialog event loop
         result = self.dlg.exec_()
         # See if OK was pressed
-        if result:
+        '''if result:
 
             def search(lista, valor):
                 return [(lista.index(x)) for x in lista if valor in x]
@@ -235,15 +235,7 @@ class TPU:
                 linhas.selectByExpression()
 
 
-            '''
-            demanda_path = re.findall('file:///(.*)\?', csv_path)[0]
-            df = pd.read_csv(demanda_path, delimiter=';', encoding='Windows-1252')
-
-            df.loc[df['PC'] == 1, 'I/D'] = 'I'
-            df.fillna('V', inplace=True)
-            df['indet'] = df['LINHA'].map(str) + '-' + '0' + df['SUBLINHA'].map(str) + df['I/D'].map(str)
-            print(df.loc[df['LINHA'] == '1505'])'''
             # Do something useful here - delete the line containing pass and
             # substitute with your code.
             pass
-
+'''
