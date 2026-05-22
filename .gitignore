@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# QGIS arquivos gerados
+*.gpkg
+*.qgs~
+*.qgz~
+*.bak
+
+# Dados gerados em runtime (não são código-fonte)
+sigt.gpkg
+gtfs_corrigido.zip
+*.gpkg-shm
+*.gpkg-wal
+
+# Sistema
+.DS_Store
+Thumbs.db

@@ -1,0 +1,42 @@
+# This file contains metadata for your plugin.
+# This file should be included when you package your plugin.
+
+# Mandatory items:
+
+[general]
+name=SIG-Bus
+qgisMinimumVersion=3.0
+description=Carrega dados GTFS e dados de demanda no QGIS para análise de transporte público.
+version=0.2
+author=Diego Camargo
+email=diegocamargo.bft@gmail.com
+
+about=Plugin do QGIS para análise de transporte público: verifica arquivos GTFS (.zip), carrega-os num GeoPackage (paradas e traçados como camadas vetoriais) e importa dados de demanda (.csv). O leitor de GTFS é embutido, baseado no plugin "GTFS Loader" do CTU GeoForAll Lab (GPL v2+), não exigindo a instalação de plugins adicionais.
+
+tracker=https://github.com/d-camargo/pyqgis_113-2021/issues
+repository=https://github.com/d-camargo/pyqgis_113-2021
+# End of mandatory metadata
+
+# Recommended items:
+
+hasProcessingProvider=no
+# changelog=
+
+# Tags are comma separated with spaces allowed
+tags=python, gtfs, transporte público, demanda, sig
+
+homepage=https://github.com/d-camargo/pyqgis_113-2021
+category=Plugins
+icon=icon.png
+# experimental flag
+experimental=True
+
+# deprecated flag (applies to the whole plugin, not just a single version)
+deprecated=False
+
+# Sem dependências de plugins: o leitor de GTFS é embutido (gtfs_reader.py),
+# adaptado do plugin "GTFS Loader" (CTU GeoForAll Lab), por isso
+# plugin_dependencies não é declarado.
+
+# If the plugin can run on QGIS Server.
+server=False
