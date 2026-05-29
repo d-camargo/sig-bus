@@ -1,4 +1,101 @@
+# SIG-Bus — QGIS Plugin for Public Transport Analysis
+
+*[Português](#sig-bus--plugin-qgis-para-análise-de-transporte-público) | English*
+
+A QGIS plugin that integrates **GTFS** (*General Transit Feed Specification*) data
+with **passenger boarding demand** data per bus stop, enabling visualisation and
+allocation of passenger loads along route alignments.
+
+Developed as part of the undergraduate research project PIBIC DPPG 113/2021.
+
+## Features
+
+- **Check GTFS:** validates the `.zip` feed and synthesises `calendar.txt` from
+  `calendar_dates.txt` when the feed only provides the latter.
+- **Load GTFS:** imports the feed into a GeoPackage via GDAL (streaming — memory-
+  efficient for large feeds). Builds the route alignments layer (`shapes`) and
+  creates join indexes.
+- **Insert demand:** imports a boarding-by-stop/hour CSV into a GeoPackage
+  (`sigt.gpkg`).
+- **Filter data:** given a selected route (`route_short_name`), highlights the
+  alignment in `shapes`, filters `dados_demanda`, and loads stop-level timetables
+  (`horarios_paradas`) in the background.
+- **Allocate Demand:** distributes boardings from the CSV across the segments
+  (links) of the route, producing the `tramos_demanda` layer with:
+  - `embarques` — boardings allocated to the upstream stop of the link
+  - `passageiros_acum` — cumulative passenger load on the bus at that link
+  - `n_viagens` — GTFS trips that departed within the selected hour
+- **Hour selector:** filters the allocation by time slot (0 h–23 h) or the full
+  daily total. When an hour is selected, the dominant shape among trips that
+  *departed* in that hour is used.
+- **Reconnect GeoPackage:** restores GTFS layers to the project without
+  reprocessing the feed (useful after closing and reopening QGIS).
+
+The GTFS reader is **built-in** (`gtfs_reader.py`), adapted from the *GTFS Loader*
+plugin by CTU GeoForAll Lab (GPL v2+). No external plugin is required.
+
+## Repository Structure
+
+```
+.
+├── docs/
+│   ├── gtfsfiles.zip       # sample GTFS feed for testing
+│   └── PyQGIS_PIBIC.pdf    # original research documentation
+└── sig_bus/                # plugin code (install into QGIS)
+    ├── __init__.py
+    ├── SigBus.py            # plugin main class
+    ├── SigBus_dialog.py     # dialog logic + background tasks
+    ├── SigBus_dialog_base.ui
+    ├── gtfs_reader.py       # built-in GTFS reader
+    ├── DOCUMENTACAO.md      # detailed feature documentation (EN + PT-BR)
+    ├── METHODS.md           # theoretical foundation of the allocation method
+    ├── metadata.txt
+    ├── icon.png
+    └── resources.py / resources.qrc
+```
+
+## Requirements
+
+- QGIS 3.0 or later (tested on 3.22 LTS and recent Flatpak builds)
+- QGIS built-in Python (no external dependencies beyond QGIS itself)
+
+## Installation
+
+1. Copy the `sig_bus/` folder to the QGIS plugins directory:
+   - **Linux:** `~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/`
+   - **Windows:** `%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins\`
+2. Enable the **SIG-Bus** plugin under *Plugins → Manage and Install Plugins →
+   Installed*.
+3. Access it via *Plugins → SIG-Bus*.
+
+## Workflow
+
+```
+Check GTFS → Load GTFS → Insert demand
+→ Select route → Filter data
+→ Choose hour → Allocate Demand
+```
+
+See `sig_bus/DOCUMENTACAO.md` for a detailed description of each step, output
+layer fields, and known limitations. For the theoretical background of the
+demand allocation method, see `sig_bus/METHODS.md`.
+
+## Sample Data
+
+`docs/gtfsfiles.zip` contains a GTFS feed for testing.
+Expected demand data follows the SIU-BHTrans format
+(`;`-delimited CSV, columns `0`–`23` with hourly boardings).
+
+## Author
+
+Diego Camargo — <diegocamargo.bft@gmail.com>  
+Repository: <https://github.com/d-camargo/sig-bus>
+
+---
+
 # SIG-Bus — Plugin QGIS para Análise de Transporte Público
+
+*Português | [English](#sig-bus--qgis-plugin-for-public-transport-analysis)*
 
 Plugin do QGIS que integra dados **GTFS** (*General Transit Feed Specification*)
 com dados de **demanda de embarque** por ponto de ônibus, permitindo visualizar
@@ -46,7 +143,8 @@ necessário.
     ├── SigBus_dialog.py     # lógica da janela + tarefas de fundo
     ├── SigBus_dialog_base.ui
     ├── gtfs_reader.py       # leitor GTFS embutido
-    ├── DOCUMENTACAO.md      # documentação detalhada das funcionalidades
+    ├── DOCUMENTACAO.md      # documentação detalhada das funcionalidades (EN + PT-BR)
+    ├── METHODS.md           # embasamento teórico do método de alocação
     ├── metadata.txt
     ├── icon.png
     └── resources.py / resources.qrc
@@ -75,7 +173,8 @@ Verificar GTFS → Executar GTFS → Inserir demanda
 ```
 
 Veja `sig_bus/DOCUMENTACAO.md` para descrição detalhada de cada etapa,
-campos das camadas de saída e limitações conhecidas.
+campos das camadas de saída e limitações conhecidas. Para o embasamento
+teórico do método de alocação de demanda, veja `sig_bus/METHODS.md`.
 
 ## Dados de Exemplo
 

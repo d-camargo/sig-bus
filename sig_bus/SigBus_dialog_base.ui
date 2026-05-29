@@ -227,10 +227,17 @@
      </property>
     </widget>
    </item>
-   <item row="18" column="0" colspan="5">
+   <item row="18" column="0" colspan="3">
     <widget class="QPushButton" name="button_reconnect">
      <property name="text">
       <string>Reconectar GeoPackage</string>
+     </property>
+    </widget>
+   </item>
+   <item row="18" column="3" colspan="2">
+    <widget class="QPushButton" name="button_relatorio">
+     <property name="text">
+      <string>Gerar Relatório</string>
      </property>
     </widget>
    </item>

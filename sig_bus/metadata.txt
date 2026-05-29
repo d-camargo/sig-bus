@@ -13,8 +13,8 @@ email=diegocamargo.bft@gmail.com
 
 about=Plugin do QGIS para análise de transporte público: verifica arquivos GTFS (.zip), carrega-os num GeoPackage (paradas e traçados como camadas vetoriais) e importa dados de demanda (.csv). O leitor de GTFS é embutido, baseado no plugin "GTFS Loader" do CTU GeoForAll Lab (GPL v2+), não exigindo a instalação de plugins adicionais.
 
-tracker=https://github.com/d-camargo/pyqgis_113-2021/issues
-repository=https://github.com/d-camargo/pyqgis_113-2021
+tracker=https://github.com/d-camargo/sig-bus/issues
+repository=https://github.com/d-camargo/sig-bus
 # End of mandatory metadata
 
 # Recommended items:
@@ -25,7 +25,7 @@ hasProcessingProvider=no
 # Tags are comma separated with spaces allowed
 tags=python, gtfs, transporte público, demanda, sig
 
-homepage=https://github.com/d-camargo/pyqgis_113-2021
+homepage=https://github.com/d-camargo/sig-bus
 category=Plugins
 icon=icon.png
 # experimental flag
