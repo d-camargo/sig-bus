@@ -41,10 +41,10 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsCoordinateTransformContext,
+    QgsCategorizedSymbolRenderer,
     QgsFeature,
     QgsField,
     QgsGeometry,
-    QgsCategorizedSymbolRenderer,
     QgsGraduatedSymbolRenderer,
     QgsLayerTreeLayer,
     QgsLineSymbol,
@@ -63,11 +63,8 @@ from qgis.core import (
     QgsPrintLayout,
     QgsProject,
     QgsTask,
-    QgsProperty,
     QgsRendererCategory,
     QgsRendererRange,
-    QgsSingleSymbolRenderer,
-    QgsSymbolLayer,
     QgsUnitTypes,
     QgsVectorFileWriter,
     QgsVectorLayer,
@@ -86,6 +83,64 @@ from .gtfs_reader import (
 
 FORM_CLASS, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), 'SigBus_dialog_base.ui'))
+
+# --- Simbologia compartilhada -------------------------------------------
+# Os dois mapas do relatório separam as variáveis: o mapa de Carregamento
+# usa espessura graduada por passageiros_acum (cor única); o mapa de
+# Clusters usa cor por cluster_id (espessura uniforme). Cada um tem uma
+# legenda nativa e limpa, em vez de empilhar as duas variáveis numa linha só.
+LOAD_COLOR = '#2B6CB0'            # azul fixo do mapa de carregamento
+WIDTH_MIN, WIDTH_MAX = 0.4, 2.8  # espessura (mm) das classes de carga
+N_LOAD_CLASSES = 5
+
+
+def _load_breaks(values):
+    """(lo, hi, width) de N_LOAD_CLASSES classes de Intervalo Igual sobre
+    `values` (lista de passageiros_acum). Min/max calculados na própria lista
+    — minimumValue/maximumValue do provedor de memória pode retornar None."""
+    v_min = min(values) if values else 0.0
+    v_max = max(values) if values else 1.0
+    if v_max <= v_min:
+        v_max = v_min + 1
+    step = (v_max - v_min) / N_LOAD_CLASSES
+    breaks = []
+    for i in range(N_LOAD_CLASSES):
+        lo = v_min + i * step
+        hi = v_min + (i + 1) * step if i < N_LOAD_CLASSES - 1 else v_max
+        width = WIDTH_MIN + (WIDTH_MAX - WIDTH_MIN) * i / (N_LOAD_CLASSES - 1)
+        breaks.append((lo, hi, round(width, 2)))
+    return breaks
+
+
+def make_load_renderer(values):
+    """Renderer graduado por passageiros_acum: espessura crescente, cor única.
+    A legenda mostra as 5 classes de carga (graduação visível)."""
+    ranges = []
+    for lo, hi, width in _load_breaks(values):
+        sym = QgsLineSymbol.createSimple({
+            'color':     LOAD_COLOR,
+            'width':     '{:.2f}'.format(width),
+            'capstyle':  'round',
+            'joinstyle': 'round',
+        })
+        ranges.append(QgsRendererRange(
+            lo, hi, sym, '{:.0f} – {:.0f}'.format(lo, hi)))
+    return QgsGraduatedSymbolRenderer('passageiros_acum', ranges)
+
+
+def make_cluster_renderer(color_map):
+    """Renderer categorizado por cluster_id: cor por cluster, espessura
+    uniforme. A legenda (ou o gráfico de barras) mostra as cores 1:1."""
+    cats = []
+    for lbl, color in color_map.items():
+        sym = QgsLineSymbol.createSimple({
+            'color':     color,
+            'width':     '1.2',
+            'capstyle':  'round',
+            'joinstyle': 'round',
+        })
+        cats.append(QgsRendererCategory(lbl, sym, lbl))
+    return QgsCategorizedSymbolRenderer('cluster_id', cats)
 
 
 class _HorariosTask(QgsTask):
@@ -409,6 +464,55 @@ class _AlocacaoTask(QgsTask):
         hora_str = str(self.hora)
         return hora_str if hora_str in cols else None
 
+    def _load_shape_geom(self, shape_id):
+        """Geometria (LineString) do shape_id na camada 'shapes' do GeoPackage.
+        Retorna QgsGeometry de parte única, ou None se ausente/inválido. Linhas
+        multipartes são fundidas (mergeLines) para permitir curveSubstring."""
+        lyr = QgsVectorLayer(
+            self.gpkg_path + '|layername=shapes', '_aloc_shp', 'ogr')
+        if not lyr.isValid():
+            return None
+        sid = str(shape_id).replace("'", "''")
+        lyr.setSubsetString("shape_id = '{}'".format(sid))
+        for feat in lyr.getFeatures():
+            g = feat.geometry()
+            if g is None or g.isEmpty():
+                continue
+            geom = QgsGeometry(g)          # cópia
+            if geom.isMultipart():
+                merged = geom.mergeLines()
+                if merged and not merged.isEmpty() and not merged.isMultipart():
+                    geom = merged
+            return geom
+        return None
+
+    @staticmethod
+    def _segment_wkt(shape_geom, lon_a, lat_a, lon_b, lat_b):
+        """WKT do trecho do shape entre as projeções dos dois stops na linha.
+        Fallback para a reta A→B se o shape faltar ou a projeção falhar
+        (ex.: shape multiparte sem curveSubstring)."""
+        straight = "LINESTRING({} {}, {} {})".format(lon_a, lat_a, lon_b, lat_b)
+        if shape_geom is None or shape_geom.isEmpty() or shape_geom.isMultipart():
+            return straight
+        try:
+            da = shape_geom.lineLocatePoint(
+                QgsGeometry.fromPointXY(QgsPointXY(lon_a, lat_a)))
+            db = shape_geom.lineLocatePoint(
+                QgsGeometry.fromPointXY(QgsPointXY(lon_b, lat_b)))
+            if da < 0 or db < 0:
+                return straight
+            if db < da:
+                da, db = db, da
+            sub = shape_geom.constGet().curveSubstring(da, db)
+            if sub is None:
+                return straight
+            sub_geom = QgsGeometry(sub)
+            if sub_geom.isEmpty() or sub_geom.length() <= 0:
+                return straight
+            return sub_geom.asWkt()
+        except Exception:   # noqa: BLE001
+            return straight
+
     # ------------------------------------------------------------------
     def run(self):
         try:
@@ -519,6 +623,41 @@ class _AlocacaoTask(QgsTask):
                             .format(pc, self._DIR_LABEL.get(direction, direction)))
                         continue
                     shape_id = shp[0]
+                    shape_geom = self._load_shape_geom(shape_id)
+
+                    # Diagnóstico: quantos shapes/viagens distintos esse sentido
+                    # tem na janela. Vários shapes → o traçado mostrado (dominante)
+                    # cobre só parte das viagens; pode explicar 'sobreposição'.
+                    if self.hora is not None:
+                        diag = conn.execute(
+                            "SELECT COUNT(DISTINCT t.shape_id), COUNT(*) "
+                            "FROM trips t JOIN stop_times st ON st.trip_id=t.trip_id "
+                            "WHERE t.route_id=? AND t.direction_id=? "
+                            "  AND CAST(st.stop_sequence AS INTEGER)=("
+                            "    SELECT MIN(CAST(ss.stop_sequence AS INTEGER)) "
+                            "    FROM stop_times ss WHERE ss.trip_id=t.trip_id) "
+                            "  AND CAST(SUBSTR(st.departure_time,1,2) AS INTEGER)=?",
+                            (route_id, direction, self.hora)).fetchone()
+                    else:
+                        diag = conn.execute(
+                            "SELECT COUNT(DISTINCT shape_id), COUNT(*) FROM trips "
+                            "WHERE route_id=? AND direction_id=?",
+                            (route_id, direction)).fetchone()
+                    n_shapes = diag[0] if diag else 0
+                    n_trips_total = diag[1] if diag else 0
+                    sent_lbl = self._DIR_LABEL.get(direction, direction)
+                    QgsMessageLog.logMessage(
+                        "Linha {} sentido {} ({}): {} shape(s) distinto(s), "
+                        "{} viagem(ns); usando shape dominante {} ({} viagens)."
+                        .format(self.route_name, sent_lbl,
+                                'hora {:02d}h'.format(self.hora)
+                                if self.hora is not None else 'total',
+                                n_shapes, n_trips_total, shape_id, n_viagens),
+                        'SIG-Bus', Qgis.Info)
+                    if n_shapes > 1:
+                        self._avisos.append(
+                            "PC={} (sentido {}): {} traçados distintos na janela; "
+                            "mostrando só o dominante.".format(pc, sent_lbl, n_shapes))
 
                     # Uma viagem desse shape → sequência de paradas
                     trip = conn.execute(
@@ -566,8 +705,9 @@ class _AlocacaoTask(QgsTask):
                         _sb, sid_b, nome_b, lat_b, lon_b = route_stops[i + 1]
                         emb_a = stop_demand[sid_a]
                         acum += emb_a
-                        wkt = "LINESTRING({} {}, {} {})".format(
-                            lon_a, lat_a, lon_b, lat_b)
+                        # Trecho do shape entre os stops (cai na reta se faltar)
+                        wkt = self._segment_wkt(
+                            shape_geom, lon_a, lat_a, lon_b, lat_b)
                         self._segments.append((
                             wkt, seq_a, sid_a, nome_a, sid_b, nome_b,
                             emb_a, acum, pc, sentido, n_viagens))
@@ -644,36 +784,11 @@ class _AlocacaoTask(QgsTask):
         if mem.isValid() and mem.featureCount() > 0:
             project.addMapLayer(mem)
 
-            # Simbologia graduada por passageiros_acum
-            # Método: Tamanho (espessura da linha) — Intervalo Igual, 5 classes
+            # Simbologia graduada por passageiros_acum (mapa de carregamento):
+            # espessura crescente, cor única. Min/max vêm de self._segments.
             try:
-                N = 5
-                W_MIN, W_MAX = 0.4, 2.8   # espessura mínima e máxima em mm
-                COLOR = '#2B6CB0'           # azul fixo; a espessura codifica a carga
-
-                prov_f = mem.dataProvider()
-                fidx = mem.fields().indexFromName('passageiros_acum')
-                v_min = float(prov_f.minimumValue(fidx) or 0)
-                v_max = float(prov_f.maximumValue(fidx) or 1)
-                if v_max <= v_min:
-                    v_max = v_min + 1
-
-                step = (v_max - v_min) / N
-                ranges = []
-                for i in range(N):
-                    lo = v_min + i * step
-                    hi = v_min + (i + 1) * step if i < N - 1 else v_max
-                    width = W_MIN + (W_MAX - W_MIN) * i / (N - 1)
-                    sym = QgsLineSymbol.createSimple({
-                        'color':     COLOR,
-                        'width':     '{:.2f}'.format(width),
-                        'capstyle':  'round',
-                        'joinstyle': 'round',
-                    })
-                    ranges.append(QgsRendererRange(
-                        lo, hi, sym, '{:.0f} – {:.0f}'.format(lo, hi)))
-
-                mem.setRenderer(QgsGraduatedSymbolRenderer('passageiros_acum', ranges))
+                acum_vals = [s[7] for s in self._segments]
+                mem.setRenderer(make_load_renderer(acum_vals))
                 iface.layerTreeView().refreshLayerSymbology(mem.id())
             except Exception as _e:
                 QgsMessageLog.logMessage(
@@ -1225,12 +1340,13 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         series_ida,   assign_ida   = self._cluster_stops(stops_ida,   auto_k(len(stops_ida)))   if stops_ida   else ([], {})
         series_volta, assign_volta = self._cluster_stops(stops_volta, auto_k(len(stops_volta))) if stops_volta else ([], {})
 
-        # 5. Renderer combinado em tramos_demanda: espessura=carga, cor=cluster
+        # 5. Preenche cluster_id em tramos_demanda (sem mexer na simbologia;
+        #    os renderers dos dois mapas são montados na etapa 8).
         if assign_ida or assign_volta:
-            self._apply_cluster_to_tramos(tramos, assign_ida, assign_volta)
+            self._assign_cluster_ids(tramos, assign_ida, assign_volta)
 
         # 6. Gráficos → PNGs temporários -----------------------------------
-        #    Mesma cor por cluster que o mapa (tramos_demanda categorizado).
+        #    Mesma cor por cluster que o mapa de clusters do relatório.
         cluster_colors = self._cluster_color_map(assign_ida, assign_volta)
         png_ida   = self._make_chart(series_ida,   'ida',   hora_str, cluster_colors)
         png_volta = self._make_chart(series_volta, 'volta', hora_str, cluster_colors)
@@ -1286,33 +1402,34 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             xform = QgsCoordinateTransform(tramos.crs(), proj_crs, project)
             ext = xform.transformBoundingBox(ext)
 
-        # Árvore de camadas da legenda: apenas camadas espaciais e visíveis
-        # (exclui tabelas GTFS sem geometria: trips, routes, stop_times, etc.)
-        def _legend_tree():
-            root = QgsLayerTree()
-            tree_proj = project.layerTreeRoot()
-            for lyr in project.mapLayers().values():
-                if not getattr(lyr, 'isSpatial', lambda: False)():
-                    continue
-                node = tree_proj.findLayer(lyr.id())
-                if node and node.isVisible():
-                    root.addLayer(lyr)
-            return root
-
         title_font = QFont('Sans Serif', 12)
         title_font.setBold(True)
+        cap_font = QFont('Sans Serif', 8)
+        cap_font.setBold(True)
 
-        # Camadas de fundo visíveis (exclui tramos — serão filtradas por sentido)
+        # Camadas de fundo visíveis (exclui tramos — filtrados por sentido — e
+        # 'shapes', já que os tramos cobrem o traçado da linha)
         proj_tree = project.layerTreeRoot()
         base_layers = []
         for lyr in project.mapLayers().values():
             if not getattr(lyr, 'isSpatial', lambda: False)():
                 continue
-            if lyr.name() == 'tramos_demanda':
+            if lyr.name() in ('tramos_demanda', 'shapes'):
                 continue
             node = proj_tree.findLayer(lyr.id())
             if node and node.isVisible():
                 base_layers.append(lyr)
+
+        # Legenda construída a partir de camadas explícitas (topo) + fundo.
+        def _legend_tree(top_layers):
+            root = QgsLayerTree()
+            for lyr in list(top_layers) + base_layers:
+                root.addLayer(lyr)
+            return root
+
+        # Classes de carga compartilhadas pelas duas páginas (comparáveis).
+        load_values = [int(f['passageiros_acum'] or 0)
+                       for f in tramos.getFeatures()]
 
         layout = QgsPrintLayout(project)
         layout.initializeDefaults()
@@ -1320,9 +1437,28 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         layout.pageCollection().page(0).setPageSize(
             QgsLayoutSize(PAGE_W, PAGE_H, MM))
 
-        # Guarda referências para evitar GC prematuro
-        _legend_trees = []
-        _tmp_layers   = []
+        # Refs p/ evitar GC; ids das camadas temporárias p/ limpar após exportar
+        _legend_trees  = []
+        _tmp_layers    = []
+        _tmp_layer_ids = []
+
+        def _make_tmp(sentido_val, renderer, suffix):
+            """Camada de memória com os tramos do sentido, com renderer próprio.
+            Registrada no projeto (sem ir p/ a árvore) para a legenda resolvê-la."""
+            lyr = QgsVectorLayer(
+                'LineString?crs={}'.format(tramos.crs().authid()),
+                '_tmp_{}_{}'.format(suffix, sentido_val), 'memory')
+            prov = lyr.dataProvider()
+            prov.addAttributes(list(tramos.fields()))
+            lyr.updateFields()
+            prov.addFeatures([f for f in tramos.getFeatures()
+                              if f['sentido'] == sentido_val])
+            lyr.updateExtents()
+            lyr.setRenderer(renderer)
+            project.addMapLayer(lyr, False)
+            _tmp_layers.append(lyr)
+            _tmp_layer_ids.append(lyr.id())
+            return lyr
 
         for page_idx, (sentido_label, png_path) in enumerate(pages_data):
             if page_idx > 0:
@@ -1340,60 +1476,82 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             lbl.setFont(title_font)
             layout.addLayoutItem(lbl)
             lbl.attemptMove(QgsLayoutPoint(10, y0 + 4, MM))
-            lbl.attemptResize(QgsLayoutSize(270, 11, MM))
+            lbl.attemptResize(QgsLayoutSize(277, 10, MM))
 
-            # Camada de tramos filtrada pelo sentido desta página
-            ftmp = QgsVectorLayer(
-                'LineString?crs={}'.format(tramos.crs().authid()),
-                '_tmp_{}'.format(sentido_val), 'memory')
-            fprov = ftmp.dataProvider()
-            fprov.addAttributes(list(tramos.fields()))
-            ftmp.updateFields()
-            fprov.addFeatures([
-                f for f in tramos.getFeatures()
-                if f['sentido'] == sentido_val])
-            ftmp.updateExtents()
-            ftmp.setRenderer(tramos.renderer().clone())
-            _tmp_layers.append(ftmp)
+            # Camadas temporárias do sentido: uma por mapa (carga × cluster)
+            ftmp_load = _make_tmp(
+                sentido_val, make_load_renderer(load_values), 'carga')
+            ftmp_clu  = _make_tmp(
+                sentido_val, make_cluster_renderer(cluster_colors), 'cluster')
 
-            # Mapa — mostra somente o sentido desta página
-            # Altura reduzida para deixar espaço para a barra de escala
-            map_item = QgsLayoutItemMap(layout)
-            layout.addLayoutItem(map_item)
-            map_item.attemptMove(QgsLayoutPoint(10, y0 + 17, MM))
-            map_item.attemptResize(QgsLayoutSize(162, 170, MM))
-            map_item.setCrs(proj_crs)
-            map_item.setExtent(ext)
-            map_item.setFollowVisibilityPreset(False)
-            map_item.setLayers([ftmp] + base_layers)
-            map_item.setFrameEnabled(True)
+            # --- Mapa A: Carregamento (espessura por passageiros_acum) -------
+            mapA = QgsLayoutItemMap(layout)
+            layout.addLayoutItem(mapA)
+            mapA.attemptMove(QgsLayoutPoint(10, y0 + 16, MM))
+            mapA.attemptResize(QgsLayoutSize(135, 116, MM))
+            mapA.setCrs(proj_crs)
+            mapA.setExtent(ext)
+            mapA.setFollowVisibilityPreset(False)
+            mapA.setLayers([ftmp_load] + base_layers)
+            mapA.setFrameEnabled(True)
 
-            # Barra de escala (abaixo do mapa)
-            sbar = QgsLayoutItemScaleBar(layout)
-            layout.addLayoutItem(sbar)
-            sbar.setLinkedMap(map_item)
-            sbar.attemptMove(QgsLayoutPoint(12, y0 + 190, MM))
-            sbar.attemptResize(QgsLayoutSize(60, 8, MM))
+            sbarA = QgsLayoutItemScaleBar(layout)
+            layout.addLayoutItem(sbarA)
+            sbarA.setLinkedMap(mapA)
+            sbarA.attemptMove(QgsLayoutPoint(13, y0 + 123, MM))
+            sbarA.attemptResize(QgsLayoutSize(45, 6, MM))
 
-            # Legenda filtrada — apenas camadas espaciais e visíveis
-            ltree = _legend_tree()
+            capA = QgsLayoutItemLabel(layout)
+            capA.setText('Carregamento — espessura ∝ passageiros acumulados')
+            capA.setFont(cap_font)
+            layout.addLayoutItem(capA)
+            capA.attemptMove(QgsLayoutPoint(10, y0 + 133, MM))
+            capA.attemptResize(QgsLayoutSize(135, 6, MM))
+
+            # --- Mapa B: Clusters (cor por cluster_id) -----------------------
+            mapB = QgsLayoutItemMap(layout)
+            layout.addLayoutItem(mapB)
+            mapB.attemptMove(QgsLayoutPoint(152, y0 + 16, MM))
+            mapB.attemptResize(QgsLayoutSize(135, 116, MM))
+            mapB.setCrs(proj_crs)
+            mapB.setExtent(ext)
+            mapB.setFollowVisibilityPreset(False)
+            mapB.setLayers([ftmp_clu] + base_layers)
+            mapB.setFrameEnabled(True)
+
+            sbarB = QgsLayoutItemScaleBar(layout)
+            layout.addLayoutItem(sbarB)
+            sbarB.setLinkedMap(mapB)
+            sbarB.attemptMove(QgsLayoutPoint(155, y0 + 123, MM))
+            sbarB.attemptResize(QgsLayoutSize(45, 6, MM))
+
+            capB = QgsLayoutItemLabel(layout)
+            capB.setText('Clusters de embarque — cores iguais às do gráfico')
+            capB.setFont(cap_font)
+            layout.addLayoutItem(capB)
+            capB.attemptMove(QgsLayoutPoint(152, y0 + 133, MM))
+            capB.attemptResize(QgsLayoutSize(135, 6, MM))
+
+            # --- Legenda do Mapa A (classes de carga) ------------------------
+            ltree = _legend_tree([ftmp_load])
             _legend_trees.append(ltree)
             legend = QgsLayoutItemLegend(layout)
             legend.setAutoUpdateModel(False)
             legend.model().setRootGroup(ltree)
+            legend.setTitle('Carga (pax/tramo)')
             layout.addLayoutItem(legend)
-            legend.attemptMove(QgsLayoutPoint(176, y0 + 17, MM))
-            legend.attemptResize(QgsLayoutSize(111, 90, MM))
+            legend.attemptMove(QgsLayoutPoint(10, y0 + 141, MM))
+            legend.attemptResize(QgsLayoutSize(120, 62, MM))
             legend.setFrameEnabled(True)
 
-            # Gráfico — abaixo da legenda, sem sobreposição
-            # Frame 111 × 90 mm → proporção 1.233 = proporção da imagem (825×669 px)
+            # --- Gráfico do Mapa B (barras por cluster; dobra de legenda) ----
+            # Frame 74 × 60 mm → proporção 1.233 = proporção da imagem (825×669)
             if png_path:
                 pic = QgsLayoutItemPicture(layout)
                 pic.setPicturePath(png_path)
                 layout.addLayoutItem(pic)
-                pic.attemptMove(QgsLayoutPoint(176, y0 + 111, MM))
-                pic.attemptResize(QgsLayoutSize(111, 90, MM))
+                pic.attemptMove(QgsLayoutPoint(152, y0 + 141, MM))
+                pic.attemptResize(QgsLayoutSize(74, 60, MM))
                 pic.setFrameEnabled(True)
 
         # Substituir layout anterior de mesmo nome, se existir
@@ -1407,6 +1565,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         exporter = QgsLayoutExporter(layout)
         res = exporter.exportToPdf(
             save_path, QgsLayoutExporter.PdfExportSettings())
+
+        # Remove as camadas temporárias do projeto (usadas só para o export).
+        if _tmp_layer_ids:
+            project.removeMapLayers(_tmp_layer_ids)
 
         for p in tmp_pngs:
             try:
@@ -1500,14 +1662,11 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         return series, assignments
 
     # ------------------------------------------------------------------
-    def _apply_cluster_to_tramos(self, tramos_layer, assign_ida, assign_volta):
-        """Adiciona cluster_id a tramos_demanda e aplica renderer Categorizado
-        por cluster_id (uma cor/entrada de legenda por cluster), com a largura
-        da linha data-defined em cada categoria, proporcional a
-        passageiros_acum (5 classes de Intervalo Igual). Assim a camada fica
-        classificada por cluster e mantém a graduação de espessura por carga."""
-
-        # 1. Adiciona campo cluster_id se ainda não existir
+    def _assign_cluster_ids(self, tramos_layer, assign_ida, assign_volta):
+        """Adiciona e preenche o campo 'cluster_id' em tramos_demanda a partir
+        das atribuições do K-means (por seq_from e sentido). Não mexe na
+        simbologia — o relatório monta os dois mapas (carga × cluster) com
+        renderers próprios; o mapa vivo mantém a graduação de carga."""
         fields = tramos_layer.fields()
         if fields.indexFromName('cluster_id') < 0:
             tramos_layer.dataProvider().addAttributes(
@@ -1515,8 +1674,6 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             tramos_layer.updateFields()
 
         cidx = tramos_layer.fields().indexFromName('cluster_id')
-
-        # 2. Preenche cluster_id por feature
         tramos_layer.startEditing()
         for feat in tramos_layer.getFeatures():
             seq     = int(feat['seq_from'] or 0)
@@ -1525,49 +1682,6 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                        else assign_volta).get(seq, '?')
             tramos_layer.changeAttributeValue(feat.id(), cidx, cluster)
         tramos_layer.commitChanges()
-
-        # 3. Breakpoints de largura (Intervalo Igual, 5 classes)
-        N = 5
-        W_MIN, W_MAX = 0.4, 2.8
-        prov = tramos_layer.dataProvider()
-        fidx = tramos_layer.fields().indexFromName('passageiros_acum')
-        v_min = float(prov.minimumValue(fidx) or 0)
-        v_max = float(prov.maximumValue(fidx) or 1)
-        if v_max <= v_min:
-            v_max = v_min + 1
-        step = (v_max - v_min) / N
-
-        # Expressão CASE para largura
-        width_cases = []
-        for i in range(N):
-            hi    = v_min + (i + 1) * step if i < N - 1 else v_max + 1
-            width = W_MIN + (W_MAX - W_MIN) * i / (N - 1)
-            width_cases.append(
-                'WHEN "passageiros_acum" < {} THEN {}'.format(hi, round(width, 2)))
-        width_expr = 'CASE {} ELSE {} END'.format(
-            ' '.join(width_cases), round(W_MAX, 2))
-
-        # 4. Renderer Categorizado por cluster_id (cor por categoria),
-        #    com a largura data-defined em CADA símbolo de categoria para
-        #    preservar a graduação por passageiros_acum.
-        color_map = self._cluster_color_map(assign_ida, assign_volta)
-        categories = []
-        for lbl, color in color_map.items():
-            sym = QgsLineSymbol.createSimple({
-                'color':     color,
-                'width':     '1.0',
-                'capstyle':  'round',
-                'joinstyle': 'round',
-            })
-            sym.symbolLayer(0).setDataDefinedProperty(
-                QgsSymbolLayer.PropertyStrokeWidth,
-                QgsProperty.fromExpression(width_expr))
-            categories.append(QgsRendererCategory(lbl, sym, lbl))
-
-        tramos_layer.setRenderer(
-            QgsCategorizedSymbolRenderer('cluster_id', categories))
-        tramos_layer.triggerRepaint()
-        iface.layerTreeView().refreshLayerSymbology(tramos_layer.id())
 
     # ------------------------------------------------------------------
     def _make_chart(self, series, sentido, hora_str, cluster_colors=None):
