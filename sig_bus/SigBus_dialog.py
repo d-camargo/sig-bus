@@ -42,6 +42,7 @@ from qgis.core import (
     QgsCoordinateTransform,
     QgsCoordinateTransformContext,
     QgsCategorizedSymbolRenderer,
+    QgsDistanceArea,
     QgsFeature,
     QgsField,
     QgsGeometry,
@@ -513,6 +514,66 @@ class _AlocacaoTask(QgsTask):
         except Exception:   # noqa: BLE001
             return straight
 
+    def _shapes_in_window(self, conn, route_id, direction):
+        """[(shape_id, n_viagens)] do sentido na janela (hora ou total), desc."""
+        if self.hora is not None:
+            rows = conn.execute(
+                "SELECT t.shape_id, COUNT(*) c FROM trips t "
+                "JOIN stop_times st ON st.trip_id=t.trip_id "
+                "WHERE t.route_id=? AND t.direction_id=? "
+                "  AND CAST(st.stop_sequence AS INTEGER)=("
+                "    SELECT MIN(CAST(ss.stop_sequence AS INTEGER)) "
+                "    FROM stop_times ss WHERE ss.trip_id=t.trip_id) "
+                "  AND CAST(SUBSTR(st.departure_time,1,2) AS INTEGER)=? "
+                "GROUP BY t.shape_id ORDER BY c DESC",
+                (route_id, direction, self.hora)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT shape_id, COUNT(*) c FROM trips "
+                "WHERE route_id=? AND direction_id=? "
+                "GROUP BY shape_id ORDER BY c DESC",
+                (route_id, direction)).fetchall()
+        return [(str(r[0]), int(r[1])) for r in rows]
+
+    @staticmethod
+    def _shape_stop_ids(conn, shape_id):
+        """Conjunto de stop_ids servidos por uma viagem do shape."""
+        trip = conn.execute(
+            "SELECT trip_id FROM trips WHERE shape_id=? LIMIT 1",
+            (shape_id,)).fetchone()
+        if not trip:
+            return set()
+        rows = conn.execute(
+            "SELECT stop_id FROM stop_times WHERE trip_id=?", (trip[0],)).fetchall()
+        return {str(r[0]) for r in rows}
+
+    def _log_shape_diff(self, conn, route_id, direction, dominant_id, sent_lbl):
+        """Loga, por shape do sentido: viagens, nº de paradas, comprimento (km)
+        e — para os alternativos — quantas paradas eles têm que o dominante NÃO
+        cobre. Se esse número for 0, a simplificação 'só dominante' não perde
+        demanda (alternativo é subconjunto); se >0, há divergência real."""
+        da = QgsDistanceArea()
+        da.setSourceCrs(QgsCoordinateReferenceSystem('EPSG:4326'),
+                        QgsCoordinateTransformContext())
+        da.setEllipsoid('WGS84')
+
+        dom_stops = self._shape_stop_ids(conn, dominant_id)
+        for sid, n_trips in self._shapes_in_window(conn, route_id, direction):
+            geom = self._load_shape_geom(sid)
+            length_km = (da.measureLength(geom) / 1000.0
+                         if geom and not geom.isEmpty() else 0.0)
+            stops = self._shape_stop_ids(conn, sid)
+            if sid == dominant_id:
+                extra_msg = ' [DOMINANTE]'
+            else:
+                extra = stops - dom_stops
+                extra_msg = ' [alt] — {} parada(s) fora do dominante'.format(
+                    len(extra))
+            QgsMessageLog.logMessage(
+                "  {} shape {}: {} viagens, {} paradas, {:.1f} km{}".format(
+                    sent_lbl, sid, n_trips, len(stops), length_km, extra_msg),
+                'SIG-Bus', Qgis.Info)
+
     # ------------------------------------------------------------------
     def run(self):
         try:
@@ -658,6 +719,9 @@ class _AlocacaoTask(QgsTask):
                         self._avisos.append(
                             "PC={} (sentido {}): {} traçados distintos na janela; "
                             "mostrando só o dominante.".format(pc, sent_lbl, n_shapes))
+                        # Detalha cada shape para decidir se a simplificação perde demanda.
+                        self._log_shape_diff(conn, route_id, direction,
+                                             shape_id, sent_lbl)
 
                     # Uma viagem desse shape → sequência de paradas
                     trip = conn.execute(
@@ -868,6 +932,17 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.combo_hora.addItem('Total geral')
         for h in range(24):
             self.combo_hora.addItem('{:02d}h'.format(h))
+
+        # Botão "Diagrama de Blocos" — adicionado por código (o .ui usa um
+        # QGridLayout; anexamos na linha seguinte, ocupando toda a largura).
+        self.button_diagrama = QtWidgets.QPushButton('Diagrama de Blocos', self)
+        self.button_diagrama.clicked.connect(self.diagramaClicked)
+        grid = self.button_relatorio.parent().layout()
+        if isinstance(grid, QtWidgets.QGridLayout):
+            grid.addWidget(self.button_diagrama, grid.rowCount(), 0,
+                           1, grid.columnCount())
+        elif self.layout() is not None:
+            self.layout().addWidget(self.button_diagrama)
 
     def field_select(self):
         #field = self.mFieldComboBox.fields()
@@ -1244,6 +1319,37 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             "Alocando demanda para a linha {} ({}) em segundo plano…".format(
                 value, hora_text),
             level=Qgis.Info, duration=6)
+
+    def diagramaClicked(self):
+        """Abre o Diagrama de Blocos (tempo × linha/sentido) para o GTFS atual.
+
+        Reaproveita _resolve_gpkg() para localizar o GeoPackage. O import é
+        tardio: um problema nos módulos do diagrama não impede o restante do
+        plugin de carregar."""
+        gpkg = self._resolve_gpkg(prompt_if_missing=True)
+        if not gpkg:
+            iface.messageBar().pushMessage(
+                'Aviso',
+                "GeoPackage do GTFS não encontrado. Carregue um GTFS ou use "
+                "'Reconectar GeoPackage'.",
+                level=Qgis.Warning, duration=8)
+            return
+        try:
+            from .block_diagram_dialog import BlockDiagramDialog
+        except Exception as e:   # noqa: BLE001
+            iface.messageBar().pushMessage(
+                'Erro', 'Falha ao abrir o Diagrama de Blocos: {}'.format(e),
+                level=Qgis.Critical, duration=10)
+            return
+        # Parenteia à janela principal do QGIS (não a este diálogo), para a
+        # janela do diagrama sobreviver ao fechamento do SIG-Bus. A referência
+        # é mantida aqui (este diálogo persiste via plugin) para não ser
+        # coletado pelo GC.
+        self._block_dialog = BlockDiagramDialog(gpkg, parent=iface.mainWindow())
+        self._block_dialog.show()
+        self._block_dialog.raise_()
+        # Fecha a janela do SIG-Bus ao abrir o diagrama.
+        self.close()
 
     def loadGtfs(self):
         """Carrega o GTFS selecionado num GeoPackage e adiciona as camadas
