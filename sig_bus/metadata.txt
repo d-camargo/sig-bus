@@ -7,7 +7,7 @@
 name=SIG-Bus
 qgisMinimumVersion=3.0
 description=Carrega dados GTFS e dados de demanda no QGIS para análise de transporte público.
-version=0.2
+version=0.4
 author=Diego Camargo
 email=diegocamargo.bft@gmail.com
 

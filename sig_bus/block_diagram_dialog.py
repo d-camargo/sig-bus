@@ -26,6 +26,7 @@ from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -51,6 +52,14 @@ from .block_core import (
 )
 from .block_scene import BlockScene, _DIR_LABEL
 from .block_view import BlockView
+
+
+def _terminal_dest(scene, trip):
+    """Texto do terminal de destino: nome do headsign + sigla de 3 letras
+    (ex.: 'ESTACAO DIAMANTE (DIA)'). Sem headsign, devolve '—'."""
+    name = trip.trip_headsign or '—'
+    code = scene.terminal_code(trip.trip_headsign)
+    return '{} ({})'.format(name, code) if code else name
 
 
 class BlockDiagramDialog(QWidget):
@@ -142,13 +151,36 @@ class BlockDiagramDialog(QWidget):
         self.spin_lay_max.setSuffix(' min')
         self.chk_deadhead = QCheckBox('Permitir deadhead\n(encadear terminais diferentes)')
         self.chk_relaxed = QCheckBox('Relaxado (só tempo;\nfrota mínima teórica)')
+        # Estimativa do tempo de retorno (deadhead) pela distância entre
+        # terminais: velocidade do veículo vazio × fator de sinuosidade.
+        self.spin_dh_speed = QDoubleSpinBox()
+        self.spin_dh_speed.setRange(5.0, 80.0)
+        self.spin_dh_speed.setSingleStep(1.0)
+        self.spin_dh_speed.setValue(25.0)
+        self.spin_dh_speed.setSuffix(' km/h')
+        self.spin_dh_speed.setToolTip(
+            'Velocidade do veículo vazio no retorno entre terminais.')
+        self.spin_circuity = QDoubleSpinBox()
+        self.spin_circuity.setRange(1.0, 3.0)
+        self.spin_circuity.setSingleStep(0.1)
+        self.spin_circuity.setValue(1.4)
+        self.spin_circuity.setToolTip(
+            'Impedância: razão entre o trajeto real e a distância em reta '
+            'entre os terminais.')
         bp.addRow('Layover mín.:', self.spin_lay_min)
         bp.addRow('Layover máx.:', self.spin_lay_max)
         bp.addRow(self.chk_deadhead)
+        bp.addRow('Veloc. retorno:', self.spin_dh_speed)
+        bp.addRow('Sinuosidade:', self.spin_circuity)
         bp.addRow(self.chk_relaxed)
         mg.addWidget(self.block_params_box)
         self.block_params_box.setVisible(False)
         self.radio_blocos.toggled.connect(self.block_params_box.setVisible)
+        # Os campos de deadhead só fazem sentido com 'Permitir deadhead'.
+        self.spin_dh_speed.setEnabled(False)
+        self.spin_circuity.setEnabled(False)
+        self.chk_deadhead.toggled.connect(self.spin_dh_speed.setEnabled)
+        self.chk_deadhead.toggled.connect(self.spin_circuity.setEnabled)
         cl.addWidget(mode_group)
 
         self.btn_gerar = QPushButton('Gerar diagrama')
@@ -256,7 +288,9 @@ class BlockDiagramDialog(QWidget):
             params = BlockParams(
                 layover_min_s=lmin, layover_max_s=lmax,
                 allow_deadhead=self.chk_deadhead.isChecked(),
-                relaxed=self.chk_relaxed.isChecked())
+                relaxed=self.chk_relaxed.isChecked(),
+                deadhead_speed_kmh=self.spin_dh_speed.value(),
+                circuity_factor=self.spin_circuity.value())
 
         self.btn_gerar.setEnabled(False)
         self.status.setText('Montando diagrama em segundo plano…')
@@ -305,9 +339,13 @@ class BlockDiagramDialog(QWidget):
             ('Fim', fmt_hms(trip.end_time_s)),
             ('Duração', fmt_hms(trip.duration_s)),
             ('Nº de paradas', str(trip.n_stops)),
-            ('Terminal origem', trip.start_stop_id),
-            ('Terminal destino', trip.end_stop_id),
-            ('Headsign', trip.trip_headsign or '—'),
+            # Terminal de destino = trip_headsign (nome canônico do feed) +
+            # sigla de 3 letras (convenção própria, gerada no diagrama). O
+            # GTFS da BHTrans não tem código de terminal; os stop_id de
+            # origem/destino ficam abaixo como referência técnica.
+            ('Terminal destino', _terminal_dest(self.scene, trip)),
+            ('Parada origem (id)', trip.start_stop_id),
+            ('Parada destino (id)', trip.end_stop_id),
             ('service_id', trip.service_id),
             ('shape_id', trip.shape_id),
             ('trip_id', trip.trip_id),

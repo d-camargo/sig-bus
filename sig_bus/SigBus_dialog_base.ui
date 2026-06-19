@@ -18,47 +18,224 @@
     <normalon>icon.png</normalon>
    </iconset>
   </property>
-  <layout class="QGridLayout" name="gridLayout">
-   <item row="4" column="4">
-    <widget class="QPushButton" name="button_gtfsgo">
-     <property name="text">
-      <string>Executar GTFS</string>
+  <layout class="QVBoxLayout" name="verticalLayout_main">
+   <item>
+    <widget class="QTabWidget" name="tabWidget">
+     <property name="currentIndex">
+      <number>0</number>
      </property>
+     <widget class="QWidget" name="tab_entrada">
+      <attribute name="title">
+       <string>Entrada de dados</string>
+      </attribute>
+      <layout class="QGridLayout" name="gridLayout_entrada">
+       <item row="0" column="0" colspan="3">
+        <widget class="QLabel" name="gtfs_label">
+         <property name="text">
+          <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-size:14pt;&quot;&gt;Verificar arquivo GTFS (.zip)&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="3">
+        <widget class="QPushButton" name="extrapackages">
+         <property name="text">
+          <string>Instalar GTFS Loader</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="0" colspan="4">
+        <widget class="QgsFileWidget" name="gtfs_widget">
+         <property name="storageMode">
+          <enum>QgsFileWidget::GetFile</enum>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="0" colspan="2">
+        <widget class="QPushButton" name="gtfs_insert_button">
+         <property name="text">
+          <string>Verificar GTFS</string>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="2">
+        <spacer name="horizontalSpacer_2">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>458</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item row="2" column="3">
+        <widget class="QPushButton" name="button_gtfsgo">
+         <property name="text">
+          <string>Executar GTFS</string>
+         </property>
+        </widget>
+       </item>
+       <item row="3" column="0">
+        <spacer name="verticalSpacer_3">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item row="4" column="0" colspan="3">
+        <widget class="QLabel" name="route_label">
+         <property name="text">
+          <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-size:14pt;&quot;&gt;Dados de demanda (.csv)&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="0" colspan="4">
+        <widget class="QgsFileWidget" name="data_widget"/>
+       </item>
+       <item row="6" column="0" colspan="3">
+        <spacer name="horizontalSpacer_3">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item row="6" column="3">
+        <widget class="QPushButton" name="data_insert_button">
+         <property name="text">
+          <string>Inserir</string>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="0" colspan="4">
+        <widget class="QPushButton" name="button_reconnect">
+         <property name="text">
+          <string>Reconectar GeoPackage</string>
+         </property>
+        </widget>
+       </item>
+       <item row="8" column="0">
+        <spacer name="verticalSpacer_entrada">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="tab_analise">
+      <attribute name="title">
+       <string>Análise</string>
+      </attribute>
+      <layout class="QGridLayout" name="gridLayout_analise">
+       <item row="0" column="0" colspan="2">
+        <widget class="QLabel" name="Layer_Combo">
+         <property name="font">
+          <font>
+           <pointsize>14</pointsize>
+          </font>
+         </property>
+         <property name="text">
+          <string>Camada GTFS:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="0" colspan="4">
+        <widget class="QgsMapLayerComboBox" name="mMapLayerComboBox"/>
+       </item>
+       <item row="2" column="0" colspan="2">
+        <widget class="QLabel" name="Field_combo">
+         <property name="font">
+          <font>
+           <pointsize>14</pointsize>
+          </font>
+         </property>
+         <property name="text">
+          <string>Escolha a linha:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="3" column="0" colspan="2">
+        <widget class="QgsFieldComboBox" name="mFieldComboBox"/>
+       </item>
+       <item row="4" column="0" colspan="2">
+        <widget class="QgsFeaturePickerWidget" name="mFeaturePickerWidget"/>
+       </item>
+       <item row="4" column="2">
+        <widget class="QPushButton" name="filterButton">
+         <property name="text">
+          <string>Filtrar dados</string>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="0">
+        <widget class="QLabel" name="hora_label">
+         <property name="text">
+          <string>Hora:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="1">
+        <widget class="QComboBox" name="combo_hora"/>
+       </item>
+       <item row="5" column="2" colspan="2">
+        <widget class="QPushButton" name="button_alocar">
+         <property name="text">
+          <string>Alocar Demanda</string>
+         </property>
+        </widget>
+       </item>
+       <item row="6" column="0" colspan="4">
+        <widget class="QPushButton" name="button_relatorio">
+         <property name="text">
+          <string>Gerar Relatório</string>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="0" colspan="4">
+        <widget class="QPushButton" name="button_diagrama">
+         <property name="text">
+          <string>Diagrama de Blocos</string>
+         </property>
+        </widget>
+       </item>
+       <item row="8" column="0">
+        <spacer name="verticalSpacer_2">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
     </widget>
    </item>
-   <item row="2" column="1">
-    <widget class="QLabel" name="gtfs_label">
-     <property name="text">
-      <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-size:14pt;&quot;&gt;Verificar arquivo GTFS (.zip)&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-     </property>
-    </widget>
-   </item>
-   <item row="3" column="1" colspan="4">
-    <widget class="QgsFileWidget" name="gtfs_widget">
-     <property name="storageMode">
-      <enum>QgsFileWidget::GetFile</enum>
-     </property>
-    </widget>
-   </item>
-   <item row="14" column="1">
-    <widget class="QgsFieldComboBox" name="mFieldComboBox"/>
-   </item>
-   <item row="10" column="1">
-    <widget class="QLabel" name="Layer_Combo">
-     <property name="font">
-      <font>
-       <pointsize>14</pointsize>
-      </font>
-     </property>
-     <property name="text">
-      <string>Camada GTFS:</string>
-     </property>
-    </widget>
-   </item>
-   <item row="11" column="1">
-    <widget class="QgsMapLayerComboBox" name="mMapLayerComboBox"/>
-   </item>
-   <item row="19" column="0" colspan="5">
+   <item>
     <layout class="QHBoxLayout" name="horizontalLayout">
      <item>
       <widget class="QPushButton" name="help_button">
@@ -91,155 +268,6 @@
       </widget>
      </item>
     </layout>
-   </item>
-   <item row="4" column="1">
-    <spacer name="horizontalSpacer_2">
-     <property name="orientation">
-      <enum>Qt::Horizontal</enum>
-     </property>
-     <property name="sizeHint" stdset="0">
-      <size>
-       <width>458</width>
-       <height>20</height>
-      </size>
-     </property>
-    </spacer>
-   </item>
-   <item row="2" column="4">
-    <widget class="QPushButton" name="extrapackages">
-     <property name="text">
-      <string>Instalar GTFS Loader</string>
-     </property>
-    </widget>
-   </item>
-   <item row="13" column="1">
-    <widget class="QLabel" name="Field_combo">
-     <property name="font">
-      <font>
-       <pointsize>14</pointsize>
-      </font>
-     </property>
-     <property name="text">
-      <string>Escolha a linha:</string>
-     </property>
-    </widget>
-   </item>
-   <item row="8" column="4">
-    <widget class="QPushButton" name="data_insert_button">
-     <property name="text">
-      <string>Inserir</string>
-     </property>
-    </widget>
-   </item>
-   <item row="5" column="1">
-    <widget class="QLabel" name="route_label">
-     <property name="text">
-      <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-size:14pt;&quot;&gt;Dados de demanda (.csv)&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-     </property>
-    </widget>
-   </item>
-   <item row="6" column="0" colspan="5">
-    <widget class="QgsFileWidget" name="data_widget"/>
-   </item>
-   <item row="15" column="1">
-    <spacer name="verticalSpacer">
-     <property name="orientation">
-      <enum>Qt::Vertical</enum>
-     </property>
-     <property name="sizeHint" stdset="0">
-      <size>
-       <width>20</width>
-       <height>40</height>
-      </size>
-     </property>
-    </spacer>
-   </item>
-   <item row="8" column="0" colspan="2">
-    <spacer name="horizontalSpacer_3">
-     <property name="orientation">
-      <enum>Qt::Horizontal</enum>
-     </property>
-     <property name="sizeHint" stdset="0">
-      <size>
-       <width>40</width>
-       <height>20</height>
-      </size>
-     </property>
-    </spacer>
-   </item>
-   <item row="12" column="1">
-    <spacer name="verticalSpacer_3">
-     <property name="orientation">
-      <enum>Qt::Vertical</enum>
-     </property>
-     <property name="sizeHint" stdset="0">
-      <size>
-       <width>20</width>
-       <height>40</height>
-      </size>
-     </property>
-    </spacer>
-   </item>
-   <item row="4" column="2" colspan="2">
-    <widget class="QPushButton" name="gtfs_insert_button">
-     <property name="text">
-      <string>Verificar GTFS</string>
-     </property>
-    </widget>
-   </item>
-   <item row="9" column="1">
-    <spacer name="verticalSpacer_2">
-     <property name="orientation">
-      <enum>Qt::Vertical</enum>
-     </property>
-     <property name="sizeHint" stdset="0">
-      <size>
-       <width>20</width>
-       <height>40</height>
-      </size>
-     </property>
-    </spacer>
-   </item>
-   <item row="16" column="1">
-    <widget class="QgsFeaturePickerWidget" name="mFeaturePickerWidget"/>
-   </item>
-   <item row="16" column="2">
-    <widget class="QPushButton" name="filterButton">
-     <property name="text">
-      <string>Filtrar dados</string>
-     </property>
-    </widget>
-   </item>
-   <item row="17" column="1">
-    <widget class="QLabel" name="hora_label">
-     <property name="text">
-      <string>Hora:</string>
-     </property>
-    </widget>
-   </item>
-   <item row="17" column="2">
-    <widget class="QComboBox" name="combo_hora"/>
-   </item>
-   <item row="17" column="3" colspan="2">
-    <widget class="QPushButton" name="button_alocar">
-     <property name="text">
-      <string>Alocar Demanda</string>
-     </property>
-    </widget>
-   </item>
-   <item row="18" column="0" colspan="3">
-    <widget class="QPushButton" name="button_reconnect">
-     <property name="text">
-      <string>Reconectar GeoPackage</string>
-     </property>
-    </widget>
-   </item>
-   <item row="18" column="3" colspan="2">
-    <widget class="QPushButton" name="button_relatorio">
-     <property name="text">
-      <string>Gerar Relatório</string>
-     </property>
-    </widget>
    </item>
   </layout>
  </widget>

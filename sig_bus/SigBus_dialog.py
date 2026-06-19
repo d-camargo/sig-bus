@@ -933,16 +933,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         for h in range(24):
             self.combo_hora.addItem('{:02d}h'.format(h))
 
-        # Botão "Diagrama de Blocos" — adicionado por código (o .ui usa um
-        # QGridLayout; anexamos na linha seguinte, ocupando toda a largura).
-        self.button_diagrama = QtWidgets.QPushButton('Diagrama de Blocos', self)
+        # Botão "Diagrama de Blocos" — definido no .ui, na aba "Análise".
         self.button_diagrama.clicked.connect(self.diagramaClicked)
-        grid = self.button_relatorio.parent().layout()
-        if isinstance(grid, QtWidgets.QGridLayout):
-            grid.addWidget(self.button_diagrama, grid.rowCount(), 0,
-                           1, grid.columnCount())
-        elif self.layout() is not None:
-            self.layout().addWidget(self.button_diagrama)
 
     def field_select(self):
         #field = self.mFieldComboBox.fields()

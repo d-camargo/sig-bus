@@ -24,12 +24,13 @@ frota (Modo Blocos) é *inferida* (BlockBuilder, próximo incremento). Esta
 fatia entrega o Modo Viagens (determinístico): uma barra por viagem no tempo.
 """
 
+import math
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Optional
 
-from qgis.core import Qgis, QgsMessageLog, QgsTask
+from qgis.core import Qgis, QgsMessageLog, QgsTask, QgsVectorLayer
 from qgis.PyQt.QtCore import pyqtSignal
 
 LOG_TAG = 'SIG-Bus'
@@ -81,6 +82,34 @@ def _natural_key(value):
         return (1, 0, s)
 
 
+def haversine_m(lon1, lat1, lon2, lat2):
+    """Distância geodésica em metros entre dois pontos (lon/lat em graus)."""
+    radius = 6371000.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlmb = math.radians(lon2 - lon1)
+    a = (math.sin(dphi / 2) ** 2 +
+         math.cos(phi1) * math.cos(phi2) * math.sin(dlmb / 2) ** 2)
+    return 2 * radius * math.asin(min(1.0, math.sqrt(a)))
+
+
+def deadhead_seconds(coords, stop_a, stop_b, params):
+    """Tempo estimado (s) para reposicionar um veículo vazio de stop_a até
+    stop_b (o 'tempo de retorno' do deadhead).
+
+    Como não há rede de ruas carregada, usamos a distância em reta (haversine)
+    entre os terminais, corrigida por um fator de sinuosidade (impedância
+    reta→trajeto real) e dividida pela velocidade do veículo vazio. Devolve
+    None se faltar a coordenada de algum terminal."""
+    pa = coords.get(str(stop_a))
+    pb = coords.get(str(stop_b))
+    if not pa or not pb:
+        return None
+    dist_m = haversine_m(pa[0], pa[1], pb[0], pb[1]) * params.circuity_factor
+    speed_ms = max(1.0, params.deadhead_speed_kmh) * 1000.0 / 3600.0
+    return dist_m / speed_ms
+
+
 # --------------------------------------------------------------------------
 # Modelo de domínio
 # --------------------------------------------------------------------------
@@ -112,11 +141,15 @@ class Trip:
 
 @dataclass
 class BlockParams:
-    """Parâmetros da inferência de blocos (Modo Blocos — próximo incremento)."""
+    """Parâmetros da inferência de blocos (Modo Blocos)."""
     layover_min_s: int = 5 * 60
     layover_max_s: int = 45 * 60
     allow_deadhead: bool = False
     relaxed: bool = False
+    # Deadhead: estimativa do tempo de retorno entre terminais diferentes a
+    # partir da distância geodésica (ver deadhead_seconds).
+    deadhead_speed_kmh: float = 25.0   # velocidade do veículo vazio
+    circuity_factor: float = 1.4       # impedância reta → trajeto real
 
 
 @dataclass
@@ -174,19 +207,24 @@ class BlockBuilder:
     domingo) mas pode cruzar linhas (frota compartilhada), que é justamente o
     ganho do modo multi-linha."""
 
-    def build(self, trips, params):
-        """Devolve list[Block]. Preenche trip.block_id como efeito colateral."""
+    def build(self, trips, params, coords=None):
+        """Devolve list[Block]. Preenche trip.block_id como efeito colateral.
+
+        coords: {stop_id: (lon, lat)} dos terminais, usado para estimar o
+        tempo de deadhead entre terminais diferentes. Pode ser None/vazio
+        (deadhead então não custa tempo — comportamento antigo)."""
+        coords = coords or {}
         groups = defaultdict(list)
         for t in trips:
             groups[t.service_id].append(t)
         blocks = []
         for svc in sorted(groups, key=_natural_key):
-            blocks.extend(self._build_service(groups[svc], params,
+            blocks.extend(self._build_service(groups[svc], params, coords,
                                               offset=len(blocks)))
         return blocks
 
     @staticmethod
-    def _build_service(trips, params, offset=0):
+    def _build_service(trips, params, coords, offset=0):
         ordered = sorted(trips, key=lambda t: (t.start_time_s, t.end_time_s))
         # cada veículo: {'block', 'loc' (stop atual), 'free' (livre desde s)}
         vehicles = []
@@ -195,12 +233,24 @@ class BlockBuilder:
             best = None
             for v in vehicles:
                 gap = t.start_time_s - v['free']
-                if gap < params.layover_min_s:
+                same_terminal = (v['loc'] == t.start_stop_id)
+                # Sem deadhead, os terminais têm que casar fisicamente.
+                if not same_terminal and not skip_terminal:
+                    continue
+                # gap = tempo de deadhead (viagem vazia até o terminal de
+                # partida) + layover ocioso. Estimamos o deadhead pela
+                # distância e descontamos do gap; o que sobra é o ocioso real.
+                deadhead = 0.0
+                if not same_terminal:
+                    est = deadhead_seconds(coords, v['loc'],
+                                           t.start_stop_id, params)
+                    deadhead = est if est is not None else 0.0
+                layover = gap - deadhead
+                # Não dá tempo de chegar + cumprir o layover mínimo.
+                if layover < params.layover_min_s:
                     continue
                 # 'relaxado' ignora o teto de layover (frota mínima teórica).
-                if not params.relaxed and gap > params.layover_max_s:
-                    continue
-                if not skip_terminal and v['loc'] != t.start_stop_id:
+                if not params.relaxed and layover > params.layover_max_s:
                     continue
                 # Candidato: prefere o de maior free (menos tempo ocioso).
                 if best is None or v['free'] > best['free']:
@@ -229,6 +279,30 @@ class ScheduleReader:
 
     def __init__(self, gpkg_path):
         self.gpkg = gpkg_path
+
+    def load_stop_coords(self, stop_ids) -> dict:
+        """{stop_id: (lon, lat)} para os stops dados, lidos da camada 'stops'
+        (geometria EPSG:4326), via OGR — mesmo padrão de _AlocacaoTask. Usado
+        para estimar o deadhead entre terminais. Roda em thread de fundo: só
+        lê camada, não toca em QgsProject."""
+        wanted = {str(s) for s in stop_ids if s}
+        if not wanted:
+            return {}
+        layer = QgsVectorLayer(
+            self.gpkg + '|layername=stops', '_dh_stops', 'ogr')
+        coords = {}
+        if not layer.isValid():
+            return coords
+        for feat in layer.getFeatures():
+            sid = str(feat['stop_id'])
+            if sid not in wanted:
+                continue
+            geom = feat.geometry()
+            if geom is None or geom.isEmpty():
+                continue
+            pt = geom.asPoint()
+            coords[sid] = (pt.x(), pt.y())      # (lon, lat)
+        return coords
 
     def list_routes(self) -> list:
         """route_short_name distintos, em ordem natural."""
@@ -350,6 +424,19 @@ class ScheduleReader:
                 a['end_stop'] = str(stop_id)
 
         dirset = set(directions) if directions else None
+        # Aviso útil: 2/3 das linhas da BHTrans só têm ida (direction_id=0) no
+        # feed — são alimentadoras cujo retorno é outra linha/integração. Se o
+        # usuário pediu um sentido que nenhuma linha selecionada possui, dizemos
+        # isso explicitamente (senão o diagrama 'vazio' parece bug).
+        if dirset is not None:
+            available_dirs = {m['direction_id'] for m in meta.values()}
+            _dlabel = {'0': 'ida', '1': 'volta'}
+            for d in sorted(dirset - available_dirs):
+                warnings.append(
+                    'Nenhuma das linhas selecionadas tem viagens de {} '
+                    '(direction_id={}) neste GTFS — comum em linhas '
+                    'alimentadoras.'.format(_dlabel.get(d, d), d))
+
         trips = []
         skipped_time = 0
         for tid, a in agg.items():
@@ -429,7 +516,22 @@ class BlockDiagramTask(QgsTask):
             self.setProgress(60)
             schedule = Schedule(trips=trips, mode=self.mode, warnings=list(warns))
             if self.mode == 'blocks' and trips:
-                schedule.blocks = BlockBuilder().build(trips, self.params)
+                # Coordenadas dos terminais só são necessárias para estimar o
+                # deadhead; carrega apenas quando a opção está ligada.
+                coords = {}
+                if self.params.allow_deadhead:
+                    term_ids = ({t.start_stop_id for t in trips} |
+                                {t.end_stop_id for t in trips})
+                    coords = reader.load_stop_coords(term_ids)
+                    faltando = sum(
+                        1 for sid in term_ids if str(sid) not in coords)
+                    if faltando:
+                        schedule.warnings.append(
+                            '{} terminal(is) sem coordenada; nesses casos o '
+                            'deadhead foi considerado instantâneo.'.format(
+                                faltando))
+                schedule.blocks = BlockBuilder().build(
+                    trips, self.params, coords)
                 schedule.fleet_size = len(schedule.blocks)
                 services = {t.service_id for t in trips}
                 if len(services) > 1:

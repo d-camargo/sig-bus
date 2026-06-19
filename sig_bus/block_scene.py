@@ -17,15 +17,105 @@
  ***************************************************************************/
 """
 
-from qgis.PyQt.QtCore import Qt, QRectF, pyqtSignal
-from qgis.PyQt.QtGui import QBrush, QColor, QFont, QPen
+import re
+import unicodedata
+
+from qgis.PyQt.QtCore import Qt, QPointF, QRectF, pyqtSignal
+from qgis.PyQt.QtGui import QBrush, QColor, QFont, QFontMetrics, QPen
 from qgis.PyQt.QtWidgets import (
+    QGraphicsItem,
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsSimpleTextItem,
 )
 
 from .block_core import fmt_hms
+
+# Fonte da sigla impressa dentro da barra da viagem.
+_BAR_LABEL_FONT = QFont('Sans Serif', 6)
+# Barra precisa ter ao menos esta largura/altura (px na cena) para receber a
+# sigla. Ida e volta têm a mesma altura cheia (a volta é distinguida por
+# hachura, não por espessura), então ambas comportam o rótulo; barras muito
+# curtas no tempo ainda ficam sem sigla (aparece só no tooltip/detalhes).
+_BAR_LABEL_MIN_W = 14
+_BAR_LABEL_MIN_H = 10
+
+# Palavras de ligação ignoradas ao montar o código do terminal.
+_CODE_STOPWORDS = {'DE', 'DA', 'DO', 'DOS', 'DAS', 'E'}
+
+
+def _ascii_upper(text):
+    """Remove acentos e devolve em maiúsculas ('DIAMANTÊ' → 'DIAMANTE')."""
+    norm = unicodedata.normalize('NFKD', text)
+    return ''.join(c for c in norm if not unicodedata.combining(c)).upper()
+
+
+def _terminal_core(headsign):
+    """Tira o prefixo de tipo (ESTACAO/MOVE/TERMINAL), sobra só o nome."""
+    s = (headsign or '').strip()
+    up = s.upper()
+    for pref in ('ESTACAO MOVE ', 'ESTAÇÃO MOVE ', 'ESTACAO ',
+                 'ESTAÇÃO ', 'TERMINAL '):
+        if up.startswith(pref):
+            return s[len(pref):].strip()
+    return s
+
+
+def _code_candidates(headsign):
+    """Códigos de 3 letras candidatos para o terminal, em ordem de
+    preferência (o primeiro ainda livre é o escolhido — ver
+    build_terminal_codes). Ex.: 'ESTACAO DIAMANTE' → ['DIA', 'DAM', ...];
+    'ESTACAO SAO GABRIEL' → ['SAG', 'SGA', ...]."""
+    core = _ascii_upper(_terminal_core(headsign))
+    words = [w for w in re.split(r'[^A-Z0-9]+', core)
+             if w and w not in _CODE_STOPWORDS]
+    out = []
+    if not words:
+        letters = re.sub(r'[^A-Z0-9]', '', core)
+        out.append((letters + 'XXX')[:3] if letters else '???')
+    elif len(words) == 1:
+        w = words[0]
+        out.append(w[:3])                      # DIAMANTE -> DIA
+        if len(w) >= 4:
+            out.append(w[0] + w[2:4])          # -> DAM (desempate)
+        out.append((w + 'XX')[:3])
+    else:
+        w0, w1 = words[0], words[1]
+        out.append(w0[:2] + w1[:1])            # SAO GABRIEL -> SAG
+        out.append(w0[:1] + w1[:2])            # -> SGA
+        out.append(''.join(w[0] for w in words)[:3])   # iniciais
+    # Normaliza para exatamente 3 chars e remove duplicatas preservando ordem.
+    seen = []
+    for c in out:
+        c = (c + 'X')[:3]
+        if c not in seen:
+            seen.append(c)
+    return seen
+
+
+def build_terminal_codes(headsigns):
+    """headsign → código único de 3 letras, estável para o diagrama atual.
+
+    O GTFS da BHTrans não traz sigla de terminal; geramos uma convenção
+    própria a partir do trip_headsign. Colisões entre terminais distintos
+    são resolvidas pelo próximo candidato e, em último caso, trocando a 3ª
+    letra (A, B, …). A iteração é ordenada para o mapa ser determinístico."""
+    codes = {}
+    used = set()
+    for hs in sorted({h for h in headsigns if h}):
+        cands = _code_candidates(hs)
+        chosen = next((c for c in cands if c not in used), None)
+        if chosen is None:
+            base = cands[0][:2]
+            for ch in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789':
+                if base + ch not in used:
+                    chosen = base + ch
+                    break
+        if chosen is None:                     # esgotou tudo (praticamente impossível)
+            chosen = cands[0]
+        used.add(chosen)
+        codes[hs] = chosen
+    return codes
 
 # Paleta qualitativa (mesma família usada no relatório), cor por linha.
 _PALETTE = [
@@ -79,9 +169,10 @@ class TimeAxisMapper:
 class TripItem(QGraphicsRectItem):
     """Barra de uma viagem. Clicável (emite scene.tripClicked) e com tooltip."""
 
-    def __init__(self, trip, rect, color):
+    def __init__(self, trip, rect, color, code=''):
         super().__init__(rect)
         self.trip = trip
+        self.code = code
         self._base_brush = QBrush(color)
         self._base_pen = QPen(color.darker(140))
         self._base_pen.setWidthF(0.6)
@@ -90,12 +181,66 @@ class TripItem(QGraphicsRectItem):
         self.setAcceptHoverEvents(True)
         self.setToolTip(self._tooltip())
         self.setCursor(Qt.PointingHandCursor)
+        # Recorta o rótulo-filho ao retângulo da barra (defesa extra além do
+        # elide), para a sigla nunca vazar por cima das barras vizinhas.
+        self.setFlag(QGraphicsItem.ItemClipsChildrenToShape, True)
+        if code:
+            self._add_label(rect, code, color)
+
+    def _add_label(self, rect, text, bg_color):
+        """Desenha a sigla do terminal dentro da barra, se houver espaço."""
+        if rect.width() < _BAR_LABEL_MIN_W or rect.height() < _BAR_LABEL_MIN_H:
+            return
+        fm = QFontMetrics(_BAR_LABEL_FONT)
+        elided = fm.elidedText(text, Qt.ElideRight, int(rect.width() - 4))
+        if not elided or elided == '…':
+            return
+        label = QGraphicsSimpleTextItem(elided, self)
+        label.setFont(_BAR_LABEL_FONT)
+        # Texto branco em fundo escuro, quase-preto em fundo claro.
+        fg = '#ffffff' if bg_color.lightness() < 140 else '#1a1a1a'
+        label.setBrush(QBrush(QColor(fg)))
+        br = label.boundingRect()
+        label.setPos(rect.left() + 2, rect.center().y() - br.height() / 2.0)
+        label.setZValue(1)
+        # O rótulo é puramente visual: ignora o mouse para o clique cair na
+        # barra (TripItem.mousePressEvent) em vez de ser engolido pelo texto.
+        label.setAcceptedMouseButtons(Qt.NoButton)
+        label.setAcceptHoverEvents(False)
+
+    # Hachura da volta: linhas diagonais semi-transparentes, espaçamento em px.
+    _HATCH_PEN = QPen(QColor(20, 20, 20, 120))
+    _HATCH_STEP = 4.0
+
+    def paint(self, painter, option, widget=None):
+        # 1) Barra normal (preenchimento na cor base + borda) via classe-mãe.
+        super().paint(painter, option, widget)
+        # 2) Só a VOLTA recebe hachura diagonal por cima, recortada à barra,
+        #    para diferenciar o sentido mantendo a mesma cor e a altura cheia
+        #    (que comporta a sigla do terminal).
+        if self.trip.direction_id != '1':
+            return
+        r = self.rect()
+        painter.save()
+        painter.setClipRect(r)
+        self._HATCH_PEN.setWidthF(0.6)
+        painter.setPen(self._HATCH_PEN)
+        # Diagonais '/' cobrindo todo o retângulo (passo fixo em px).
+        x = r.left() - r.height()
+        while x < r.right():
+            painter.drawLine(QPointF(x, r.bottom()),
+                             QPointF(x + r.height(), r.top()))
+            x += self._HATCH_STEP
+        painter.restore()
 
     def _tooltip(self):
         t = self.trip
-        return ('Linha {} ({})\n{} → {}\nViagem: {}'.format(
+        dest = t.trip_headsign or '—'
+        if self.code:
+            dest = '{} ({})'.format(dest, self.code)
+        return ('Linha {} ({}) → {}\n{} – {}\nViagem: {}'.format(
             t.route_short_name, _DIR_LABEL.get(t.direction_id, t.direction_id),
-            fmt_hms(t.start_time_s), fmt_hms(t.end_time_s), t.trip_id))
+            dest, fmt_hms(t.start_time_s), fmt_hms(t.end_time_s), t.trip_id))
 
     def set_highlighted(self, on):
         pen = QPen(QColor('#111111')) if on else self._base_pen
@@ -135,6 +280,11 @@ class BlockScene(QGraphicsScene):
         self._trip_items = {}       # trip_id -> TripItem
         self._prev_trip = {}        # trip_id -> viagem anterior (mesma linha+sentido)
         self._headway_items = []    # itens do indicador de headway (seleção)
+        self._terminal_codes = {}   # trip_headsign -> sigla de 3 letras
+
+    def terminal_code(self, headsign):
+        """Sigla de 3 letras do terminal de destino (vazio se desconhecido)."""
+        return self._terminal_codes.get(headsign or '', '')
 
     # ------------------------------------------------------------------
     def select_trip_item(self, item):
@@ -220,7 +370,8 @@ class BlockScene(QGraphicsScene):
         - 'blocks': faixa por veículo inferido; as viagens de um bloco não se
                     sobrepõem (uma sub-linha), com conectores pontilhados de
                     ociosidade entre viagens consecutivas.
-        Em ambos: cor por linha, sentido pela espessura da barra."""
+        Em ambos: cor por linha (ou veículo, no Modo Blocos); o sentido é
+        diferenciado pela hachura da volta (ver TripItem.paint)."""
         self.clear()
         self._selected_item = None
         self._route_colors = {}
@@ -232,6 +383,9 @@ class BlockScene(QGraphicsScene):
         self._mode = getattr(schedule, 'mode', 'trips')
 
         trips = schedule.trips
+        # Mapa de siglas de terminal (3 letras), único para este diagrama.
+        self._terminal_codes = build_terminal_codes(
+            t.trip_headsign for t in trips)
         t_min, t_max = schedule.time_bounds
         self.mapper = TimeAxisMapper(t_min, t_max, px_per_sec)
 
@@ -310,7 +464,8 @@ class BlockScene(QGraphicsScene):
         self._draw_idle()
         self._draw_trips(placements)
 
-        self.setSceneRect(0, 0, right + 16, total_h + 8)
+        # +24 embaixo: respiro para a linha de base e os rótulos de hora inferiores.
+        self.setSceneRect(0, 0, right + 16, total_h + 24)
 
     def _collect_idle(self, lane_trips, y):
         """Registra os trechos ociosos (gaps) entre viagens consecutivas de um
@@ -358,8 +513,8 @@ class BlockScene(QGraphicsScene):
 
     def _bar_color(self, trip):
         """Cor da barra. No Modo Blocos: por veículo (cada bloco uma cor). No
-        Modo Viagens: por linha. O sentido é sempre dado pela ESPESSURA da
-        barra (ver _draw_trips), não pela cor."""
+        Modo Viagens: por linha. O sentido é sempre dado pela HACHURA da volta
+        (ver TripItem.paint), não pela cor nem pela espessura."""
         if self._mode == 'blocks' and trip.block_id:
             return self._color_for_block(trip.block_id)
         return self._color_for_route(trip.route_short_name)
@@ -398,24 +553,38 @@ class BlockScene(QGraphicsScene):
         axis_font = QFont('Sans Serif', 7)
         grid_pen = QPen(QColor('#c8d0d8'))
         grid_pen.setWidthF(0.5)
+        # Tracejada nas meias-horas (12:30, 13:30, …) — divisão mais fina,
+        # sem rótulo, para situar embarques no meio da hora cheia.
+        half_pen = QPen(QColor('#d6dde3'))
+        half_pen.setWidthF(0.5)
+        half_pen.setStyle(Qt.DashLine)
 
+        x_max = m.x(t_max)
         first_h = int(t_min // 3600)
         last_h = int(t_max // 3600) + 1
         for h in range(first_h, last_h + 1):
             x = m.x(h * 3600)
-            if x < m.left - 0.5:
-                continue
-            line = self.addLine(x, m.top, x, total_h, grid_pen)
-            line.setZValue(-5)
-            lbl = QGraphicsSimpleTextItem('{}h'.format(h))
-            lbl.setFont(axis_font)
-            lbl.setBrush(QBrush(QColor('#555555')))
-            lbl.setPos(x + 2, m.top - 16)
-            self.addItem(lbl)
-        # Linha de base do eixo
+            if x >= m.left - 0.5:
+                line = self.addLine(x, m.top, x, total_h, grid_pen)
+                line.setZValue(-5)
+                # Rótulo da hora repetido em cima e embaixo, para referência
+                # nas duas pontas do diagrama.
+                for y_lbl in (m.top - 16, total_h + 4):
+                    lbl = QGraphicsSimpleTextItem('{}h'.format(h))
+                    lbl.setFont(axis_font)
+                    lbl.setBrush(QBrush(QColor('#555555')))
+                    lbl.setPos(x + 2, y_lbl)
+                    self.addItem(lbl)
+            # Meia-hora seguinte (h:30)
+            xh = m.x(h * 3600 + 1800)
+            if m.left - 0.5 <= xh <= x_max + 0.5:
+                hl = self.addLine(xh, m.top, xh, total_h, half_pen)
+                hl.setZValue(-6)
+        # Linhas de base do eixo (topo e base)
         base_pen = QPen(QColor('#8a97a3'))
         base_pen.setWidthF(0.8)
-        self.addLine(m.left, m.top, m.x(t_max), m.top, base_pen)
+        self.addLine(m.left, m.top, x_max, m.top, base_pen)
+        self.addLine(m.left, total_h, x_max, total_h, base_pen)
 
     def _draw_trips(self, placements):
         m = self.mapper
@@ -423,15 +592,14 @@ class BlockScene(QGraphicsScene):
             x0 = m.x(trip.start_time_s)
             x1 = m.x(trip.end_time_s)
             w = max(3.0, x1 - x0)   # garante clicabilidade de viagens curtas
-            # Sentido pela espessura: ida cheia, volta mais fina (centralizada).
-            if trip.direction_id == '1':
-                h = SUB_ROW_H * 0.5
-                y_bar = y + (SUB_ROW_H - h) / 2.0
-            else:
-                h = float(SUB_ROW_H)
-                y_bar = float(y)
+            # Ambos os sentidos com altura cheia (comporta a sigla do terminal).
+            # O sentido é diferenciado pela HACHURA da volta (TripItem.paint),
+            # não mais pela espessura.
+            h = float(SUB_ROW_H)
+            y_bar = float(y)
             rect = QRectF(x0, y_bar, w, h)
-            item = TripItem(trip, rect, self._bar_color(trip))
+            item = TripItem(trip, rect, self._bar_color(trip),
+                            self._terminal_codes.get(trip.trip_headsign, ''))
             item.setZValue(10)
             self.addItem(item)
             self._trip_items[trip.trip_id] = item
