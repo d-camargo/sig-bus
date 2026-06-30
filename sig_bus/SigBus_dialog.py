@@ -34,7 +34,14 @@ from zipfile import ZipFile
 from qgis.PyQt import uic, QtWidgets
 from qgis.PyQt.QtCore import QVariant
 from qgis.PyQt.QtGui import QFont
-from qgis.PyQt.QtWidgets import QFileDialog
+from qgis.PyQt.QtWidgets import (
+    QFileDialog,
+    QWidget,
+    QVBoxLayout,
+    QLabel,
+    QPushButton,
+    QMessageBox,
+)
 from qgis.core import (
     Qgis,
     QgsApplication,
@@ -79,6 +86,7 @@ from .gtfs_reader import (
     GtfsReader,
     create_join_indexes,
 )
+from .gtfs_edit_core import WorkingCopy
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 
@@ -936,6 +944,29 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         # Botão "Diagrama de Blocos" — definido no .ui, na aba "Análise".
         self.button_diagrama.clicked.connect(self.diagramaClicked)
 
+        # Inicialização da aba "Edição GTFS" (fatiada em código)
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        self.label_edit_status = QLabel("Nenhuma edição em andamento.")
+        self.button_edit_enter = QPushButton("Entrar no modo edição")
+        self.button_edit_discard = QPushButton("Descartar edição")
+
+        layout.addWidget(self.label_edit_status)
+        layout.addWidget(self.button_edit_enter)
+        layout.addWidget(self.button_edit_discard)
+        layout.addStretch()
+
+        self.tabWidget.addTab(tab, "Edição GTFS")
+
+        self._working_copy = None
+
+        # Conexões da Edição GTFS
+        self.button_edit_enter.clicked.connect(self.editEnterClicked)
+        self.button_edit_discard.clicked.connect(self.editDiscardClicked)
+
+        self._refresh_edit_status()
+
     def field_select(self):
         #field = self.mFieldComboBox.fields()
         layer = self.mMapLayerComboBox.currentLayer()
@@ -1684,6 +1715,105 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 'Erro',
                 'Falha ao exportar PDF (código {}).'.format(res),
                 level=Qgis.Critical, duration=10)
+
+    def editEnterClicked(self):
+        """
+        Inicia ou retoma o modo de edição do GTFS.
+        Clona o GeoPackage de origem para feed_edit.gpkg e prepara a cópia de trabalho.
+        """
+        gpkg = self._resolve_gpkg(prompt_if_missing=True)
+        if not gpkg:
+            iface.messageBar().pushMessage(
+                "Aviso",
+                "GTFS não encontrado — carregue ou reconecte o GeoPackage primeiro.",
+                level=Qgis.Warning, duration=8
+            )
+            return
+
+        wc = WorkingCopy(gpkg)
+
+        if wc.is_active():
+            reply = QMessageBox.question(
+                self,
+                "Edição em andamento",
+                "Já existe uma edição em andamento. Recriar do zero? (Não = retomar a atual)",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                ok = wc.enter(overwrite=True)
+            else:
+                ok = True  # Retoma a edição existente
+        else:
+            ok = wc.enter()
+            if not ok:
+                iface.messageBar().pushMessage(
+                    "Erro",
+                    "Falha ao criar a cópia de trabalho do GeoPackage (feed_edit.gpkg).",
+                    level=Qgis.Critical, duration=10
+                )
+                return
+
+        if ok:
+            self._working_copy = wc
+            iface.messageBar().pushMessage(
+                "Info",
+                "Modo de edição do GTFS ativado com sucesso.",
+                level=Qgis.Info, duration=8
+            )
+            self._refresh_edit_status()
+
+    def editDiscardClicked(self):
+        """
+        Descarta a edição atual apagando o arquivo feed_edit.gpkg após confirmação do usuário.
+        """
+        if self._working_copy is None or not self._working_copy.is_active():
+            iface.messageBar().pushMessage(
+                "Aviso",
+                "Nenhuma edição para descartar.",
+                level=Qgis.Warning, duration=8
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Descartar Edição",
+            "Tem certeza que deseja descartar todas as alterações não salvas? Esta operação não pode ser desfeita.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            wc = self._working_copy
+            if wc.discard():
+                self._working_copy = None
+                iface.messageBar().pushMessage(
+                    "Info",
+                    "Edição descartada e arquivo temporário excluído.",
+                    level=Qgis.Info, duration=8
+                )
+                self._refresh_edit_status()
+            else:
+                iface.messageBar().pushMessage(
+                    "Erro",
+                    "Falha ao apagar o arquivo de edição temporário.",
+                    level=Qgis.Critical, duration=10
+                )
+
+    def _refresh_edit_status(self):
+        """
+        Atualiza o rótulo de status e o estado de habilitação dos botões da aba de edição.
+        """
+        active = self._working_copy is not None and self._working_copy.is_active()
+        if active:
+            filename = os.path.basename(self._working_copy.edit_path)
+            self.label_edit_status.setText("Edição em andamento: {}".format(filename))
+            self.button_edit_enter.setEnabled(False)
+            self.button_edit_discard.setEnabled(True)
+        else:
+            self.label_edit_status.setText("Nenhuma edição em andamento.")
+            self.button_edit_enter.setEnabled(True)
+            self.button_edit_discard.setEnabled(False)
 
     # ------------------------------------------------------------------
     def _cluster_stops(self, stop_list, k):
