@@ -955,9 +955,15 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.button_edit_enter = QPushButton("Entrar no modo edição")
 
         self.combo_edit_table = QComboBox()
-        self.combo_edit_table.addItems(gtfs_schema.editable_tables())
-        self.button_edit_open = QPushButton("Abrir para edição")
+        # ponytail: Filtra as tabelas para não oferecer paradas, shapes e stop_times na grade nativa
+        tabelas_grade = [
+            t for t in gtfs_schema.editable_tables()
+            if t not in ('stops', 'shapes', 'stop_times')
+        ]
+        self.combo_edit_table.addItems(tabelas_grade)
 
+        self.button_edit_open = QPushButton("Abrir para edição")
+        self.button_edit_stops = QPushButton("Editar paradas no mapa")
         self.button_edit_export = QPushButton("Exportar .zip")
         self.button_edit_discard = QPushButton("Descartar edição")
 
@@ -965,6 +971,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         layout.addWidget(self.button_edit_enter)
         layout.addWidget(self.combo_edit_table)
         layout.addWidget(self.button_edit_open)
+        layout.addWidget(self.button_edit_stops)
         layout.addWidget(self.button_edit_export)
         layout.addWidget(self.button_edit_discard)
         layout.addStretch()
@@ -976,6 +983,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         # Conexões da Edição GTFS
         self.button_edit_enter.clicked.connect(self.editEnterClicked)
         self.button_edit_open.clicked.connect(self.editOpenClicked)
+        self.button_edit_stops.clicked.connect(self.editStopsClicked)
         self.button_edit_export.clicked.connect(self.exportClicked)
         self.button_edit_discard.clicked.connect(self.editDiscardClicked)
 
@@ -1904,6 +1912,56 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             level=Qgis.Info, duration=8
         )
 
+    def editStopsClicked(self):
+        """
+        Carrega a camada de paradas (stops) a partir de feed_edit.gpkg, trava o campo stop_id,
+        inicia a edição, ativa a ferramenta de vértices e fecha o diálogo do SIG-Bus.
+        """
+        if self._working_copy is None or not self._working_copy.is_active():
+            iface.messageBar().pushMessage(
+                "Aviso",
+                "Entre no modo edição primeiro.",
+                level=Qgis.Warning, duration=8
+            )
+            return
+
+        uri = self._working_copy.edit_path + '|layername=stops'
+        layer = QgsVectorLayer(uri, 'edit_stops', 'ogr')
+
+        if not layer.isValid():
+            iface.messageBar().pushMessage(
+                "Erro",
+                "Falha ao carregar a camada edit_stops.",
+                level=Qgis.Critical, duration=10
+            )
+            return
+
+        # Travar stop_id para evitar alteracao indesejada
+        cfg = layer.editFormConfig()
+        idx = layer.fields().indexFromName('stop_id')
+        if idx >= 0:
+            cfg.setReadOnly(idx, True)
+        layer.setEditFormConfig(cfg)
+
+        QgsProject.instance().addMapLayer(layer)
+        self._edit_stops_layer = layer
+        iface.setActiveLayer(layer)
+        layer.startEditing()
+
+        # Ativa a ferramenta de vertices do QGIS se disponivel
+        try:
+            iface.actionVertexTool().trigger()
+        except Exception:
+            # ponytail: Nao impede o fluxo caso a versao do QGIS tenha outra acao/nome
+            pass
+
+        iface.messageBar().pushMessage(
+            "Info",
+            "Paradas em edição: mova os pontos e salve pela barra de edição do QGIS.",
+            level=Qgis.Info, duration=8
+        )
+        self.close()
+
     def _refresh_edit_status(self):
         """
         Atualiza o rótulo de status e o estado de habilitação dos botões da aba de edição.
@@ -1915,6 +1973,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self.button_edit_enter.setEnabled(False)
             self.combo_edit_table.setEnabled(True)
             self.button_edit_open.setEnabled(True)
+            self.button_edit_stops.setEnabled(True)
             self.button_edit_export.setEnabled(True)
             self.button_edit_discard.setEnabled(True)
         else:
@@ -1922,6 +1981,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self.button_edit_enter.setEnabled(True)
             self.combo_edit_table.setEnabled(False)
             self.button_edit_open.setEnabled(False)
+            self.button_edit_stops.setEnabled(False)
             self.button_edit_export.setEnabled(True)
             self.button_edit_discard.setEnabled(False)
 
