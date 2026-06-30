@@ -41,6 +41,7 @@ from qgis.PyQt.QtWidgets import (
     QLabel,
     QPushButton,
     QMessageBox,
+    QComboBox,
 )
 from qgis.core import (
     Qgis,
@@ -87,6 +88,7 @@ from .gtfs_reader import (
     create_join_indexes,
 )
 from .gtfs_edit_core import WorkingCopy
+from . import gtfs_schema
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 
@@ -950,10 +952,17 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
         self.label_edit_status = QLabel("Nenhuma edição em andamento.")
         self.button_edit_enter = QPushButton("Entrar no modo edição")
+
+        self.combo_edit_table = QComboBox()
+        self.combo_edit_table.addItems(gtfs_schema.editable_tables())
+        self.button_edit_open = QPushButton("Abrir para edição")
+
         self.button_edit_discard = QPushButton("Descartar edição")
 
         layout.addWidget(self.label_edit_status)
         layout.addWidget(self.button_edit_enter)
+        layout.addWidget(self.combo_edit_table)
+        layout.addWidget(self.button_edit_open)
         layout.addWidget(self.button_edit_discard)
         layout.addStretch()
 
@@ -963,6 +972,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
         # Conexões da Edição GTFS
         self.button_edit_enter.clicked.connect(self.editEnterClicked)
+        self.button_edit_open.clicked.connect(self.editOpenClicked)
         self.button_edit_discard.clicked.connect(self.editDiscardClicked)
 
         self._refresh_edit_status()
@@ -1800,6 +1810,54 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     level=Qgis.Critical, duration=10
                 )
 
+    def editOpenClicked(self):
+        """
+        Carrega a tabela de atributos nativa do QGIS a partir do feed_edit.gpkg,
+        aplica restrição de leitura nos campos de ID travados e fecha o diálogo do SIG-Bus.
+        """
+        if self._working_copy is None or not self._working_copy.is_active():
+            iface.messageBar().pushMessage(
+                "Aviso",
+                "Entre no modo edição primeiro.",
+                level=Qgis.Warning, duration=8
+            )
+            return
+
+        table = self.combo_edit_table.currentText()
+        uri = self._working_copy.edit_path + '|layername=' + table
+        layer = QgsVectorLayer(uri, 'edit_' + table, 'ogr')
+
+        if not layer.isValid():
+            iface.messageBar().pushMessage(
+                "Erro",
+                "Falha ao carregar a camada edit_{}.".format(table),
+                level=Qgis.Critical, duration=10
+            )
+            return
+
+        # Travar IDs do gtfs_schema
+        if table in gtfs_schema.GTFS_FILES:
+            cfg = layer.editFormConfig()
+            columns = gtfs_schema.GTFS_FILES[table]["columns"]
+            for col in columns:
+                if not col.editable:
+                    idx = layer.fields().indexFromName(col.name)
+                    if idx >= 0:
+                        cfg.setReadOnly(idx, True)
+            layer.setEditFormConfig(cfg)
+
+        QgsProject.instance().addMapLayer(layer)
+        layer.startEditing()
+        iface.showAttributeTable(layer)
+        self._edit_layer = layer
+
+        iface.messageBar().pushMessage(
+            "Info",
+            "Tabela edit_{} aberta para edição no QGIS. O diálogo foi fechado.".format(table),
+            level=Qgis.Info, duration=8
+        )
+        self.close()
+
     def _refresh_edit_status(self):
         """
         Atualiza o rótulo de status e o estado de habilitação dos botões da aba de edição.
@@ -1809,10 +1867,14 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             filename = os.path.basename(self._working_copy.edit_path)
             self.label_edit_status.setText("Edição em andamento: {}".format(filename))
             self.button_edit_enter.setEnabled(False)
+            self.combo_edit_table.setEnabled(True)
+            self.button_edit_open.setEnabled(True)
             self.button_edit_discard.setEnabled(True)
         else:
             self.label_edit_status.setText("Nenhuma edição em andamento.")
             self.button_edit_enter.setEnabled(True)
+            self.combo_edit_table.setEnabled(False)
+            self.button_edit_open.setEnabled(False)
             self.button_edit_discard.setEnabled(False)
 
     # ------------------------------------------------------------------
