@@ -19,11 +19,23 @@
 
 from collections import namedtuple
 
-# Estrutura simples para representar os metadados de uma coluna do GTFS
+# ponytail: Namedtuple Col é a estrutura de dados mais simples e sem overhead
+# para guardar os metadados de cada coluna na stdlib.
 Col = namedtuple("Col", "name editable required")
 
-# Dicionário contendo a especificação das tabelas GTFS (nesta fatia apenas routes e trips)
+# Dicionário contendo a especificação de todas as tabelas exportadas pelo GTFS
 GTFS_FILES = {
+    "agency": {
+        "columns": [
+            Col("agency_id", False, False),
+            Col("agency_name", True, True),
+            Col("agency_url", True, True),
+            Col("agency_timezone", True, True),
+            Col("agency_lang", True, False),
+            Col("agency_phone", True, False),
+        ],
+        "foreign_keys": [],
+    },
     "routes": {
         "columns": [
             Col("route_id", False, True),
@@ -51,6 +63,70 @@ GTFS_FILES = {
             ("shape_id", "shapes", "shape_id"),
         ],
     },
+    "stops": {
+        "columns": [
+            Col("stop_id", False, True),
+            Col("stop_code", True, False),
+            Col("stop_name", True, True),
+            Col("stop_desc", True, False),
+            Col("stop_lat", True, True),
+            Col("stop_lon", True, True),
+            Col("zone_id", True, False),
+            Col("location_type", True, False),
+            Col("parent_station", False, False),
+        ],
+        "foreign_keys": [],
+    },
+    "stop_times": {
+        "columns": [
+            Col("trip_id", False, True),
+            Col("arrival_time", True, True),
+            Col("departure_time", True, True),
+            Col("stop_id", False, True),
+            Col("stop_sequence", True, True),
+            Col("stop_headsign", True, False),
+            Col("pickup_type", True, False),
+            Col("drop_off_type", True, False),
+            Col("timepoint", True, False),
+        ],
+        "foreign_keys": [
+            ("trip_id", "trips", "trip_id"),
+            ("stop_id", "stops", "stop_id"),
+        ],
+    },
+    "calendar": {
+        "columns": [
+            Col("service_id", False, True),
+            Col("monday", True, True),
+            Col("tuesday", True, True),
+            Col("wednesday", True, True),
+            Col("thursday", True, True),
+            Col("friday", True, True),
+            Col("saturday", True, True),
+            Col("sunday", True, True),
+            Col("start_date", True, True),
+            Col("end_date", True, True),
+        ],
+        "foreign_keys": [],
+    },
+    "calendar_dates": {
+        "columns": [
+            Col("service_id", False, True),
+            Col("date", True, True),
+            Col("exception_type", True, True),
+        ],
+        "foreign_keys": [],
+    },
+    "shapes": {
+        "columns": [
+            Col("shape_id", False, True),
+            Col("shape_pt_lat", True, True),
+            Col("shape_pt_lon", True, True),
+            Col("shape_pt_sequence", True, True),
+            Col("shape_dist_traveled", True, False),
+        ],
+        "foreign_keys": [],
+    },
 }
 
 
@@ -58,6 +134,7 @@ def editable_tables():
     """
     Retorna a lista de tabelas editáveis configuradas no esquema.
     """
+    # ponytail: Manter a lógica original simples, baseada nas chaves do dicionário.
     return list(GTFS_FILES.keys())
 
 
@@ -68,3 +145,13 @@ def editable_columns(table):
     if table not in GTFS_FILES:
         return []
     return [col.name for col in GTFS_FILES[table]["columns"] if col.editable]
+
+
+def column_order(table):
+    """
+    Retorna a lista dos nomes das colunas na ordem canônica para uma dada tabela.
+    """
+    # ponytail: List comprehension direta e simples para extrair a ordem das colunas.
+    if table not in GTFS_FILES:
+        return []
+    return [col.name for col in GTFS_FILES[table]["columns"]]

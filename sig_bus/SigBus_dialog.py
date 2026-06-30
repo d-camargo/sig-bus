@@ -89,6 +89,7 @@ from .gtfs_reader import (
 )
 from .gtfs_edit_core import WorkingCopy
 from . import gtfs_schema
+from .gtfs_export import GtfsExporter
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 
@@ -957,12 +958,14 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.combo_edit_table.addItems(gtfs_schema.editable_tables())
         self.button_edit_open = QPushButton("Abrir para edição")
 
+        self.button_edit_export = QPushButton("Exportar .zip")
         self.button_edit_discard = QPushButton("Descartar edição")
 
         layout.addWidget(self.label_edit_status)
         layout.addWidget(self.button_edit_enter)
         layout.addWidget(self.combo_edit_table)
         layout.addWidget(self.button_edit_open)
+        layout.addWidget(self.button_edit_export)
         layout.addWidget(self.button_edit_discard)
         layout.addStretch()
 
@@ -973,6 +976,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         # Conexões da Edição GTFS
         self.button_edit_enter.clicked.connect(self.editEnterClicked)
         self.button_edit_open.clicked.connect(self.editOpenClicked)
+        self.button_edit_export.clicked.connect(self.exportClicked)
         self.button_edit_discard.clicked.connect(self.editDiscardClicked)
 
         self._refresh_edit_status()
@@ -1858,6 +1862,48 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         )
         self.close()
 
+    def exportClicked(self):
+        """
+        Inicia a exportação dos dados do GeoPackage (ativo de edição ou original)
+        para um arquivo .zip normalizado em segundo plano.
+        """
+        if self._working_copy is not None and self._working_copy.is_active():
+            gpkg_source = self._working_copy.edit_path
+        else:
+            gpkg_source = self._resolve_gpkg(prompt_if_missing=True)
+
+        if not gpkg_source:
+            iface.messageBar().pushMessage(
+                "Aviso",
+                "GeoPackage não encontrado. Carregue ou reconecte o GTFS primeiro.",
+                level=Qgis.Warning, duration=8
+            )
+            return
+
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Exportar GTFS",
+            "feed_novo.zip",
+            "Zip (*.zip)"
+        )
+        if not save_path:
+            return
+
+        if not save_path.lower().endswith(".zip"):
+            save_path += ".zip"
+
+        task = GtfsExporter(gpkg_source, save_path)
+        # ponytail: Mantemos a referência da task em self._export_task para
+        # evitar que o Garbage Collector a destrua prematuramente.
+        self._export_task = task
+        QgsApplication.taskManager().addTask(task)
+
+        iface.messageBar().pushMessage(
+            "Info",
+            "Exportando GTFS em segundo plano...",
+            level=Qgis.Info, duration=8
+        )
+
     def _refresh_edit_status(self):
         """
         Atualiza o rótulo de status e o estado de habilitação dos botões da aba de edição.
@@ -1869,12 +1915,14 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self.button_edit_enter.setEnabled(False)
             self.combo_edit_table.setEnabled(True)
             self.button_edit_open.setEnabled(True)
+            self.button_edit_export.setEnabled(True)
             self.button_edit_discard.setEnabled(True)
         else:
             self.label_edit_status.setText("Nenhuma edição em andamento.")
             self.button_edit_enter.setEnabled(True)
             self.combo_edit_table.setEnabled(False)
             self.button_edit_open.setEnabled(False)
+            self.button_edit_export.setEnabled(True)
             self.button_edit_discard.setEnabled(False)
 
     # ------------------------------------------------------------------
