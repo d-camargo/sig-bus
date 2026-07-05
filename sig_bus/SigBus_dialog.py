@@ -90,6 +90,7 @@ from .gtfs_reader import (
 from .gtfs_edit_core import WorkingCopy
 from . import gtfs_schema
 from .gtfs_export import GtfsExporter
+from .gtfs_validator import GtfsValidator
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 
@@ -956,7 +957,15 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
         self.combo_edit_table = QComboBox()
         self.combo_edit_table.addItems(gtfs_schema.editable_tables())
+
+        # Seletores de linha e viagem para stop_times
+        self.label_edit_route = QLabel("Linha (route_short_name):")
+        self.combo_edit_route = QComboBox()
+        self.label_edit_trip = QLabel("Viagem (trip_id):")
+        self.combo_edit_trip = QComboBox()
+
         self.button_edit_open = QPushButton("Abrir para edição")
+        self.button_edit_validate = QPushButton("Validar")
 
         self.button_edit_export = QPushButton("Exportar .zip")
         self.button_edit_discard = QPushButton("Descartar edição")
@@ -964,7 +973,12 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         layout.addWidget(self.label_edit_status)
         layout.addWidget(self.button_edit_enter)
         layout.addWidget(self.combo_edit_table)
+        layout.addWidget(self.label_edit_route)
+        layout.addWidget(self.combo_edit_route)
+        layout.addWidget(self.label_edit_trip)
+        layout.addWidget(self.combo_edit_trip)
         layout.addWidget(self.button_edit_open)
+        layout.addWidget(self.button_edit_validate)
         layout.addWidget(self.button_edit_export)
         layout.addWidget(self.button_edit_discard)
         layout.addStretch()
@@ -976,8 +990,11 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         # Conexões da Edição GTFS
         self.button_edit_enter.clicked.connect(self.editEnterClicked)
         self.button_edit_open.clicked.connect(self.editOpenClicked)
+        self.button_edit_validate.clicked.connect(self.validateClicked)
         self.button_edit_export.clicked.connect(self.exportClicked)
         self.button_edit_discard.clicked.connect(self.editDiscardClicked)
+        self.combo_edit_table.currentTextChanged.connect(self._on_edit_table_changed)
+        self.combo_edit_route.currentTextChanged.connect(self._on_edit_route_changed)
 
         self._refresh_edit_status()
 
@@ -1828,6 +1845,21 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             return
 
         table = self.combo_edit_table.currentText()
+        if table == "stop_times":
+            trip_id = self.combo_edit_trip.currentText()
+            if not trip_id or not trip_id.strip():
+                iface.messageBar().pushMessage(
+                    "Aviso",
+                    "Selecione uma viagem para editar a tabela stop_times.",
+                    level=Qgis.Warning, duration=8
+                )
+                return
+            trip_id = trip_id.strip()
+
+        # Decisão (passo 5 do PLAN.md): a camada de linhas 'shapes' (gerada por
+        # build_shapes_line) é a fonte editável por vértice no canvas; já tem
+        # esse mesmo nome no GeoPackage, então o nome da tabela do combo já
+        # corresponde ao nome da camada.
         uri = self._working_copy.edit_path + '|layername=' + table
         layer = QgsVectorLayer(uri, 'edit_' + table, 'ogr')
 
@@ -1838,6 +1870,9 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 level=Qgis.Critical, duration=10
             )
             return
+
+        if table == "stop_times":
+            layer.setSubsetString("trip_id = '{}'".format(trip_id.replace("'", "''")))
 
         # Travar IDs do gtfs_schema
         if table in gtfs_schema.GTFS_FILES:
@@ -1855,12 +1890,91 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         iface.showAttributeTable(layer)
         self._edit_layer = layer
 
+        if table in ["stops", "shapes"]:
+            iface.setActiveLayer(layer)
+            extent = layer.extent()
+            if not extent.isEmpty():
+                iface.mapCanvas().setExtent(extent)
+                iface.mapCanvas().refresh()
+            if hasattr(iface, "actionVertexToolActiveLayer"):
+                iface.actionVertexToolActiveLayer().trigger()
+            elif hasattr(iface, "actionVertexTool"):
+                iface.actionVertexTool().trigger()
+
         iface.messageBar().pushMessage(
             "Info",
             "Tabela edit_{} aberta para edição no QGIS. O diálogo foi fechado.".format(table),
             level=Qgis.Info, duration=8
         )
         self.close()
+
+    def validateClicked(self):
+        """
+        Valida os dados da edição atual (feed_edit.gpkg) usando o GtfsValidator.
+        """
+        if self._working_copy is None or not self._working_copy.is_active():
+            iface.messageBar().pushMessage(
+                "Aviso",
+                "Nenhuma edição ativa para validar.",
+                level=Qgis.Warning, duration=8
+            )
+            return
+
+        gpkg_path = self._working_copy.edit_path
+        if not os.path.exists(gpkg_path):
+            iface.messageBar().pushMessage(
+                "Erro",
+                "Arquivo de edição GeoPackage não encontrado.",
+                level=Qgis.Critical, duration=8
+            )
+            return
+
+        try:
+            validator = GtfsValidator(gpkg_path)
+            errors, warnings = validator.validate()
+        except Exception as e:
+            msg = "Erro durante a validação: {}".format(e)
+            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.Critical)
+            iface.messageBar().pushMessage(
+                "Erro",
+                msg,
+                level=Qgis.Critical, duration=10
+            )
+            return
+
+        # Registrar no log
+        QgsMessageLog.logMessage("Iniciando validação de GTFS no SIG-Bus...", 'SIG-Bus', Qgis.Info)
+
+        # Logar cada erro
+        for err in errors:
+            QgsMessageLog.logMessage("[Erro] {}".format(err), 'SIG-Bus', Qgis.Warning)
+
+        # Logar cada aviso
+        for warn in warnings:
+            QgsMessageLog.logMessage("[Aviso] {}".format(warn), 'SIG-Bus', Qgis.Info)
+
+        # Reportar resumo via messageBar
+        if errors and warnings:
+            msg = "Validação concluída com {} erro(s) e {} aviso(s). Veja o painel de log (SIG-Bus) para detalhes.".format(
+                len(errors), len(warnings)
+            )
+            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.Critical, duration=10)
+        elif errors:
+            msg = "Validação concluída com {} erro(s). Veja o painel de log (SIG-Bus) para detalhes.".format(
+                len(errors)
+            )
+            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.Critical, duration=10)
+        elif warnings:
+            msg = "Validação concluída com {} aviso(s). Veja o painel de log (SIG-Bus) para detalhes.".format(
+                len(warnings)
+            )
+            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.Warning, duration=10)
+        else:
+            iface.messageBar().pushMessage(
+                "Validação GTFS",
+                "GTFS validado com sucesso! Nenhum erro ou aviso encontrado.",
+                level=Qgis.Info, duration=8
+            )
 
     def exportClicked(self):
         """
@@ -1879,6 +1993,54 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 level=Qgis.Warning, duration=8
             )
             return
+
+        try:
+            validator = GtfsValidator(gpkg_source)
+            errors, warnings = validator.validate()
+        except Exception as e:
+            msg = "Erro durante a validação pré-exportação: {}".format(e)
+            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.Critical)
+            iface.messageBar().pushMessage(
+                "Erro",
+                msg,
+                level=Qgis.Critical, duration=10
+            )
+            return
+
+        if errors:
+            QgsMessageLog.logMessage("Erro de validação pré-exportação bloqueou a exportação.", 'SIG-Bus', Qgis.Critical)
+            for err in errors:
+                QgsMessageLog.logMessage("[Erro Fatal] {}".format(err), 'SIG-Bus', Qgis.Warning)
+
+            msg_relatorio = "\n".join("- {}".format(err) for err in errors[:10])
+            if len(errors) > 10:
+                msg_relatorio += "\n... e mais {} erro(s).".format(len(errors) - 10)
+
+            QMessageBox.critical(
+                self,
+                "Erro de Validação - Exportação Cancelada",
+                "A exportação foi cancelada devido a erros de validação:\n\n" + msg_relatorio + "\n\nConsulte o painel de log (SIG-Bus) para detalhes."
+            )
+            return
+
+        if warnings:
+            QgsMessageLog.logMessage("Avisos de validação pré-exportação encontrados.", 'SIG-Bus', Qgis.Info)
+            for warn in warnings:
+                QgsMessageLog.logMessage("[Aviso] {}".format(warn), 'SIG-Bus', Qgis.Info)
+
+            msg_avisos = "\n".join("- {}".format(warn) for warn in warnings[:5])
+            if len(warnings) > 5:
+                msg_avisos += "\n... e mais {} aviso(s).".format(len(warnings) - 5)
+
+            reply = QMessageBox.warning(
+                self,
+                "Avisos de Validação",
+                "A validação encontrou alguns avisos. Deseja prosseguir com a exportação mesmo assim?\n\n" + msg_avisos,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
 
         save_path, _ = QFileDialog.getSaveFileName(
             self,
@@ -1915,6 +2077,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self.button_edit_enter.setEnabled(False)
             self.combo_edit_table.setEnabled(True)
             self.button_edit_open.setEnabled(True)
+            self.button_edit_validate.setEnabled(True)
             self.button_edit_export.setEnabled(True)
             self.button_edit_discard.setEnabled(True)
         else:
@@ -1922,8 +2085,77 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self.button_edit_enter.setEnabled(True)
             self.combo_edit_table.setEnabled(False)
             self.button_edit_open.setEnabled(False)
+            self.button_edit_validate.setEnabled(False)
             self.button_edit_export.setEnabled(True)
             self.button_edit_discard.setEnabled(False)
+
+        self._update_stop_times_selectors()
+
+    def _on_edit_table_changed(self, table_name):
+        self._update_stop_times_selectors()
+
+    def _update_stop_times_selectors(self):
+        active = self._working_copy is not None and self._working_copy.is_active()
+        table_selected = self.combo_edit_table.currentText()
+        is_stop_times = (table_selected == "stop_times")
+        enable_filters = active and is_stop_times
+
+        self.label_edit_route.setEnabled(enable_filters)
+        self.combo_edit_route.setEnabled(enable_filters)
+        self.label_edit_trip.setEnabled(enable_filters)
+        self.combo_edit_trip.setEnabled(enable_filters)
+
+        if enable_filters:
+            if self.combo_edit_route.count() == 0:
+                self._populate_edit_routes()
+        else:
+            self.combo_edit_route.clear()
+            self.combo_edit_trip.clear()
+
+    def _populate_edit_routes(self):
+        self.combo_edit_route.clear()
+        self.combo_edit_trip.clear()
+        if not self._working_copy or not self._working_copy.edit_path:
+            return
+        gpkg = self._working_copy.edit_path
+        if not os.path.exists(gpkg):
+            return
+
+        try:
+            with sqlite3.connect(gpkg) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT DISTINCT route_short_name FROM routes "
+                    "WHERE route_short_name IS NOT NULL AND route_short_name != '' "
+                    "ORDER BY route_short_name"
+                )
+                routes = [row[0] for row in cursor.fetchall()]
+                self.combo_edit_route.addItems(routes)
+        except sqlite3.Error:
+            pass
+
+    def _on_edit_route_changed(self, route_short_name):
+        self.combo_edit_trip.clear()
+        if not route_short_name or not self._working_copy or not self._working_copy.edit_path:
+            return
+        gpkg = self._working_copy.edit_path
+        if not os.path.exists(gpkg):
+            return
+
+        try:
+            with sqlite3.connect(gpkg) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT DISTINCT t.trip_id FROM trips t "
+                    "JOIN routes r ON t.route_id = r.route_id "
+                    "WHERE r.route_short_name = ? AND t.trip_id IS NOT NULL AND t.trip_id != '' "
+                    "ORDER BY t.trip_id",
+                    (route_short_name,)
+                )
+                trips = [row[0] for row in cursor.fetchall()]
+                self.combo_edit_trip.addItems(trips)
+        except sqlite3.Error:
+            pass
 
     # ------------------------------------------------------------------
     def _cluster_stops(self, stop_list, k):
