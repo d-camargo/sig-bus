@@ -120,14 +120,16 @@ GTFS_FILES = {
     "shapes": {
         "columns": [
             Col("shape_id", False, True),
-            Col("shape_pt_lat", True, True),
-            Col("shape_pt_lon", True, True),
-            Col("shape_pt_sequence", True, True),
-            Col("shape_dist_traveled", True, False),
         ],
         "foreign_keys": [],
     },
 }
+
+# ponytail: shapes.txt não tem colunas físicas de lat/lon/sequência (a camada
+# editável 'shapes' só guarda shape_id — ver decisão do passo 5 do PLAN.md);
+# a ordem de exportação fica aqui, não hardcoded em gtfs_export.py, para
+# manter este módulo como fonte única da verdade (decisão 6 do PLAN.md).
+SHAPES_EXPORT_COLUMNS = ["shape_id", "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"]
 
 
 def editable_tables():

@@ -30,6 +30,7 @@ Developed as part of the undergraduate research project PIBIC DPPG 113/2021.
   *departed* in that hour is used.
 - **Reconnect GeoPackage:** restores GTFS layers to the project without
   reprocessing the feed (useful after closing and reopening QGIS).
+- **Edit GTFS:** allows editing GTFS fields and geometry in an isolated working copy (`feed_edit.gpkg`), with built-in validation and normalized export (see [sig_bus/GUIA_EDICAO_GTFS.md](sig_bus/GUIA_EDICAO_GTFS.md)).
 
 The GTFS reader is **built-in** (`gtfs_reader.py`), adapted from the *GTFS Loader*
 plugin by CTU GeoForAll Lab (GPL v2+). No external plugin is required.
@@ -48,6 +49,7 @@ plugin by CTU GeoForAll Lab (GPL v2+). No external plugin is required.
     ├── SigBus_dialog_base.ui
     ├── gtfs_reader.py       # built-in GTFS reader
     ├── DOCUMENTACAO.md      # detailed feature documentation (EN + PT-BR)
+    ├── GUIA_EDICAO_GTFS.md  # user guide for GTFS editing (PT-BR)
     ├── METHODS.md           # theoretical foundation of the allocation method
     ├── metadata.txt
     ├── icon.png
@@ -125,6 +127,7 @@ Desenvolvido no contexto do projeto de Iniciação Científica PIBIC DPPG 113/20
   viagens que *iniciaram* naquela hora.
 - **Reconectar GeoPackage:** restaura as camadas GTFS ao projeto sem
   reprocessar o feed (útil após fechar e reabrir o QGIS).
+- **Edição GTFS:** permite editar campos e geometria em uma cópia de trabalho isolada (`feed_edit.gpkg`), com validação integrada e exportação normalizada (veja [sig_bus/GUIA_EDICAO_GTFS.md](sig_bus/GUIA_EDICAO_GTFS.md)).
 
 O leitor de GTFS é **embutido** (`gtfs_reader.py`), adaptado do plugin
 *GTFS Loader* do CTU GeoForAll Lab (GPL v2+). Nenhum plugin externo é
@@ -144,6 +147,7 @@ necessário.
     ├── SigBus_dialog_base.ui
     ├── gtfs_reader.py       # leitor GTFS embutido
     ├── DOCUMENTACAO.md      # documentação detalhada das funcionalidades (EN + PT-BR)
+    ├── GUIA_EDICAO_GTFS.md  # guia do usuário para edição de GTFS (PT-BR)
     ├── METHODS.md           # embasamento teórico do método de alocação
     ├── metadata.txt
     ├── icon.png

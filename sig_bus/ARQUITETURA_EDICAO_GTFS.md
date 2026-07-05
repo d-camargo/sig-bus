@@ -197,22 +197,22 @@ Aba "Edição GTFS"
 Fecha o ciclo **editar → exportar** cedo, com tabelas simples, antes de canvas e
 `stop_times`:
 
-1. **Esqueleto** — aba "Edição GTFS" + `WorkingCopy` (entrar/descartar) +
-   `gtfs_schema` com 1–2 tabelas.  ← *fatia atual*
-2. **Edição não-espacial** de uma tabela simples (ex.: `routes` →
+1. [x] **Esqueleto** — aba "Edição GTFS" + `WorkingCopy` (entrar/descartar) +
+   `gtfs_schema` com 1–2 tabelas.
+2. [x] **Edição não-espacial** de uma tabela simples (ex.: `routes` →
    `route_short_name`/`route_long_name`) na tabela nativa, IDs travados.
-3. **Exportador normalizado** (tabelas simples + calendar correto) → ciclo completo
+3. [x] **Exportador normalizado** (tabelas simples + calendar correto) → ciclo completo
    ponta a ponta.
-4. **Edição espacial** (`stops`, depois `shapes`).
-5. **`stop_times`** filtrado.
-6. **`GtfsValidator`** completo na exportação.
+4. [x] **Edição espacial** (`stops`, depois `shapes`).
+5. [x] **`stop_times`** filtrado.
+6. [x] **`GtfsValidator`** completo na exportação.
 
 ---
 
-## 8. Pontos em aberto (decidir durante a implementação)
+## 8. Resoluções e decisões da implementação
 
-- Aba no diálogo principal **vs.** janela própria (como o Diagrama de Blocos).
-- Comportamento ao reentrar no modo edição com `feed_edit.gpkg` já existente
-  (retomar vs. recriar).
-- Onde gravar o `.zip` exportado (diálogo de "salvar como" vs. ao lado do feed).
-- Tratamento de `agency_id` quando o feed tem uma única agência (campo opcional).
+- **Modelo de edição de `shapes`:** A edição de traçados ocorre exclusivamente na camada de linhas `shapes` (gerada pelo QGIS a partir dos pontos do feed). A camada de pontos `shapes_point` original não é exposta na interface de edição para evitar inconsistências. Durante a exportação, o arquivo `shapes.txt` é regenerado extraindo cada vértice da linha como um ponto individual, ordenando e numerando-os sequencialmente por `shape_pt_sequence`.
+- **Tratamento de `agency_id` em feed de agência única:** Em `gtfs_schema.py`, o campo `agency_id` é marcado como opcional (`required=False`) tanto na tabela `agency` quanto na tabela `routes`. O validador `GtfsValidator` só exige a validação de integridade referencial `routes.agency_id -> agency.agency_id` para registros em que o campo esteja preenchido. Se o feed omitir ou deixar em branco esses campos, a validação é concluída sem gerar erros.
+- **Interface e layout:** A funcionalidade de edição foi integrada como uma nova aba ("Edição GTFS") no diálogo principal do SIG-Bus.
+- **Retomada de edição:** Ao reentrar na aba com um `feed_edit.gpkg` já existente, o plugin identifica a cópia de trabalho ativa e retoma as edições anteriores, oferecendo também a opção de descartá-la.
+- **Destino do ZIP:** O arquivo ZIP exportado é gravado em local escolhido pelo usuário por meio do diálogo nativo "Salvar como".
