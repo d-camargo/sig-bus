@@ -23,7 +23,10 @@ import sqlite3
 import tempfile
 import zipfile
 
+<<<<<<< HEAD
 from qgis.core import Qgis, QgsMessageLog, QgsTask, QgsVectorLayer
+=======
+>>>>>>> temp-resolve-conflict
 from . import gtfs_schema
 
 LOG_TAG = 'SIG-Bus'
@@ -91,11 +94,12 @@ class GtfsExporter(QgsTask):
             
             # ponytail: Configuração direta mapeando tabelas físicas para arquivos GTFS.
             # O booleano final indica se a tabela é obrigatória pela especificação GTFS.
+            # ponytail: stops foi removida daqui para ser exportada separadamente via OGR
+            # para preservar a geometria espacial editada no mapa.
             export_config = [
                 ("agency", "agency", True),
                 ("routes", "routes", True),
                 ("trips", "trips", True),
-                ("stops", "stops", True),
                 ("stop_times", "stop_times", True),
                 ("shapes", "shapes", False),
             ]
@@ -115,6 +119,12 @@ class GtfsExporter(QgsTask):
             temp_dir = tempfile.TemporaryDirectory()
             arquivos_gerados = []
 
+            # 1. Exporta stops usando osgeo.ogr para ler lon/lat diretamente da geometria
+            stops_txt_path = self._export_stops_ogr(temp_dir.name)
+            if stops_txt_path:
+                arquivos_gerados.append((stops_txt_path, "stops.txt"))
+
+            # 2. Exporta as demais tabelas via sqlite3
             for tab_name, gtfs_filename, obrigatoria in export_config:
                 if self.isCanceled():
                     return False
@@ -194,6 +204,53 @@ class GtfsExporter(QgsTask):
         except Exception as e:
             self._erro = str(e)
             return False
+
+    def _export_stops_ogr(self, temp_dir_path):
+        """
+        Exporta a tabela stops usando osgeo.ogr para ler lon/lat diretamente da geometria.
+        """
+        ds = ogr.Open(self.gpkg_path)
+        if not ds:
+            raise Exception("Falha ao abrir GeoPackage via OGR.")
+            
+        lyr = ds.GetLayerByName('stops')
+        if not lyr:
+            raise Exception("Tabela obrigatória 'stops' não encontrada no GeoPackage.")
+
+        # Obtém os nomes dos campos existentes na camada OGR
+        layer_defn = lyr.GetLayerDefn()
+        campos_fisicos = {layer_defn.GetFieldDefn(i).GetName() for i in range(layer_defn.GetFieldCount())}
+
+        # Adiciona coordenadas virtuais stop_lat/stop_lon vindas da geometria
+        ordem_schema = gtfs_schema.column_order('stops')
+        colunas_exportar = [col for col in ordem_schema if col in campos_fisicos or col in ('stop_lat', 'stop_lon')]
+
+        txt_path = os.path.join(temp_dir_path, "stops.txt")
+        with open(txt_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(colunas_exportar)
+
+            lyr.ResetReading()
+            for feat in lyr:
+                if self.isCanceled():
+                    return None
+
+                row = []
+                geom = feat.GetGeometryRef()
+                for col in colunas_exportar:
+                    # ponytail: Se stop_lon/stop_lat constar no schema, extraímos
+                    # as coordenadas diretamente da geometria do ponto (se não for nula).
+                    if col == 'stop_lon' and geom and not geom.IsEmpty():
+                        row.append(geom.GetX())
+                    elif col == 'stop_lat' and geom and not geom.IsEmpty():
+                        row.append(geom.GetY())
+                    else:
+                        if col in campos_fisicos:
+                            row.append(feat.GetField(col))
+                        else:
+                            row.append(None)
+                writer.writerow(row)
+        return txt_path
 
     def finished(self, ok):
         """
