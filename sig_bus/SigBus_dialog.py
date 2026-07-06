@@ -956,7 +956,6 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.button_edit_enter = QPushButton("Entrar no modo edição")
 
         self.combo_edit_table = QComboBox()
-<<<<<<< HEAD
         self.combo_edit_table.addItems(gtfs_schema.editable_tables())
 
         # Seletores de linha e viagem para stop_times
@@ -967,11 +966,6 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
         self.button_edit_open = QPushButton("Abrir para edição")
         self.button_edit_validate = QPushButton("Validar")
-=======
->>>>>>> temp-resolve-conflict
-
-        self.button_edit_open = QPushButton("Abrir para edição")
-        self.button_edit_stops = QPushButton("Editar paradas no mapa")
         self.button_edit_export = QPushButton("Exportar .zip")
         self.button_edit_discard = QPushButton("Descartar edição")
 
@@ -2070,56 +2064,6 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             "Exportando GTFS em segundo plano...",
             level=Qgis.Info, duration=8
         )
-
-    def editStopsClicked(self):
-        """
-        Carrega a camada de paradas (stops) a partir de feed_edit.gpkg, trava o campo stop_id,
-        inicia a edição, ativa a ferramenta de vértices e fecha o diálogo do SIG-Bus.
-        """
-        if self._working_copy is None or not self._working_copy.is_active():
-            iface.messageBar().pushMessage(
-                "Aviso",
-                "Entre no modo edição primeiro.",
-                level=Qgis.Warning, duration=8
-            )
-            return
-
-        uri = self._working_copy.edit_path + '|layername=stops'
-        layer = QgsVectorLayer(uri, 'edit_stops', 'ogr')
-
-        if not layer.isValid():
-            iface.messageBar().pushMessage(
-                "Erro",
-                "Falha ao carregar a camada edit_stops.",
-                level=Qgis.Critical, duration=10
-            )
-            return
-
-        # Travar stop_id para evitar alteracao indesejada
-        cfg = layer.editFormConfig()
-        idx = layer.fields().indexFromName('stop_id')
-        if idx >= 0:
-            cfg.setReadOnly(idx, True)
-        layer.setEditFormConfig(cfg)
-
-        QgsProject.instance().addMapLayer(layer)
-        self._edit_stops_layer = layer
-        iface.setActiveLayer(layer)
-        layer.startEditing()
-
-        # Ativa a ferramenta de vertices do QGIS se disponivel
-        try:
-            iface.actionVertexTool().trigger()
-        except Exception:
-            # ponytail: Nao impede o fluxo caso a versao do QGIS tenha outra acao/nome
-            pass
-
-        iface.messageBar().pushMessage(
-            "Info",
-            "Paradas em edição: mova os pontos e salve pela barra de edição do QGIS.",
-            level=Qgis.Info, duration=8
-        )
-        self.close()
 
     def _refresh_edit_status(self):
         """

@@ -23,31 +23,11 @@ import sqlite3
 import tempfile
 import zipfile
 
-<<<<<<< HEAD
+from osgeo import ogr
 from qgis.core import Qgis, QgsMessageLog, QgsTask, QgsVectorLayer
-=======
->>>>>>> temp-resolve-conflict
 from . import gtfs_schema
 
 LOG_TAG = 'SIG-Bus'
-
-
-def _read_stop_coordinates(gpkg_path):
-    """
-    Lê stop_id -> (lat, lon) a partir da geometria da camada 'stops': a edição
-    de vértices no canvas não atualiza as colunas de texto stop_lat/stop_lon.
-    """
-    layer = QgsVectorLayer(gpkg_path + '|layername=stops', 'stops', 'ogr')
-    coords = {}
-    if not layer.isValid():
-        return coords
-    for feat in layer.getFeatures():
-        geom = feat.geometry()
-        if geom is None or geom.isEmpty():
-            continue
-        pt = geom.asPoint()
-        coords[feat['stop_id']] = (pt.y(), pt.x())
-    return coords
 
 
 def _iter_shape_points(gpkg_path):
@@ -165,28 +145,11 @@ class GtfsExporter(QgsTask):
                                 return False
                             writer.writerow(row)
                     else:
-                        stop_coords = (
-                            _read_stop_coordinates(self.gpkg_path)
-                            if tab_name == "stops" else None
-                        )
-                        stop_id_idx = colunas_exportar.index('stop_id') if 'stop_id' in colunas_exportar else -1
-                        lat_idx = colunas_exportar.index('stop_lat') if 'stop_lat' in colunas_exportar else -1
-                        lon_idx = colunas_exportar.index('stop_lon') if 'stop_lon' in colunas_exportar else -1
-
                         query = "SELECT {} FROM {}".format(", ".join(colunas_exportar), tab_name)
                         for row in conn.execute(query):
                             if self.isCanceled():
                                 return False
-
-                            row_data = list(row)
-                            if stop_coords and stop_id_idx >= 0:
-                                coords = stop_coords.get(row_data[stop_id_idx])
-                                if coords:
-                                    if lat_idx >= 0:
-                                        row_data[lat_idx] = coords[0]
-                                    if lon_idx >= 0:
-                                        row_data[lon_idx] = coords[1]
-                            writer.writerow(row_data)
+                            writer.writerow(row)
 
                 arquivos_gerados.append((txt_path, "{}.txt".format(gtfs_filename)))
 

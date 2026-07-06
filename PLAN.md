@@ -15,6 +15,21 @@ na tela, o passo a passo do fluxo completo, e os erros/avisos que aparecem na
 prática e como resolvê-los — para quem vai usar o plugin (ex.: analista da
 BHTrans) e não precisa (nem deve precisar) ler a arquitetura interna.
 
+**Fase 3 (atual/urgente):** o commit mais recente do HEAD (`96122e8`,
+"conflitos resolvidos") na verdade **não** resolveu o conflito de merge:
+marcadores `<<<<<<< HEAD` / `=======` / `>>>>>>> temp-resolve-conflict`
+ficaram commitados em `sig_bus/SigBus_dialog.py` (linha 959) e
+`sig_bus/gtfs_export.py` (linha 26), o que gera `SyntaxError` e impede o
+QGIS de carregar o plugin `sig_bus`. Já existe uma resolução iniciada,
+porém não commitada, na working tree (visível em `git status`/`git diff`)
+que remove os marcadores optando pelo lado que já cobre as mesmas
+necessidades da fatia 4 por outro caminho (edição genérica de vértices no
+`editOpenClicked` do passo 7, e exportação de `stops` via `osgeo.ogr` em
+`_export_stops_ogr`), descartando o botão dedicado
+`editStopsClicked`/`button_edit_stops`. O objetivo desta fase é **validar**
+essa resolução (nada ficou órfão, nada foi perdido sem substituto
+equivalente) e commitá-la para o plugin voltar a carregar.
+
 ## Decisões de arquitetura
 Referência completa da Fase 1: `sig_bus/ARQUITETURA_EDICAO_GTFS.md` (decisões
 tomadas em 2026-06-19). Resumo:
@@ -56,6 +71,22 @@ Decisões para a Fase 2 (guia do usuário):
    `iface.messageBar()`/`QgsMessageLog` em `SigBus_dialog.py` ou pelo
    `GtfsValidator` (`gtfs_validator.py`) — nunca uma mensagem genérica
    inventada.
+
+Decisões para a Fase 3 (hotfix do conflito não resolvido):
+
+12. **Terminar a resolução já iniciada, não refazer o merge.** A working
+   tree já tem uma resolução em andamento (não commitada) que remove os
+   marcadores de conflito; a fase 3 valida e completa essa resolução em vez
+   de reabrir o merge do zero.
+13. **Preferir o lado que já superou a funcionalidade equivalente, sem
+   recriar código descartado.** Onde as duas metades do conflito
+   implementam a mesma necessidade de formas diferentes, manter a versão
+   que corresponde a uma decisão já registrada nesta PLAN: a ativação
+   genérica da ferramenta de vértices em `editOpenClicked` (passo 7) cobre
+   o caso de uso do antigo botão dedicado `editStopsClicked`/
+   `button_edit_stops`, e `_export_stops_ogr` (leitura via `osgeo.ogr`)
+   cobre o mesmo requisito de `_read_stop_coordinates` (stop_lat/stop_lon a
+   partir da geometria, passo 4).
 
 ## Passos (executor marca [x] ao concluir)
 
@@ -171,6 +202,41 @@ Decisões para a Fase 2 (guia do usuário):
       Features ou Repository Structure), para que o guia seja descobrível
       por quem abre o repositório. — arquivo: `README.md`.
 
+### Fase 3 — Hotfix: SyntaxError por conflito de merge não resolvido (atual)
+- [x] 21. Confirmar que não sobraram marcadores de conflito em nenhum
+      arquivo do repositório. Critério:
+      `grep -rn "<<<<<<<\|=======\|>>>>>>>" --include=*.py --include=*.ui .`
+      (fora de `.git/`) não retorna nenhum resultado. — arquivos: todo o
+      repositório (verificação).
+- [x] 22. Confirmar que `sig_bus/SigBus_dialog.py` e `sig_bus/gtfs_export.py`
+      compilam sem erro. Critério:
+      `python3 -m py_compile sig_bus/SigBus_dialog.py sig_bus/gtfs_export.py`
+      sai com código 0 e sem mensagens. — arquivos: `sig_bus/SigBus_dialog.py`,
+      `sig_bus/gtfs_export.py` (verificação).
+- [x] 23. Conferir que não há referência órfã ao código removido pela
+      resolução do conflito (`editStopsClicked`, `button_edit_stops`,
+      `_read_stop_coordinates`, `_edit_stops_layer`) em nenhum lugar do
+      projeto. Critério: `grep -rn` por cada um desses quatro nomes em
+      `sig_bus/*.py`, `sig_bus/*.md` e `README.md` não retorna nenhuma
+      ocorrência. — arquivos (leitura): `sig_bus/*.py`, `sig_bus/*.md`,
+      `README.md`.
+- [x] 24. Revisar o diff da working tree
+      (`git diff sig_bus/SigBus_dialog.py sig_bus/gtfs_export.py`) linha a
+      linha, confirmando que cada remoção corresponde à decisão 13 (fatia 4
+      substituída por implementação equivalente) e que nenhuma outra
+      funcionalidade foi perdida sem substituto. — arquivos:
+      `sig_bus/SigBus_dialog.py`, `sig_bus/gtfs_export.py` (revisão, sem
+      alterar código).
+- [x] 25. Commitar a resolução do conflito
+      (`git add sig_bus/SigBus_dialog.py sig_bus/gtfs_export.py && git commit`),
+      com mensagem que deixe explícito que o commit anterior tinha
+      marcadores de merge não resolvidos causando o `SyntaxError`. —
+      arquivos: `sig_bus/SigBus_dialog.py`, `sig_bus/gtfs_export.py`.
+- [ ] 26. Recarregar o plugin `sig_bus` no QGIS (ou reiniciar o QGIS) e
+      confirmar visualmente que ele carrega sem erro no "Log Messages
+      Panel", e que a aba "Edição GTFS" abre normalmente. — verificação
+      manual no QGIS.
+
 ## Critério de aceite
 - Ciclo completo funciona ponta a ponta: Entrar no modo edição → editar
   routes/trips/stops/shapes/calendar/stop_times (filtrado) → Validar →
@@ -190,3 +256,12 @@ Decisões para a Fase 2 (guia do usuário):
 - Alguém sem conhecimento prévio do plugin consegue seguir o passo a passo
   do guia e completar o ciclo editar → validar → exportar.
 - `README.md` referencia o novo guia.
+- Nenhum marcador de conflito (`<<<<<<<`, `=======`, `>>>>>>>`) sobra em
+  nenhum arquivo do repositório. *(Fase 3.)*
+- `python3 -m py_compile` em `sig_bus/SigBus_dialog.py` e
+  `sig_bus/gtfs_export.py` sai com código 0, sem erro. *(Fase 3.)*
+- O plugin `sig_bus` carrega no QGIS sem `SyntaxError` nem exceção no "Log
+  Messages Panel", e a aba "Edição GTFS" abre normalmente. *(Fase 3.)*
+- Nenhuma funcionalidade da fatia 4 foi perdida sem um substituto
+  equivalente já presente no código (edição de vértices genérica em
+  `editOpenClicked` + exportação de `stops` via `osgeo.ogr`). *(Fase 3.)*
