@@ -440,7 +440,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       manual no QGIS.
 
 ### Fase 4 — Extrair e formatar o guia para revisão no canal (atual)
-- [x] 27. Confirmar com o usuário qual é o canal de destino e o formato de
+- [ ] 27. Confirmar com o usuário qual é o canal de destino e o formato de
       texto que ele aceita (ex.: Slack, Discord, e-mail, Markdown puro) —
       isso define quais elementos do guia (headings `#`, blockquotes
       `> [!NOTE]`, links relativos) precisam ser adaptados ou removidos.
