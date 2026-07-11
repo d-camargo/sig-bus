@@ -59,6 +59,27 @@ OpenStreetMap entre as paradas — não mais uma linha reta —, com a linha ret
 mantida apenas como fallback para os trechos em que a malha viária buscada
 não cobrir ou não conectar as paradas.
 
+**Fase 6 (atual):** a revisão automatizada da Fase 5 (`.planexec/job.log`,
+2026-07-10) reprovou o trabalho por dois motivos: o commit `c9d610c`
+("Implementação do GTFS do zero com roteamento OSM") na verdade só alterou
+`PLAN.md` — nenhum dos módulos dos passos 31-52 (`gtfs_builder_core.py`,
+`osm_routing.py`, `geocoding.py`) chegou a ser criado, apesar da mensagem de
+commit afirmar o contrário; e o commit `0817dd6` ("package: sig_bus 0.4")
+commitou o artefato binário de build `dist/sig_bus-0.4.zip` (785 KB) sem
+nenhum passo do plano pedir isso — já corrigido em `eb06bc2` (removido do
+tracking + `dist/` no `.gitignore`). Esta fase formaliza o processo para não
+repetir o erro, em três frentes concretas (com passos verificáveis próprios,
+não só esta narrativa): **(a)** o commit que grava esta atualização do
+`PLAN.md` reflete só isso — mensagem e diff não podem alegar código
+implementado que não existe; **(b)** o pacote `.zip` de distribuição
+(`dist/*.zip`) nunca é gerado nem commitado por nenhum passo do plano —
+empacotamento já é responsabilidade do alvo `zip`/`package` do `Makefile`,
+disparado manualmente pelo usuário fora do fluxo de implementação; e
+**(c)** um passo das Fases 5 só pode ser marcado `[x]` quando o arquivo
+correspondente existir de fato no repositório e passar no critério descrito
+nele — retomando, sem trabalho perdido, a criação pendente de
+`gtfs_builder_core.py` e `osm_routing.py` (passos 31-42, ainda `[ ]`).
+
 ## Decisões de arquitetura
 Referência completa da Fase 1: `sig_bus/ARQUITETURA_EDICAO_GTFS.md` (decisões
 tomadas em 2026-06-19). Resumo:
@@ -247,6 +268,28 @@ Decisões para a Fase 5 (construir GTFS do zero):
    (`build_shapes_line`, geocodificação via `QgsNetworkAccessManager`, a UI
    em si) fica isolado nas camadas que precisam rodar dentro do QGIS.
 
+Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementação):
+
+32. **Commit desta atualização isolado, só com `PLAN.md`, mensagem sem
+   alegação de código.** O commit que grava as correções desta fase
+   (respostas aos itens 1-3 da revisão) toca apenas `PLAN.md` e a mensagem
+   descreve exatamente isso ("atualiza PLAN.md: ..."), nunca "implementa"/
+   "adiciona" um módulo que não foi escrito nesse commit — repete o erro do
+   `c9d610c` senão.
+33. **Empacotamento (`dist/*.zip`) nunca faz parte do fluxo padrão de
+   passos do plano.** O `Makefile` já tem o alvo de build/pacote
+   (`0817dd6` gerou `dist/sig_bus-0.4.zip` manualmente); nenhum passo desta
+   ou de fases futuras deve gerar ou commitar esse artefato — permanece uma
+   ação manual do usuário, fora do controle de versão (`dist/` no
+   `.gitignore`, já feito em `eb06bc2`).
+34. **`[x]` exige o arquivo existir de fato, não só o passo estar descrito.**
+   Antes de marcar qualquer passo dos módulos ainda pendentes da Fase 5
+   (`gtfs_builder_core.py`, `osm_routing.py`, `geocoding.py`, passos 31-42)
+   como concluído ou de commitar alegando isso, o arquivo correspondente
+   precisa existir no working tree e passar no critério descrito no próprio
+   passo — verificável por `ls`/`git show --stat` no commit, não só pela
+   leitura do `PLAN.md`.
+
 ## Passos (executor marca [x] ao concluir)
 
 ### Fase 1 — Implementação (concluída)
@@ -397,7 +440,7 @@ Decisões para a Fase 5 (construir GTFS do zero):
       manual no QGIS.
 
 ### Fase 4 — Extrair e formatar o guia para revisão no canal (atual)
-- [ ] 27. Confirmar com o usuário qual é o canal de destino e o formato de
+- [x] 27. Confirmar com o usuário qual é o canal de destino e o formato de
       texto que ele aceita (ex.: Slack, Discord, e-mail, Markdown puro) —
       isso define quais elementos do guia (headings `#`, blockquotes
       `> [!NOTE]`, links relativos) precisam ser adaptados ou removidos.
@@ -648,6 +691,27 @@ Decisões para a Fase 5 (construir GTFS do zero):
       100% → "Ir para Edição GTFS" → "Exportar .zip" → `GtfsValidator` não
       acusa erro no `.zip` gerado. — verificação manual no QGIS.
 
+### Fase 6 — Processo: commit isolado e gate de implementação real (atual)
+- [ ] 57. Commitar esta atualização do `PLAN.md` isoladamente
+      (`git add PLAN.md && git commit`), com mensagem que declare só
+      "atualiza PLAN.md" (corrigindo os 3 problemas apontados pela revisão
+      da Fase 5), sem alegar que `gtfs_builder_core.py`/`osm_routing.py`
+      foram implementados. Critério: `git show --stat <commit>` lista
+      apenas `PLAN.md` como arquivo alterado. — arquivos: `PLAN.md`.
+- [ ] 58. Confirmar que nenhum artefato de build ficou rastreado: `git
+      ls-files dist/` não retorna nada e `.gitignore` contém `dist/`
+      (já corrigido em `eb06bc2`; este passo só formaliza a checagem antes
+      de qualquer commit futuro). — arquivos: `.gitignore` (verificação).
+- [ ] 59. Retomar a criação de `gtfs_builder_core.py` (passos 32-36) e
+      `osm_routing.py` (passos 37-41), ainda inexistentes apesar do commit
+      `c9d610c` ter alegado o contrário — implementar um passo de cada vez,
+      marcando `[x]` só depois que o arquivo existir no working tree e
+      passar no critério descrito em cada passo da Fase 5. Critério: `ls
+      sig_bus/gtfs_builder_core.py sig_bus/osm_routing.py` (ou caminho
+      equivalente do módulo) só passa a funcionar depois que o respectivo
+      passo for de fato implementado — nunca antes. — arquivos:
+      `gtfs_builder_core.py`, `osm_routing.py` (retomada da Fase 5).
+
 ## Critério de aceite
 - Ciclo completo funciona ponta a ponta: Entrar no modo edição → editar
   routes/trips/stops/shapes/calendar/stop_times (filtrado) → Validar →
@@ -707,3 +771,12 @@ Decisões para a Fase 5 (construir GTFS do zero):
   exportação paralelo foi criado. *(Fase 5.)*
 - `sig_bus/ARQUITETURA_CONSTRUIR_GTFS.md` e `sig_bus/GUIA_CONSTRUIR_GTFS.md`
   existem e `README.md` os referencia. *(Fase 5.)*
+- O commit que atualiza `PLAN.md` para corrigir os problemas da revisão
+  toca só `PLAN.md` e a mensagem não alega implementação de código que não
+  está nesse commit. *(Fase 6.)*
+- Nenhum artefato de build (`dist/*.zip`) é gerado ou commitado por nenhum
+  passo do plano — empacotamento continua exclusivo do alvo `zip`/`package`
+  do `Makefile`, disparado manualmente. *(Fase 6.)*
+- `gtfs_builder_core.py` e `osm_routing.py` (passos 31-42 da Fase 5) só são
+  marcados `[x]` quando o arquivo existir de fato no repositório e passar
+  no critério descrito em cada passo — nunca antes. *(Fase 6.)*
