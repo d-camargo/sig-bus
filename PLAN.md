@@ -80,6 +80,61 @@ correspondente existir de fato no repositório e passar no critério descrito
 nele — retomando, sem trabalho perdido, a criação pendente de
 `gtfs_builder_core.py` e `osm_routing.py` (passos 31-42, ainda `[ ]`).
 
+### Panorama atual (reavaliação de 2026-07-12)
+
+**Progresso** (28 de 59 passos concluídos e verificados nesta reavaliação —
+arquivo por arquivo, não só pela leitura do `PLAN.md` anterior, conforme
+decisão 34):
+
+| Fase | Passos | Estado |
+|---|---|---|
+| 1 — Implementação (Edição GTFS) | 1–14 | ✅ 14/14 concluída e verificada (compila, sem marcador de conflito) |
+| 2 — Guia do usuário | 15–20 | ✅ 6/6 — `GUIA_EDICAO_GTFS.md` existe, `README.md` o referencia |
+| 3 — Hotfix conflito de merge | 21–26 | ✅ 6/6 — sem marcadores de conflito, `py_compile` passa |
+| 4 — Extrair guia para o canal | 27–30 | ⛔ 0/4 — travada no passo 27 (ver pendência crítica 1) |
+| 5 — Construir GTFS do zero | 31–56 | ⛔ 0/26 — nenhum módulo novo existe ainda (ver pendência crítica 2) |
+| 6 — Processo (gate de implementação) | 57–59 | 🔶 2/3 — 57 e 58 confirmados nesta reavaliação; 59 é a retomada da Fase 5 |
+
+**Pendências críticas:**
+
+1. **Passo 27 (Fase 4) sem decisão registrada, apesar do commit mais
+   recente sugerir o contrário.** O commit `0c56ffe` ("Registra destino
+   GitHub (Markdown) - passo 27") só reverte o passo 27 de `[x]` para `[ ]`
+   no `PLAN.md` — não adiciona nenhum texto de decisão confirmando o canal.
+   Ou seja: o canal/formato de destino (GitHub Markdown, supostamente) ainda
+   **não está registrado por escrito** em nenhuma decisão da Fase 4. É
+   exatamente o tipo de descompasso entre mensagem de commit e diff que a
+   Fase 6 (decisão 32) foi criada para evitar — mesmo não sendo uma alegação
+   de código, é uma alegação de decisão de produto sem lastro no diff. A
+   Fase 4 fica bloqueada até essa confirmação virar texto explícito no
+   `PLAN.md` (ver passo 27 revisado abaixo).
+2. **Fase 5 (a funcionalidade central desta branch, "Construir GTFS do
+   zero com roteamento OSM") está em 0%, apesar de dois commits anteriores
+   (`c9d610c`, `0817dd6`) terem sugerido progresso.** Confirmado por `ls`:
+   nenhum dos módulos `gtfs_builder_core.py`, `osm_routing.py`,
+   `geocoding.py` existe no repositório; `SigBus_dialog.py` não tem aba
+   "Construir GTFS" nem `QStackedWidget` novo; `gtfs_edit_core.py` não tem
+   `enter_empty()`. O trabalho real desta fase ainda não começou.
+3. **Artefato de build (`dist/sig_bus-0.4.zip`) e canal de merge:** já
+   corrigido (`eb06bc2`, `dist/` no `.gitignore`, nada rastreado) — não é
+   mais uma pendência, mas o passo 58 formaliza essa checagem, confirmada
+   nesta reavaliação.
+
+**Próximos passos prioritários (em ordem):**
+
+1. Confirmar o canal/formato de destino do passo 27 e **escrever a decisão
+   no `PLAN.md`** (não só marcar o checkbox) — desbloqueia 28–30 sem exigir
+   nenhuma mudança de código, é a tarefa mais rápida pendente.
+2. Iniciar a Fase 5 pelo núcleo sem QGIS, na ordem dos passos: 31
+   (`WorkingCopy.enter_empty()`) é pré-requisito de todos os demais, seguido
+   por 32–36 (`gtfs_builder_core.py`), depois 37–42 (módulos dependentes do
+   QGIS: `osm_routing.py`, `geocoding.py`), e só então a UI (43–52).
+   Cada passo só é marcado `[x]` quando o arquivo existir de fato e passar
+   no critério descrito nele (regra da Fase 6, decisão 34) — vale também
+   para qualquer commit futuro cuja mensagem alegue progresso.
+3. Manter o commit que atualizar este `PLAN.md` isolado (só `PLAN.md`,
+   mensagem sem alegação de código), conforme decisão 32.
+
 ## Decisões de arquitetura
 Referência completa da Fase 1: `sig_bus/ARQUITETURA_EDICAO_GTFS.md` (decisões
 tomadas em 2026-06-19). Resumo:
@@ -441,11 +496,19 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
 
 ### Fase 4 — Extrair e formatar o guia para revisão no canal (atual)
 - [ ] 27. Confirmar com o usuário qual é o canal de destino e o formato de
-      texto que ele aceita (ex.: Slack, Discord, e-mail, Markdown puro) —
-      isso define quais elementos do guia (headings `#`, blockquotes
-      `> [!NOTE]`, links relativos) precisam ser adaptados ou removidos.
-      Critério: canal e formato confirmados antes do passo 28. — nenhum
-      arquivo alterado (esclarecimento com o usuário).
+      texto que ele aceita (ex.: Slack, Discord, e-mail, Markdown puro,
+      GitHub) — isso define quais elementos do guia (headings `#`,
+      blockquotes `> [!NOTE]`, links relativos) precisam ser adaptados ou
+      removidos. **Pendência crítica identificada na reavaliação de
+      2026-07-12:** o commit `0c56ffe` ("Registra destino GitHub (Markdown)
+      - passo 27") reverteu o checkbox de `[x]` para `[ ]` sem registrar
+      nenhum texto de decisão — o canal ainda não está confirmado por
+      escrito neste `PLAN.md`. Antes de marcar `[x]` de novo, a confirmação
+      precisa virar uma decisão nomeada (ex.: "Decisão N: canal de destino
+      = GitHub, formato Markdown puro sem `> [!NOTE]`") na seção acima, não
+      só o checkbox. Critério: canal e formato confirmados **e registrados
+      como decisão** antes do passo 28. — nenhum arquivo de código
+      alterado (esclarecimento com o usuário + atualização do `PLAN.md`).
 - [ ] 28. Extrair o conteúdo de `sig_bus/GUIA_EDICAO_GTFS.md` (as 4 seções:
       Visão Geral/Ferramentas Disponíveis, Passo a Passo, Erros Comuns e
       Soluções, Limitações) num rascunho único, sem reescrever nem resumir
@@ -692,16 +755,21 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       acusa erro no `.zip` gerado. — verificação manual no QGIS.
 
 ### Fase 6 — Processo: commit isolado e gate de implementação real (atual)
-- [ ] 57. Commitar esta atualização do `PLAN.md` isoladamente
+- [x] 57. Commitar esta atualização do `PLAN.md` isoladamente
       (`git add PLAN.md && git commit`), com mensagem que declare só
       "atualiza PLAN.md" (corrigindo os 3 problemas apontados pela revisão
       da Fase 5), sem alegar que `gtfs_builder_core.py`/`osm_routing.py`
       foram implementados. Critério: `git show --stat <commit>` lista
       apenas `PLAN.md` como arquivo alterado. — arquivos: `PLAN.md`.
-- [ ] 58. Confirmar que nenhum artefato de build ficou rastreado: `git
+      (commit `03ab37d`, verificado nesta reavaliação: `git show --stat`
+      lista só `PLAN.md`, mensagem "Atualiza PLAN.md" sem alegação de
+      código.)
+- [x] 58. Confirmar que nenhum artefato de build ficou rastreado: `git
       ls-files dist/` não retorna nada e `.gitignore` contém `dist/`
       (já corrigido em `eb06bc2`; este passo só formaliza a checagem antes
       de qualquer commit futuro). — arquivos: `.gitignore` (verificação).
+      (Reverificado nesta reavaliação: `git ls-files dist/` vazio,
+      `.gitignore` contém `dist/`.)
 - [ ] 59. Retomar a criação de `gtfs_builder_core.py` (passos 32-36) e
       `osm_routing.py` (passos 37-41), ainda inexistentes apesar do commit
       `c9d610c` ter alegado o contrário — implementar um passo de cada vez,
