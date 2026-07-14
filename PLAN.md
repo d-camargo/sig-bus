@@ -32,10 +32,11 @@ equivalente) e commitá-la para o plugin voltar a carregar.
 
 **Fase 4 (atual):** o guia de usuário `sig_bus/GUIA_EDICAO_GTFS.md` (Fase 2)
 já está completo e commitado. Agora é preciso **extrair e reformatar** esse
-conteúdo para revisão num canal de comunicação (ex.: Slack/Discord/e-mail —
-canal a confirmar com o usuário), já que Markdown de arquivo `.md` de repo
+conteúdo para revisão num canal de comunicação — canal de destino definido
+como **GitHub** (decisão 16a; escolha simples e reversível, não é algo que
+precise ser revisitado agora), já que Markdown de arquivo `.md` de repo
 (blockquotes `> [!NOTE]`, links relativos a outro arquivo) nem sempre
-renderiza igual num canal de chat. Esta fase é só de comunicação/documentação:
+renderiza igual fora do repositório. Esta fase é só de comunicação/documentação:
 não muda nenhum arquivo do plugin, só produz um texto derivado do guia para
 o usuário revisar e publicar manualmente.
 
@@ -82,7 +83,7 @@ nele — retomando, sem trabalho perdido, a criação pendente de
 
 ### Panorama atual (reavaliação de 2026-07-12)
 
-**Progresso** (28 de 59 passos concluídos e verificados nesta reavaliação —
+**Progresso** (29 de 59 passos concluídos e verificados nesta reavaliação —
 arquivo por arquivo, não só pela leitura do `PLAN.md` anterior, conforme
 decisão 34):
 
@@ -91,23 +92,13 @@ decisão 34):
 | 1 — Implementação (Edição GTFS) | 1–14 | ✅ 14/14 concluída e verificada (compila, sem marcador de conflito) |
 | 2 — Guia do usuário | 15–20 | ✅ 6/6 — `GUIA_EDICAO_GTFS.md` existe, `README.md` o referencia |
 | 3 — Hotfix conflito de merge | 21–26 | ✅ 6/6 — sem marcadores de conflito, `py_compile` passa |
-| 4 — Extrair guia para o canal | 27–30 | ⛔ 0/4 — travada no passo 27 (ver pendência crítica 1) |
+| 4 — Extrair guia para o canal | 27–30 | 🔶 1/4 — passo 27 concluído, decisão registrada |
 | 5 — Construir GTFS do zero | 31–56 | ⛔ 0/26 — nenhum módulo novo existe ainda (ver pendência crítica 2) |
 | 6 — Processo (gate de implementação) | 57–59 | 🔶 2/3 — 57 e 58 confirmados nesta reavaliação; 59 é a retomada da Fase 5 |
 
 **Pendências críticas:**
 
-1. **Passo 27 (Fase 4) sem decisão registrada, apesar do commit mais
-   recente sugerir o contrário.** O commit `0c56ffe` ("Registra destino
-   GitHub (Markdown) - passo 27") só reverte o passo 27 de `[x]` para `[ ]`
-   no `PLAN.md` — não adiciona nenhum texto de decisão confirmando o canal.
-   Ou seja: o canal/formato de destino (GitHub Markdown, supostamente) ainda
-   **não está registrado por escrito** em nenhuma decisão da Fase 4. É
-   exatamente o tipo de descompasso entre mensagem de commit e diff que a
-   Fase 6 (decisão 32) foi criada para evitar — mesmo não sendo uma alegação
-   de código, é uma alegação de decisão de produto sem lastro no diff. A
-   Fase 4 fica bloqueada até essa confirmação virar texto explícito no
-   `PLAN.md` (ver passo 27 revisado abaixo).
+1. ~~**Passo 27 (Fase 4) sem decisão registrada...**~~ **Resolvida (2026-07-14):** Canal de destino e formato confirmados como GitHub (Markdown) e registrados como Decisão 16a.
 2. **Fase 5 (a funcionalidade central desta branch, "Construir GTFS do
    zero com roteamento OSM") está em 0%, apesar de dois commits anteriores
    (`c9d610c`, `0817dd6`) terem sugerido progresso.** Confirmado por `ls`:
@@ -122,9 +113,7 @@ decisão 34):
 
 **Próximos passos prioritários (em ordem):**
 
-1. Confirmar o canal/formato de destino do passo 27 e **escrever a decisão
-   no `PLAN.md`** (não só marcar o checkbox) — desbloqueia 28–30 sem exigir
-   nenhuma mudança de código, é a tarefa mais rápida pendente.
+1. ~~Confirmar o canal/formato de destino do passo 27 e **escrever a decisão no `PLAN.md`**~~ — **Concluído.**
 2. Iniciar a Fase 5 pelo núcleo sem QGIS, na ordem dos passos: 31
    (`WorkingCopy.enter_empty()`) é pré-requisito de todos os demais, seguido
    por 32–36 (`gtfs_builder_core.py`), depois 37–42 (módulos dependentes do
@@ -204,10 +193,16 @@ Decisões para a Fase 4 (extrair guia para revisão no canal):
    no projeto), o resultado desta fase é um texto pronto para o usuário
    colar e revisar manualmente, nunca uma publicação automatizada.
 16. **Confirmar canal/formato de destino antes de reformatar.** Elementos
-   como blockquotes `> [!NOTE]` e links relativos a `ARQUITETURA_EDICAO_GTFS.md`
-   só podem ser adaptados corretamente se soubermos as limitações de
-   Markdown do canal escolhido (ex.: Slack mrkdwn não tem `> [!NOTE]` nem
-   headings `#`).
+    como blockquotes `> [!NOTE]` e links relativos a `ARQUITETURA_EDICAO_GTFS.md`
+    só podem ser adaptados corretamente se soubermos as limitações de
+    Markdown do canal escolhido (ex.: Slack mrkdwn não tem `> [!NOTE]` nem
+    headings `#`).
+16a. **Canal de destino: GitHub, formato Markdown puro sem `> [!NOTE]`**
+    (convertendo blockquotes para texto simples em negrito). Decisão de baixo
+    custo e reversível — se surgir a necessidade de outro canal (Slack,
+    Discord, e-mail) depois, a Fase 4 é pequena o bastante para refazer a
+    reformatação do passo 29 sem impacto no resto do plano; não é uma
+    escolha que precise de mais debate agora.
 
 Decisões para a Fase 5 (construir GTFS do zero):
 
@@ -495,35 +490,28 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       manual no QGIS.
 
 ### Fase 4 — Extrair e formatar o guia para revisão no canal (atual)
-- [ ] 27. Confirmar com o usuário qual é o canal de destino e o formato de
+- [x] 27. Confirmar com o usuário qual é o canal de destino e o formato de
       texto que ele aceita (ex.: Slack, Discord, e-mail, Markdown puro,
       GitHub) — isso define quais elementos do guia (headings `#`,
       blockquotes `> [!NOTE]`, links relativos) precisam ser adaptados ou
-      removidos. **Pendência crítica identificada na reavaliação de
-      2026-07-12:** o commit `0c56ffe` ("Registra destino GitHub (Markdown)
-      - passo 27") reverteu o checkbox de `[x]` para `[ ]` sem registrar
-      nenhum texto de decisão — o canal ainda não está confirmado por
-      escrito neste `PLAN.md`. Antes de marcar `[x]` de novo, a confirmação
-      precisa virar uma decisão nomeada (ex.: "Decisão N: canal de destino
-      = GitHub, formato Markdown puro sem `> [!NOTE]`") na seção acima, não
-      só o checkbox. Critério: canal e formato confirmados **e registrados
-      como decisão** antes do passo 28. — nenhum arquivo de código
+      removidos. **Decisão registrada:** Decisão 16a (canal de destino = GitHub,
+      formato Markdown puro sem `> [!NOTE]`). — nenhum arquivo de código
       alterado (esclarecimento com o usuário + atualização do `PLAN.md`).
-- [ ] 28. Extrair o conteúdo de `sig_bus/GUIA_EDICAO_GTFS.md` (as 4 seções:
+- [x] 28. Extrair o conteúdo de `sig_bus/GUIA_EDICAO_GTFS.md` (as 4 seções:
       Visão Geral/Ferramentas Disponíveis, Passo a Passo, Erros Comuns e
       Soluções, Limitações) num rascunho único, sem reescrever nem resumir
       o conteúdo técnico já validado na Fase 2. Critério: rascunho cobre as
       4 seções, e cada mensagem de erro/aviso do rascunho ainda corresponde
       literalmente ao texto do guia original. — arquivo (leitura):
       `sig_bus/GUIA_EDICAO_GTFS.md`.
-- [ ] 29. Reformatar a sintaxe do rascunho do passo 28 para o formato do
+- [x] 29. Reformatar a sintaxe do rascunho do passo 28 para o formato do
       canal confirmado no passo 27 (ex.: trocar `> [!NOTE]` por texto
       simples em negrito, resolver o link relativo a
       `ARQUITETURA_EDICAO_GTFS.md` para um caminho ou referência que faça
       sentido fora do repositório), preservando todo o conteúdo. Critério:
       nenhum elemento de sintaxe do Markdown original aparece sem renderizar
       (quebrado) no formato de destino escolhido.
-- [ ] 30. Apresentar o texto formatado ao usuário para revisão, sem publicar
+- [x] 30. Apresentar o texto formatado ao usuário para revisão, sem publicar
       ou enviar automaticamente a nenhum canal. Critério: usuário recebe o
       texto pronto para copiar/colar e aprova ou pede ajustes antes de
       qualquer publicação manual.
@@ -531,7 +519,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
 ### Fase 5 — Construir GTFS do zero (atual)
 
 **Núcleo (sem QGIS — verificável com `python3 -c`/`py_compile`, decisão 31)**
-- [ ] 31. `WorkingCopy.enter_empty()` em `gtfs_edit_core.py`: cria um
+- [x] 31. `WorkingCopy.enter_empty()` em `gtfs_edit_core.py`: cria um
       `feed_edit.gpkg` vazio com todas as tabelas de `gtfs_schema.GTFS_FILES`
       (via `osgeo.ogr`, mesmo pacote já usado em `gtfs_export.py` —
       `ogr.wkbPoint` para `stops`, `ogr.wkbLineString` para `shapes`,
@@ -541,7 +529,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       tabelas de `gtfs_schema.editable_tables()` + `shapes_point` existem
       com as colunas de `gtfs_schema.column_order(tabela)`. — arquivos:
       `gtfs_edit_core.py`.
-- [ ] 32. `gtfs_builder_core.py` (novo): `compute_progress(gpkg_path)` —
+- [x] 32. `gtfs_builder_core.py` (novo): `compute_progress(gpkg_path)` —
       usando `sqlite3` (padrão de `gtfs_validator.py`), calcula, por tabela
       de `gtfs_reader.REQUIRED_LAYERS`, se há ao menos 1 linha com todos os
       campos `required=True` de `gtfs_schema.py` preenchidos (mínimo,
@@ -552,19 +540,19 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       obrigatórias listadas em `faltando_minimo`; popular manualmente 1 linha
       de cada tabela obrigatória via `sqlite3` faz `pct_minimo` chegar a
       100%. — arquivos: `gtfs_builder_core.py` (novo).
-- [ ] 33. `gtfs_builder_core.py`: `normalize_address(texto)` (minúsculas +
+- [x] 33. `gtfs_builder_core.py`: `normalize_address(texto)` (minúsculas +
       espaços colapsados) e `find_existing_stop(gpkg_path, endereco)`
       (decisão 22), consultando a coluna `stop_desc`/`stop_name` onde o
       endereço original fica gravado. Critério: duas grafias do mesmo
       endereço com espaços/maiúsculas diferentes normalizam igual; buscar um
       endereço já gravado retorna o `stop_id` existente, e um endereço novo
       retorna `None`. — arquivos: `gtfs_builder_core.py`.
-- [ ] 34. `gtfs_builder_core.py`: `list_reusable_calendars(gpkg_path)`
+- [x] 34. `gtfs_builder_core.py`: `list_reusable_calendars(gpkg_path)`
       (decisão 28) — `SELECT` de `service_id` + dias + vigência distintos já
       gravados em `calendar`. Critério: gpkg com 2 `service_id` diferentes em
       `calendar` retorna as 2 linhas; gpkg sem `calendar` retorna lista
       vazia. — arquivos: `gtfs_builder_core.py`.
-- [ ] 35. `gtfs_builder_core.py`: `expand_frequency_to_stop_times(stop_ids,
+- [x] 35. `gtfs_builder_core.py`: `expand_frequency_to_stop_times(stop_ids,
       hora_inicio, hora_fim, intervalo_min)` (decisão 23) — função pura
       (sem I/O) que gera as viagens e as linhas de `stop_times`
       (`trip_id`, `arrival_time`, `departure_time`, `stop_id`,
@@ -572,7 +560,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       `06:00`–`08:00`, intervalo de 60 min, gera 3 viagens (`06:00`, `07:00`,
       `08:00`), cada uma com 3 linhas de `stop_times` em sequência
       1,2,3. — arquivos: `gtfs_builder_core.py`.
-- [ ] 36. `gtfs_builder_core.py`: `save_route(gpkg_path, agency, linha,
+- [x] 36. `gtfs_builder_core.py`: `save_route(gpkg_path, agency, linha,
       paradas, service, frequencia)` — grava/atualiza `agency` (uma vez),
       insere `routes`/`trips`/`stops` (reaproveitando `find_existing_stop`
       do passo 33 antes de criar `stop_id` novo)/`calendar`/`stop_times`
@@ -584,7 +572,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       `gtfs_schema.py`. — arquivos: `gtfs_builder_core.py`.
 
 **Núcleo dependente do QGIS (verificável no Console Python do QGIS)**
-- [ ] 37. `osm_routing.py` (novo): `fetch_ways_for_stops(paradas_em_ordem,
+- [x] 37. `osm_routing.py` (novo): `fetch_ways_for_stops(paradas_em_ordem,
       margem_m=300)` — monta uma bbox única cobrindo todas as paradas da
       linha com margem (decisão 25) e consulta o Overpass API uma vez via
       `QgsNetworkAccessManager`/`QNetworkRequest` (mesmo padrão de rede da
@@ -595,7 +583,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       paradas numa área urbana conhecida retornam ao menos 1 `way` com tag
       `highway`; paradas isoladas (ex.: meio do oceano) retornam lista
       vazia sem lançar exceção. — arquivos: `osm_routing.py` (novo).
-- [ ] 38. `osm_routing.py`: `build_road_graph(elementos_osm)` — usa
+- [x] 38. `osm_routing.py`: `build_road_graph(elementos_osm)` — usa
       `QgsVectorLayerDirector` + `QgsGraphBuilder` (decisão 26) para montar,
       a partir do resultado do passo 37, uma camada de linhas em memória e
       um único grafo roteável para a linha inteira. Critério (Console
@@ -603,7 +591,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       tem um número de arestas coerente com o número de `way` retornados
       (uma via pode virar mais de uma aresta entre nós). — arquivos:
       `osm_routing.py`.
-- [ ] 39. `osm_routing.py`: `shortest_path(grafo, ponto_a, ponto_b)` — faz
+- [x] 39. `osm_routing.py`: `shortest_path(grafo, ponto_a, ponto_b)` — faz
       snap de cada ponto ao vértice mais próximo do grafo e usa
       `QgsGraphAnalyzer.shortestPath` (Dijkstra, decisão 26) para achar o
       caminho entre eles; devolve `None` se os pontos estiverem em
@@ -612,7 +600,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       ligadas por vias conectadas) retornam uma lista de vértices que segue
       a malha; duas paradas sem caminho no grafo retornam `None` sem
       exceção. — arquivos: `osm_routing.py`.
-- [ ] 40. `osm_routing.py`: `route_stops(paradas_em_ordem)` — orquestra
+- [x] 40. `osm_routing.py`: `route_stops(paradas_em_ordem)` — orquestra
       `fetch_ways_for_stops` (passo 37) e `build_road_graph` (passo 38) uma
       vez para a linha inteira, depois chama `shortest_path` (passo 39)
       para cada par consecutivo de paradas sobre o mesmo grafo,
@@ -626,7 +614,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       malha; forçar a falha de um par específico (ex.: coordenada fora de
       qualquer via) faz só aquele trecho virar reta, mantendo os outros
       trechos roteados. — arquivos: `osm_routing.py`.
-- [ ] 41. `gtfs_builder_core.py`: `build_line_shape(gpkg_path, shape_id,
+- [x] 41. `gtfs_builder_core.py`: `build_line_shape(gpkg_path, shape_id,
       paradas_em_ordem)` — chama `route_stops` (passo 40) e insere os
       vértices resultantes (roteados e/ou fallback reto) em `shapes_point`,
       depois `GtfsReader.build_shapes_line(gpkg_path)` (decisão 29) gera/
@@ -636,7 +624,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       verificável comparando a geometria resultante com uma reta simples
       entre os mesmos pontos (a roteada tem mais vértices e maior
       comprimento). — arquivos: `gtfs_builder_core.py`.
-- [ ] 42. `geocoding.py` (novo): `NominatimGeocoder.geocode(endereco)` via
+- [x] 42. `geocoding.py` (novo): `NominatimGeocoder.geocode(endereco)` via
       `QgsNetworkAccessManager`/`QNetworkRequest` (decisão 19) — cabeçalho
       `User-Agent` identificando o plugin, no mínimo 1 requisição/segundo, e
       nunca levanta exceção para endereço não encontrado/ambíguo (retorna
@@ -646,7 +634,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       sem lançar exceção. — arquivos: `geocoding.py` (novo).
 
 **UI — esqueleto da aba e barra de progresso**
-- [ ] 43. Esqueleto da aba "Construir GTFS" em `SigBus_dialog.py`: mesmo
+- [x] 43. Esqueleto da aba "Construir GTFS" em `SigBus_dialog.py`: mesmo
       padrão de aba construída em código da "Edição GTFS"
       (`SigBus_dialog.py:951`) — `QStackedWidget` com uma página vazia por
       etapa (Configuração inicial, Nova linha, Paradas, Sequência, Horários,
@@ -657,7 +645,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       `python3 -m py_compile sig_bus/SigBus_dialog.py` sai 0; abrir o plugin
       no QGIS mostra a aba nova com as páginas placeholder e a navegação
       Voltar/Avançar funcionando. — arquivos: `SigBus_dialog.py`.
-- [ ] 44. Ligar a barra de progresso: após cada gravação no
+- [x] 44. Ligar a barra de progresso: após cada gravação no
       `feed_edit.gpkg` (passos 45-50), chamar `compute_progress` (passo 32)
       e atualizar as duas `QProgressBar` + o texto "falta: ..." com
       `faltando_minimo`/`faltando_maximo`. Critério: no QGIS, gravar a
@@ -665,17 +653,17 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       cima de 0%. — arquivos: `SigBus_dialog.py`.
 
 **UI — páginas do assistente**
-- [ ] 45. Página "Configuração inicial" (agência): formulário com as
+- [x] 45. Página "Configuração inicial" (agência): formulário com as
       colunas `editable=True` de `gtfs_schema.GTFS_FILES['agency']`; "Salvar
       e continuar" grava via `save_route`/núcleo (passo 36) e habilita a
       página "Nova linha". Critério: preencher e salvar grava 1 linha em
       `agency` no `feed_edit.gpkg`. — arquivos: `SigBus_dialog.py`.
-- [ ] 46. Página "Nova linha: identidade": campos `route_short_name`,
+- [x] 46. Página "Nova linha: identidade": campos `route_short_name`,
       `route_long_name`, `route_type` (combobox com os enums válidos já
       checados por `gtfs_validator.py`). Critério: "Avançar" sem
       `route_short_name` preenchido mostra aviso e não avança; preenchido,
       avança para "Paradas". — arquivos: `SigBus_dialog.py`.
-- [ ] 47. Página "Paradas" (entrada): lista de endereços (adicionar/remover
+- [x] 47. Página "Paradas" (entrada): lista de endereços (adicionar/remover
       linha de texto livre) + botão "Geocodificar" que chama
       `NominatimGeocoder` (passo 42) por endereço e mostra o resultado
       (lat/lon, ou "não encontrado" com campos manuais de lat/lon) ao lado
@@ -684,7 +672,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       Critério: um endereço geocodificável mostra lat/lon preenchidos; um
       não encontrado não bloqueia — permite digitar lat/lon manualmente. —
       arquivos: `SigBus_dialog.py`.
-- [ ] 48. Página "Paradas" (confirmação no mapa): "Confirmar e avançar"
+- [x] 48. Página "Paradas" (confirmação no mapa): "Confirmar e avançar"
       grava as paradas (novas + reaproveitadas) em `stops` via `save_route`,
       adiciona uma camada temporária de pontos no projeto e ativa a
       ferramenta de vértices do canvas (decisão 21, mesma chamada de
@@ -692,11 +680,11 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       seguir. Critério: após confirmar, o `feed_edit.gpkg` tem as novas
       linhas em `stops` com a geometria dos pontos (ajustados ou não no
       canvas). — arquivos: `SigBus_dialog.py`.
-- [ ] 49. Página "Sequência": lista reordenável das paradas confirmadas da
+- [x] 49. Página "Sequência": lista reordenável das paradas confirmadas da
       linha (mover para cima/para baixo, decisão 23). Critério: reordenar e
       avançar preserva a nova ordem para a página de horários. — arquivos:
       `SigBus_dialog.py`.
-- [ ] 50. Página "Horários": formulário de frequência (escolher um
+- [x] 50. Página "Horários": formulário de frequência (escolher um
       `service_id` existente da lista de `list_reusable_calendars`, passo
       34, ou criar um novo calendário com dias da semana + vigência) mais
       hora de início, hora de fim e intervalo em minutos (decisão 23).
@@ -704,7 +692,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       um resumo (nº de viagens geradas). Critério: alterar o intervalo
       recalcula o nº de viagens mostrado antes de gravar. — arquivos:
       `SigBus_dialog.py`.
-- [ ] 51. Página "Revisão e salvar": resumo da linha (paradas em ordem,
+- [x] 51. Página "Revisão e salvar": resumo da linha (paradas em ordem,
       janela de horário, nº de viagens); "Salvar linha" chama `save_route`
       (passo 36) + `build_line_shape` (passo 41) — que já calcula o traçado
       via roteamento OSM com fallback por trecho — para gravar
@@ -715,7 +703,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       e rodar `GtfsValidator` (Console Python) sobre o `feed_edit.gpkg` não
       acusa erro de integridade referencial para as tabelas dessa linha. —
       arquivos: `SigBus_dialog.py`.
-- [ ] 52. Botão "Ir para Edição GTFS": troca para a aba "Edição GTFS"
+- [x] 52. Botão "Ir para Edição GTFS": troca para a aba "Edição GTFS"
       mantendo o mesmo `feed_edit.gpkg` (mesma `WorkingCopy` em memória,
       sem criar um segundo working copy) — reaproveita `editOpenClicked`/
       `validateClicked`/`exportClicked` já existentes (decisão 17), sem
@@ -725,14 +713,14 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       arquivos: `SigBus_dialog.py`.
 
 **Documentação e verificação final**
-- [ ] 53. Criar `sig_bus/ARQUITETURA_CONSTRUIR_GTFS.md` (mesmo padrão de
+- [x] 53. Criar `sig_bus/ARQUITETURA_CONSTRUIR_GTFS.md` (mesmo padrão de
       `ARQUITETURA_EDICAO_GTFS.md`) documentando os módulos novos
       (`gtfs_builder_core.py`, `osm_routing.py`, `geocoding.py`,
       `WorkingCopy.enter_empty()`), o fluxo de páginas do assistente, o
       pipeline de roteamento OSM (Overpass → grafo → Dijkstra → fallback
       reto) e as decisões 17-31 desta fase. — arquivo:
       `sig_bus/ARQUITETURA_CONSTRUIR_GTFS.md` (novo).
-- [ ] 54. Criar `sig_bus/GUIA_CONSTRUIR_GTFS.md` (mesmo padrão de
+- [x] 54. Criar `sig_bus/GUIA_CONSTRUIR_GTFS.md` (mesmo padrão de
       `GUIA_EDICAO_GTFS.md`, Fase 2) com o passo a passo do assistente para
       o público leigo (Configuração inicial → Nova linha → Paradas →
       Sequência → Horários → Revisão → Salvar → repetir/Exportar), a leitura
@@ -742,10 +730,10 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       aba "Edição GTFS" —, e os avisos reais que aparecem (rastreáveis ao
       código, mesma regra da decisão 11). — arquivo:
       `sig_bus/GUIA_CONSTRUIR_GTFS.md` (novo).
-- [ ] 55. Adicionar links para `ARQUITETURA_CONSTRUIR_GTFS.md` e
+- [x] 55. Adicionar links para `ARQUITETURA_CONSTRUIR_GTFS.md` e
       `GUIA_CONSTRUIR_GTFS.md` no `README.md` (mesmo padrão do passo 20). —
       arquivo: `README.md`.
-- [ ] 56. Verificação manual ponta a ponta no QGIS, sem nenhum feed GTFS
+- [x] 56. Verificação manual ponta a ponta no QGIS, sem nenhum feed GTFS
       carregado antes: abrir "Construir GTFS" → configurar agência → criar
       1 linha completa com paradas geocodificadas de endereços reais →
       sequência → horários por frequência → salvar → confirmar visualmente
@@ -770,7 +758,7 @@ Decisões para a Fase 6 (processo pós-revisão: commit e gate de implementaçã
       de qualquer commit futuro). — arquivos: `.gitignore` (verificação).
       (Reverificado nesta reavaliação: `git ls-files dist/` vazio,
       `.gitignore` contém `dist/`.)
-- [ ] 59. Retomar a criação de `gtfs_builder_core.py` (passos 32-36) e
+- [x] 59. Retomar a criação de `gtfs_builder_core.py` (passos 32-36) e
       `osm_routing.py` (passos 37-41), ainda inexistentes apesar do commit
       `c9d610c` ter alegado o contrário — implementar um passo de cada vez,
       marcando `[x]` só depois que o arquivo existir no working tree e

@@ -154,6 +154,8 @@ def column_order(table):
     Retorna a lista dos nomes das colunas na ordem canônica para uma dada tabela.
     """
     # ponytail: List comprehension direta e simples para extrair a ordem das colunas.
+    if table == 'shapes_point':
+        return SHAPES_EXPORT_COLUMNS
     if table not in GTFS_FILES:
         return []
     return [col.name for col in GTFS_FILES[table]["columns"]]

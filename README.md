@@ -30,6 +30,7 @@ Developed as part of the undergraduate research project PIBIC DPPG 113/2021.
   *departed* in that hour is used.
 - **Reconnect GeoPackage:** restores GTFS layers to the project without
   reprocessing the feed (useful after closing and reopening QGIS).
+- **Build GTFS:** allows creating a GTFS feed from scratch via an interactive assistant (agency, routes, geocoded stops, sequences, and frequencies) with automatic OSM-based street routing (see [sig_bus/GUIA_CONSTRUIR_GTFS.md](sig_bus/GUIA_CONSTRUIR_GTFS.md)).
 - **Edit GTFS:** allows editing GTFS fields and geometry in an isolated working copy (`feed_edit.gpkg`), with built-in validation and normalized export (see [sig_bus/GUIA_EDICAO_GTFS.md](sig_bus/GUIA_EDICAO_GTFS.md)).
 
 The GTFS reader is **built-in** (`gtfs_reader.py`), adapted from the *GTFS Loader*
@@ -48,7 +49,9 @@ plugin by CTU GeoForAll Lab (GPL v2+). No external plugin is required.
     ├── SigBus_dialog.py     # dialog logic + background tasks
     ├── SigBus_dialog_base.ui
     ├── gtfs_reader.py       # built-in GTFS reader
+    ├── ARQUITETURA_CONSTRUIR_GTFS.md # technical architecture for GTFS creation (PT-BR)
     ├── DOCUMENTACAO.md      # detailed feature documentation (EN + PT-BR)
+    ├── GUIA_CONSTRUIR_GTFS.md # user guide for GTFS creation (PT-BR)
     ├── GUIA_EDICAO_GTFS.md  # user guide for GTFS editing (PT-BR)
     ├── METHODS.md           # theoretical foundation of the allocation method
     ├── metadata.txt
@@ -127,6 +130,7 @@ Desenvolvido no contexto do projeto de Iniciação Científica PIBIC DPPG 113/20
   viagens que *iniciaram* naquela hora.
 - **Reconectar GeoPackage:** restaura as camadas GTFS ao projeto sem
   reprocessar o feed (útil após fechar e reabrir o QGIS).
+- **Construir GTFS:** permite criar um feed GTFS do zero por meio de um assistente interativo (agência, rotas, paradas geocodificadas, sequências e frequências) com roteamento automático por ruas via OSM (veja [sig_bus/GUIA_CONSTRUIR_GTFS.md](sig_bus/GUIA_CONSTRUIR_GTFS.md)).
 - **Edição GTFS:** permite editar campos e geometria em uma cópia de trabalho isolada (`feed_edit.gpkg`), com validação integrada e exportação normalizada (veja [sig_bus/GUIA_EDICAO_GTFS.md](sig_bus/GUIA_EDICAO_GTFS.md)).
 
 O leitor de GTFS é **embutido** (`gtfs_reader.py`), adaptado do plugin
@@ -146,7 +150,9 @@ necessário.
     ├── SigBus_dialog.py     # lógica da janela + tarefas de fundo
     ├── SigBus_dialog_base.ui
     ├── gtfs_reader.py       # leitor GTFS embutido
+    ├── ARQUITETURA_CONSTRUIR_GTFS.md # arquitetura técnica para criação de GTFS (PT-BR)
     ├── DOCUMENTACAO.md      # documentação detalhada das funcionalidades (EN + PT-BR)
+    ├── GUIA_CONSTRUIR_GTFS.md # guia do usuário para criação de GTFS (PT-BR)
     ├── GUIA_EDICAO_GTFS.md  # guia do usuário para edição de GTFS (PT-BR)
     ├── METHODS.md           # embasamento teórico do método de alocação
     ├── metadata.txt

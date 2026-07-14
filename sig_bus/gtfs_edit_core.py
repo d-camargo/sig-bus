@@ -30,18 +30,22 @@ class WorkingCopy(object):
     def __init__(self, source_gpkg):
         """
         Construtor da classe.
-        :param source_gpkg: Caminho absoluto para o arquivo feed.gpkg de origem.
+        :param source_gpkg: Caminho absoluto para o arquivo feed.gpkg de origem ou diretório.
         """
-        self.source_path = source_gpkg
-        directory = os.path.dirname(source_gpkg)
-        self.edit_path = os.path.join(directory, "feed_edit.gpkg")
+        if source_gpkg and os.path.isdir(source_gpkg):
+            self.source_path = None
+            directory = source_gpkg
+        else:
+            self.source_path = source_gpkg
+            directory = os.path.dirname(source_gpkg) if source_gpkg else ""
+        self.edit_path = os.path.join(directory, "feed_edit.gpkg") if directory else ""
 
     def is_active(self):
         """
         Verifica se a cópia de trabalho de edição existe no disco.
         :return: True se feed_edit.gpkg existir, False caso contrário.
         """
-        return os.path.exists(self.edit_path)
+        return bool(self.edit_path and os.path.exists(self.edit_path))
 
     def enter(self, overwrite=False):
         """
@@ -52,10 +56,92 @@ class WorkingCopy(object):
         if self.is_active() and not overwrite:
             return False
 
+        if not self.source_path or not self.edit_path:
+            return False
+
         try:
             shutil.copyfile(self.source_path, self.edit_path)
             return True
         except Exception:
+            return False
+
+    def enter_empty(self, overwrite=False):
+        """
+        Cria um GeoPackage vazio com a estrutura de tabelas do GTFS.
+        :param overwrite: Se True, sobrescreve a cópia de trabalho se já existir.
+        :return: True se criado com sucesso, False caso contrário.
+        """
+        edit_path = self.edit_path
+
+        if not edit_path:
+            return False
+
+        if os.path.exists(edit_path):
+            if not overwrite:
+                return False
+            try:
+                os.remove(edit_path)
+            except OSError:
+                return False
+
+        try:
+            from osgeo import ogr, osr
+            try:
+                from . import gtfs_schema
+            except ImportError:
+                try:
+                    import gtfs_schema
+                except ImportError:
+                    from sig_bus import gtfs_schema
+
+            driver = ogr.GetDriverByName("GPKG")
+            if driver is None:
+                return False
+
+            ds = driver.CreateDataSource(edit_path)
+            if ds is None:
+                return False
+
+            srs = osr.SpatialReference()
+            srs.ImportFromEPSG(4326)
+
+            # Criar as tabelas do esquema GTFS + shapes_point
+            tables = list(gtfs_schema.GTFS_FILES.keys())
+            if "shapes_point" not in tables:
+                tables.append("shapes_point")
+
+            for table_name in tables:
+                if table_name in ("stops", "shapes_point"):
+                    geom_type = ogr.wkbPoint
+                    layer_srs = srs
+                elif table_name == "shapes":
+                    geom_type = ogr.wkbLineString
+                    layer_srs = srs
+                else:
+                    geom_type = ogr.wkbNone
+                    layer_srs = None
+
+                lyr = ds.CreateLayer(table_name, srs=layer_srs, geom_type=geom_type)
+                if not lyr:
+                    raise RuntimeError("Falha ao criar camada '{}'".format(table_name))
+
+                # Cria os campos da tabela
+                columns = gtfs_schema.column_order(table_name)
+                for col in columns:
+                    field_defn = ogr.FieldDefn(col, ogr.OFTString)
+                    lyr.CreateField(field_defn)
+
+            # Fecha/salva o datasource
+            ds = None
+            return True
+
+        except Exception:
+            # Se falhar a criação, removemos o arquivo incompleto se ele foi criado
+            if os.path.exists(edit_path):
+                try:
+                    os.remove(edit_path)
+                except OSError:
+                    pass
             return False
 
     def discard(self):
