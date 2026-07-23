@@ -32,9 +32,17 @@ from datetime import datetime
 from zipfile import ZipFile
 
 from qgis.PyQt import uic, QtWidgets
-from qgis.PyQt.QtCore import QVariant
+from qgis.PyQt.QtCore import QVariant, Qt, QDate, QTime
 from qgis.PyQt.QtGui import QFont
-from qgis.PyQt.QtWidgets import QFileDialog
+from qgis.PyQt.QtWidgets import (
+    QFileDialog,
+    QWidget,
+    QVBoxLayout,
+    QLabel,
+    QPushButton,
+    QMessageBox,
+    QComboBox,
+)
 from qgis.core import (
     Qgis,
     QgsApplication,
@@ -79,6 +87,11 @@ from .gtfs_reader import (
     GtfsReader,
     create_join_indexes,
 )
+from .gtfs_edit_core import WorkingCopy
+from . import gtfs_schema
+from .gtfs_export import GtfsExporter
+from .gtfs_validator import GtfsValidator
+from .gtfs_builder_core import compute_progress
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 
@@ -936,6 +949,501 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         # Botão "Diagrama de Blocos" — definido no .ui, na aba "Análise".
         self.button_diagrama.clicked.connect(self.diagramaClicked)
 
+        # Inicialização da aba "Edição GTFS" (fatiada em código)
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        self.label_edit_status = QLabel("Nenhuma edição em andamento.")
+        self.button_edit_enter = QPushButton("Entrar no modo edição")
+
+        self.combo_edit_table = QComboBox()
+        self.combo_edit_table.addItems(gtfs_schema.editable_tables())
+
+        # Seletores de linha e viagem para stop_times
+        self.label_edit_route = QLabel("Linha (route_short_name):")
+        self.combo_edit_route = QComboBox()
+        self.label_edit_trip = QLabel("Viagem (trip_id):")
+        self.combo_edit_trip = QComboBox()
+
+        self.button_edit_open = QPushButton("Abrir para edição")
+        self.button_edit_validate = QPushButton("Validar")
+        self.button_edit_export = QPushButton("Exportar .zip")
+        self.button_edit_discard = QPushButton("Descartar edição")
+
+        layout.addWidget(self.label_edit_status)
+        layout.addWidget(self.button_edit_enter)
+        layout.addWidget(self.combo_edit_table)
+        layout.addWidget(self.label_edit_route)
+        layout.addWidget(self.combo_edit_route)
+        layout.addWidget(self.label_edit_trip)
+        layout.addWidget(self.combo_edit_trip)
+        layout.addWidget(self.button_edit_open)
+        layout.addWidget(self.button_edit_validate)
+        layout.addWidget(self.button_edit_export)
+        layout.addWidget(self.button_edit_discard)
+        layout.addStretch()
+
+        self.tabWidget.addTab(tab, "Edição GTFS")
+
+        # Inicialização da aba "Construir GTFS" (fatiada em código, passo 43)
+        tab_build = QWidget()
+        layout_build = QVBoxLayout(tab_build)
+
+        # Duas QProgressBar (mínimo/máximo) + QLabel "falta: ..." fixos no topo
+        self.progress_min = QtWidgets.QProgressBar()
+        self.progress_min.setRange(0, 100)
+        self.progress_min.setValue(0)
+        self.progress_min.setFormat("Mínimo: %p%")
+
+        self.progress_max = QtWidgets.QProgressBar()
+        self.progress_max.setRange(0, 100)
+        self.progress_max.setValue(0)
+        self.progress_max.setFormat("Máximo: %p%")
+
+        self.label_build_todo = QLabel("falta: ...")
+
+        layout_build.addWidget(self.progress_min)
+        layout_build.addWidget(self.progress_max)
+        layout_build.addWidget(self.label_build_todo)
+
+        # QStackedWidget com uma página vazia por etapa
+        self.stacked_build = QtWidgets.QStackedWidget()
+
+        self.page_config = QWidget()
+        layout_config = QVBoxLayout(self.page_config)
+        
+        # Form layout para os campos da agência (passo 45)
+        form_layout = QtWidgets.QFormLayout()
+        
+        self.input_agency_name = QtWidgets.QLineEdit()
+        self.input_agency_url = QtWidgets.QLineEdit()
+        self.input_agency_timezone = QtWidgets.QLineEdit()
+        self.input_agency_lang = QtWidgets.QLineEdit()
+        self.input_agency_phone = QtWidgets.QLineEdit()
+        
+        self.input_agency_name.setPlaceholderText("Nome da Agência (ex: Transporte Urbano)")
+        self.input_agency_url.setPlaceholderText("URL da Agência (ex: http://www.transporte.com)")
+        self.input_agency_timezone.setPlaceholderText("Fuso Horário (ex: America/Sao_Paulo)")
+        self.input_agency_lang.setPlaceholderText("Idioma (opcional, ex: pt)")
+        self.input_agency_phone.setPlaceholderText("Telefone (opcional, ex: 11 3456-7890)")
+        
+        form_layout.addRow("Nome da Agência *:", self.input_agency_name)
+        form_layout.addRow("URL da Agência *:", self.input_agency_url)
+        form_layout.addRow("Fuso Horário *:", self.input_agency_timezone)
+        form_layout.addRow("Idioma:", self.input_agency_lang)
+        form_layout.addRow("Telefone:", self.input_agency_phone)
+        
+        layout_config.addLayout(form_layout)
+        
+        self.button_save_agency = QtWidgets.QPushButton("Salvar e continuar")
+        layout_config.addWidget(self.button_save_agency)
+        layout_config.addStretch()
+        
+        self.button_save_agency.clicked.connect(self._on_save_agency_clicked)
+        
+        self.stacked_build.addWidget(self.page_config)
+
+        self.page_nova_linha = QWidget()
+        layout_nova_linha = QVBoxLayout(self.page_nova_linha)
+        
+        # Form layout para os campos da nova linha (passo 46)
+        form_layout_linha = QtWidgets.QFormLayout()
+        
+        self.input_route_short_name = QtWidgets.QLineEdit()
+        self.input_route_long_name = QtWidgets.QLineEdit()
+        self.combo_route_type = QtWidgets.QComboBox()
+        
+        self.input_route_short_name.setPlaceholderText("Nome Curto (ex: 101, CIRCULAR)")
+        self.input_route_long_name.setPlaceholderText("Nome Longo (ex: Centro / Bairro)")
+        
+        # Popula o combobox com os enums válidos do route_type: 0, 1, 2, 3, 4, 5, 6, 7, 11, 12
+        route_types = [
+            ("3 - Ônibus", "3"),
+            ("0 - Bonde, VLT", "0"),
+            ("1 - Metrô", "1"),
+            ("2 - Trem", "2"),
+            ("4 - Barca", "4"),
+            ("5 - Bonde de cabo", "5"),
+            ("6 - Teleférico", "6"),
+            ("7 - Funicular", "7"),
+            ("11 - Trólebus", "11"),
+            ("12 - Monotrilho", "12")
+        ]
+        for label, val in route_types:
+            self.combo_route_type.addItem(label, val)
+            
+        form_layout_linha.addRow("Nome Curto (route_short_name) *:", self.input_route_short_name)
+        form_layout_linha.addRow("Nome Longo (route_long_name):", self.input_route_long_name)
+        form_layout_linha.addRow("Tipo de Rota (route_type) *:", self.combo_route_type)
+        
+        layout_nova_linha.addLayout(form_layout_linha)
+        layout_nova_linha.addStretch()
+        
+        self.stacked_build.addWidget(self.page_nova_linha)
+
+        self.page_paradas = QWidget()
+        layout_paradas = QVBoxLayout(self.page_paradas)
+        
+        title_label = QLabel("<b>Cadastro de Paradas da Linha</b>")
+        title_label.setStyleSheet("font-size: 14px; margin-bottom: 4px;")
+        layout_paradas.addWidget(title_label)
+        
+        desc_label = QLabel("Insira os endereços das paradas na ordem em que ocorrem na linha. Clique em 'Geocodificar' para obter lat/lon.")
+        desc_label.setStyleSheet("color: #666; margin-bottom: 8px;")
+        layout_paradas.addWidget(desc_label)
+        
+        # Scroll Area para as paradas
+        self.scroll_paradas = QtWidgets.QScrollArea()
+        self.scroll_paradas.setWidgetResizable(True)
+        self.scroll_paradas.setStyleSheet("border: 1px solid #ddd; border-radius: 4px; background-color: white;")
+        
+        self.scroll_content_paradas = QWidget()
+        self.scroll_content_paradas.setStyleSheet("background-color: white;")
+        self.layout_scroll_paradas = QVBoxLayout(self.scroll_content_paradas)
+        from qgis.PyQt.QtCore import Qt
+        self.layout_scroll_paradas.setAlignment(Qt.AlignTop)
+        
+        self.scroll_paradas.setWidget(self.scroll_content_paradas)
+        layout_paradas.addWidget(self.scroll_paradas)
+        
+        # Botões de ação
+        layout_botoes_paradas = QtWidgets.QHBoxLayout()
+        self.button_add_stop = QtWidgets.QPushButton("Adicionar Endereço")
+        self.button_geocode = QtWidgets.QPushButton("Geocodificar")
+        
+        self.button_add_stop.setStyleSheet("""
+            QPushButton {
+                background-color: #2b6cb0;
+                color: white;
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #2c5282;
+            }
+        """)
+        
+        self.button_geocode.setStyleSheet("""
+            QPushButton {
+                background-color: #319795;
+                color: white;
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #2c7a7b;
+            }
+        """)
+        
+        layout_botoes_paradas.addWidget(self.button_add_stop)
+        layout_botoes_paradas.addWidget(self.button_geocode)
+        layout_paradas.addLayout(layout_botoes_paradas)
+        
+        self.stacked_build.addWidget(self.page_paradas)
+        
+        # Conexões
+        self.button_add_stop.clicked.connect(self._add_stop_row)
+        self.button_geocode.clicked.connect(self._geocode_stops)
+        
+        # Mantém uma lista para controlar os widgets das linhas
+        self.stop_rows = []
+        self.sequenced_stops = []
+        self.build_direction_id = '0'
+        
+        # Inicializa com pelo menos uma linha
+        self._add_stop_row()
+
+        self.page_sequencia = QWidget()
+        layout_sequencia = QVBoxLayout(self.page_sequencia)
+        
+        # Label/Instruções
+        label_instructions = QLabel("Organize as paradas na sequência correta de atendimento da linha. Você pode arrastá-las na lista ou usar os botões:")
+        label_instructions.setStyleSheet("font-weight: bold; margin-bottom: 8px;")
+        layout_sequencia.addWidget(label_instructions)
+        
+        # QListWidget para reordenação
+        self.list_widget_sequencia = QtWidgets.QListWidget()
+        self.list_widget_sequencia.setDragDropMode(QtWidgets.QAbstractItemView.InternalMove)
+        self.list_widget_sequencia.setDragEnabled(True)
+        self.list_widget_sequencia.setAcceptDrops(True)
+        self.list_widget_sequencia.setDropIndicatorShown(True)
+        self.list_widget_sequencia.setStyleSheet("""
+            QListWidget {
+                border: 1px solid #ccc;
+                border-radius: 6px;
+                padding: 5px;
+                background-color: #ffffff;
+            }
+            QListWidget::item {
+                border: 1px solid #e2e8f0;
+                border-radius: 4px;
+                padding: 8px;
+                margin-bottom: 4px;
+                background-color: #f7fafc;
+            }
+            QListWidget::item:selected {
+                background-color: #ebf8ff;
+                color: #2b6cb0;
+                border: 1px solid #90cdf4;
+            }
+            QListWidget::item:hover {
+                background-color: #edf2f7;
+            }
+        """)
+        layout_sequencia.addWidget(self.list_widget_sequencia)
+        
+        # Layout de botões de ação
+        layout_botoes_sequencia = QtWidgets.QHBoxLayout()
+        self.button_move_up = QtWidgets.QPushButton("Mover para Cima")
+        self.button_move_down = QtWidgets.QPushButton("Mover para Baixo")
+        
+        button_style = """
+            QPushButton {
+                background-color: #2b6cb0;
+                color: white;
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #2c5282;
+            }
+            QPushButton:disabled {
+                background-color: #cbd5e0;
+                color: #718096;
+            }
+        """
+        self.button_move_up.setStyleSheet(button_style)
+        self.button_move_down.setStyleSheet(button_style)
+        
+        layout_botoes_sequencia.addWidget(self.button_move_up)
+        layout_botoes_sequencia.addWidget(self.button_move_down)
+        layout_botoes_sequencia.addStretch()
+        layout_sequencia.addLayout(layout_botoes_sequencia)
+        
+        self.stacked_build.addWidget(self.page_sequencia)
+        
+        # Conexões
+        self.button_move_up.clicked.connect(self._move_sequence_up)
+        self.button_move_down.clicked.connect(self._move_sequence_down)
+
+        self.page_horarios = QWidget()
+        layout_horarios = QVBoxLayout(self.page_horarios)
+        
+        # Título
+        title_horarios = QLabel("<b>Configuração de Calendário e Frequência</b>")
+        title_horarios.setStyleSheet("font-size: 14px; margin-bottom: 8px;")
+        layout_horarios.addWidget(title_horarios)
+        
+        # Grupo Calendário
+        group_calendar = QtWidgets.QGroupBox("Calendário (Período de Operação)")
+        layout_group_cal = QVBoxLayout(group_calendar)
+        
+        form_cal = QtWidgets.QFormLayout()
+        self.combo_calendar = QtWidgets.QComboBox()
+        form_cal.addRow("Selecionar Calendário:", self.combo_calendar)
+        layout_group_cal.addLayout(form_cal)
+        
+        # Widget para os dados do novo calendário
+        self.widget_new_calendar = QWidget()
+        layout_new_cal = QtWidgets.QFormLayout(self.widget_new_calendar)
+        layout_new_cal.setContentsMargins(0, 0, 0, 0)
+        
+        self.input_service_id = QtWidgets.QLineEdit()
+        self.input_service_id.setPlaceholderText("ex: dias_uteis, sabado, etc.")
+        layout_new_cal.addRow("ID do Serviço (service_id) *:", self.input_service_id)
+        
+        # Dias de operação
+        layout_days = QtWidgets.QHBoxLayout()
+        self.chk_monday = QtWidgets.QCheckBox("Seg")
+        self.chk_tuesday = QtWidgets.QCheckBox("Ter")
+        self.chk_wednesday = QtWidgets.QCheckBox("Qua")
+        self.chk_thursday = QtWidgets.QCheckBox("Qui")
+        self.chk_friday = QtWidgets.QCheckBox("Sex")
+        self.chk_saturday = QtWidgets.QCheckBox("Sáb")
+        self.chk_sunday = QtWidgets.QCheckBox("Dom")
+        
+        self.chk_days = [
+            self.chk_monday, self.chk_tuesday, self.chk_wednesday,
+            self.chk_thursday, self.chk_friday, self.chk_saturday, self.chk_sunday
+        ]
+        
+        for chk in self.chk_days:
+            layout_days.addWidget(chk)
+            chk.setChecked(True)
+            
+        layout_new_cal.addRow("Dias de Operação:", layout_days)
+        
+        # Vigência
+        layout_dates = QtWidgets.QHBoxLayout()
+        self.date_start_date = QtWidgets.QDateEdit()
+        self.date_start_date.setCalendarPopup(True)
+        self.date_start_date.setDisplayFormat("dd/MM/yyyy")
+        self.date_start_date.setDate(QDate.currentDate())
+        
+        self.date_end_date = QtWidgets.QDateEdit()
+        self.date_end_date.setCalendarPopup(True)
+        self.date_end_date.setDisplayFormat("dd/MM/yyyy")
+        self.date_end_date.setDate(QDate.currentDate().addYears(1))
+        
+        layout_dates.addWidget(QLabel("De:"))
+        layout_dates.addWidget(self.date_start_date)
+        layout_dates.addWidget(QLabel("Até:"))
+        layout_dates.addWidget(self.date_end_date)
+        layout_new_cal.addRow("Vigência:", layout_dates)
+        
+        layout_group_cal.addWidget(self.widget_new_calendar)
+        layout_horarios.addWidget(group_calendar)
+        
+        # Grupo Frequência
+        group_freq = QtWidgets.QGroupBox("Frequência de Viagens")
+        form_freq = QtWidgets.QFormLayout(group_freq)
+        
+        self.time_start = QtWidgets.QTimeEdit()
+        self.time_start.setDisplayFormat("HH:mm:ss")
+        self.time_start.setTime(QTime(6, 0, 0))
+        
+        self.time_end = QtWidgets.QTimeEdit()
+        self.time_end.setDisplayFormat("HH:mm:ss")
+        self.time_end.setTime(QTime(23, 0, 0))
+        
+        self.spin_interval = QtWidgets.QSpinBox()
+        self.spin_interval.setRange(1, 1440)
+        self.spin_interval.setValue(30)
+        self.spin_interval.setSuffix(" minutos")
+        
+        form_freq.addRow("Hora de Início *:", self.time_start)
+        form_freq.addRow("Hora de Fim *:", self.time_end)
+        form_freq.addRow("Intervalo *:", self.spin_interval)
+        
+        layout_horarios.addWidget(group_freq)
+        
+        # Resumo
+        self.label_trips_summary = QLabel()
+        self.label_trips_summary.setStyleSheet("""
+            QLabel {
+                background-color: #ebf8ff;
+                border: 1px solid #90cdf4;
+                border-radius: 4px;
+                padding: 10px;
+                color: #2b6cb0;
+                font-weight: bold;
+            }
+        """)
+        layout_horarios.addWidget(self.label_trips_summary)
+        
+        layout_horarios.addStretch()
+        self.stacked_build.addWidget(self.page_horarios)
+
+        self.page_revisao = QWidget()
+        layout_revisao = QVBoxLayout(self.page_revisao)
+        
+        title_revisao = QLabel("<b>Revisão da Linha</b>")
+        title_revisao.setStyleSheet("font-size: 14px; margin-bottom: 8px;")
+        layout_revisao.addWidget(title_revisao)
+        
+        self.label_revisao_summary = QLabel()
+        self.label_revisao_summary.setStyleSheet("""
+            QLabel {
+                background-color: #f7fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                padding: 12px;
+            }
+        """)
+        layout_revisao.addWidget(self.label_revisao_summary)
+        
+        # Botões de controle da revisão (Salvar, Segundo Sentido, Nova Linha, Ir para Edição GTFS)
+        layout_botoes_revisao = QtWidgets.QHBoxLayout()
+        self.btn_salvar_linha = QPushButton("Salvar Linha")
+        self.btn_segundo_sentido = QPushButton("Adicionar segundo sentido desta linha")
+        self.btn_nova_linha = QPushButton("Nova Linha")
+        self.btn_ir_para_edicao = QPushButton("Ir para Edição GTFS")
+
+        button_style = """
+            QPushButton {
+                background-color: #2b6cb0;
+                color: white;
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #2c5282;
+            }
+            QPushButton:disabled {
+                background-color: #cbd5e0;
+                color: #718096;
+            }
+        """
+        self.btn_salvar_linha.setStyleSheet(button_style.replace("#2b6cb0", "#38a169").replace("#2c5282", "#2f855a"))
+        self.btn_segundo_sentido.setStyleSheet(button_style)
+        self.btn_nova_linha.setStyleSheet(button_style.replace("#2b6cb0", "#4a5568").replace("#2c5282", "#2d3748"))
+        self.btn_ir_para_edicao.setStyleSheet(button_style.replace("#2b6cb0", "#805ad5").replace("#2c5282", "#6b46c1"))
+
+        self.btn_segundo_sentido.setEnabled(False)
+        self.btn_nova_linha.setEnabled(False)
+        self.btn_ir_para_edicao.setEnabled(False)
+
+        layout_botoes_revisao.addWidget(self.btn_salvar_linha)
+        layout_botoes_revisao.addWidget(self.btn_segundo_sentido)
+        layout_botoes_revisao.addWidget(self.btn_nova_linha)
+        layout_botoes_revisao.addWidget(self.btn_ir_para_edicao)
+
+        layout_revisao.addLayout(layout_botoes_revisao)
+        layout_revisao.addStretch()
+        self.stacked_build.addWidget(self.page_revisao)
+
+        self.btn_salvar_linha.clicked.connect(self._on_salvar_linha_clicked)
+        self.btn_segundo_sentido.clicked.connect(self._on_segundo_sentido_clicked)
+        self.btn_nova_linha.clicked.connect(self._on_nova_linha_clicked)
+        self.btn_ir_para_edicao.clicked.connect(self._on_ir_para_edicao_clicked)
+        
+        # Conexões da página de horários
+        self.combo_calendar.currentIndexChanged.connect(self._on_combo_calendar_changed)
+        self.time_start.timeChanged.connect(self._update_estimated_trips)
+        self.time_end.timeChanged.connect(self._update_estimated_trips)
+        self.spin_interval.valueChanged.connect(self._update_estimated_trips)
+        
+        self._update_estimated_trips()
+
+        layout_build.addWidget(self.stacked_build)
+
+        # Botões "Voltar"/"Avançar"
+        layout_nav = QtWidgets.QHBoxLayout()
+        self.button_build_back = QPushButton("Voltar")
+        self.button_build_next = QPushButton("Avançar")
+        layout_nav.addWidget(self.button_build_back)
+        layout_nav.addWidget(self.button_build_next)
+        layout_build.addLayout(layout_nav)
+
+        self.tabWidget.addTab(tab_build, "Construir GTFS")
+
+        self._working_copy = None
+
+        # Conexões da Edição GTFS
+        self.button_edit_enter.clicked.connect(self.editEnterClicked)
+        self.button_edit_open.clicked.connect(self.editOpenClicked)
+        self.button_edit_validate.clicked.connect(self.validateClicked)
+        self.button_edit_export.clicked.connect(self.exportClicked)
+        self.button_edit_discard.clicked.connect(self.editDiscardClicked)
+        self.combo_edit_table.currentTextChanged.connect(self._on_edit_table_changed)
+        self.combo_edit_route.currentTextChanged.connect(self._on_edit_route_changed)
+
+        # Conexões da Construção GTFS
+        self.button_build_back.clicked.connect(self._on_build_back_clicked)
+        self.button_build_next.clicked.connect(self._on_build_next_clicked)
+        self.tabWidget.currentChanged.connect(self._on_tab_changed)
+
+        self._refresh_edit_status()
+        self._update_build_nav_buttons()
+
     def field_select(self):
         #field = self.mFieldComboBox.fields()
         layer = self.mMapLayerComboBox.currentLayer()
@@ -1684,6 +2192,1252 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 'Erro',
                 'Falha ao exportar PDF (código {}).'.format(res),
                 level=Qgis.Critical, duration=10)
+
+    def editEnterClicked(self):
+        """
+        Inicia ou retoma o modo de edição do GTFS.
+        Clona o GeoPackage de origem para feed_edit.gpkg e prepara a cópia de trabalho.
+        """
+        gpkg = self._resolve_gpkg(prompt_if_missing=True)
+        if not gpkg:
+            iface.messageBar().pushMessage(
+                "Aviso",
+                "GTFS não encontrado — carregue ou reconecte o GeoPackage primeiro.",
+                level=Qgis.Warning, duration=8
+            )
+            return
+
+        wc = WorkingCopy(gpkg)
+
+        if wc.is_active():
+            reply = QMessageBox.question(
+                self,
+                "Edição em andamento",
+                "Já existe uma edição em andamento. Recriar do zero? (Não = retomar a atual)",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                ok = wc.enter(overwrite=True)
+            else:
+                ok = True  # Retoma a edição existente
+        else:
+            ok = wc.enter()
+            if not ok:
+                iface.messageBar().pushMessage(
+                    "Erro",
+                    "Falha ao criar a cópia de trabalho do GeoPackage (feed_edit.gpkg).",
+                    level=Qgis.Critical, duration=10
+                )
+                return
+
+        if ok:
+            self._working_copy = wc
+            iface.messageBar().pushMessage(
+                "Info",
+                "Modo de edição do GTFS ativado com sucesso.",
+                level=Qgis.Info, duration=8
+            )
+            self._refresh_edit_status()
+
+    def editDiscardClicked(self):
+        """
+        Descarta a edição atual apagando o arquivo feed_edit.gpkg após confirmação do usuário.
+        """
+        if self._working_copy is None or not self._working_copy.is_active():
+            iface.messageBar().pushMessage(
+                "Aviso",
+                "Nenhuma edição para descartar.",
+                level=Qgis.Warning, duration=8
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Descartar Edição",
+            "Tem certeza que deseja descartar todas as alterações não salvas? Esta operação não pode ser desfeita.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            wc = self._working_copy
+            if wc.discard():
+                self._working_copy = None
+                iface.messageBar().pushMessage(
+                    "Info",
+                    "Edição descartada e arquivo temporário excluído.",
+                    level=Qgis.Info, duration=8
+                )
+                self._refresh_edit_status()
+            else:
+                iface.messageBar().pushMessage(
+                    "Erro",
+                    "Falha ao apagar o arquivo de edição temporário.",
+                    level=Qgis.Critical, duration=10
+                )
+
+    def editOpenClicked(self):
+        """
+        Carrega a tabela de atributos nativa do QGIS a partir do feed_edit.gpkg,
+        aplica restrição de leitura nos campos de ID travados e fecha o diálogo do SIG-Bus.
+        """
+        if self._working_copy is None or not self._working_copy.is_active():
+            iface.messageBar().pushMessage(
+                "Aviso",
+                "Entre no modo edição primeiro.",
+                level=Qgis.Warning, duration=8
+            )
+            return
+
+        table = self.combo_edit_table.currentText()
+        if table == "stop_times":
+            trip_id = self.combo_edit_trip.currentText()
+            if not trip_id or not trip_id.strip():
+                iface.messageBar().pushMessage(
+                    "Aviso",
+                    "Selecione uma viagem para editar a tabela stop_times.",
+                    level=Qgis.Warning, duration=8
+                )
+                return
+            trip_id = trip_id.strip()
+
+        # Decisão (passo 5 do PLAN.md): a camada de linhas 'shapes' (gerada por
+        # build_shapes_line) é a fonte editável por vértice no canvas; já tem
+        # esse mesmo nome no GeoPackage, então o nome da tabela do combo já
+        # corresponde ao nome da camada.
+        uri = self._working_copy.edit_path + '|layername=' + table
+        layer = QgsVectorLayer(uri, 'edit_' + table, 'ogr')
+
+        if not layer.isValid():
+            iface.messageBar().pushMessage(
+                "Erro",
+                "Falha ao carregar a camada edit_{}.".format(table),
+                level=Qgis.Critical, duration=10
+            )
+            return
+
+        if table == "stop_times":
+            layer.setSubsetString("trip_id = '{}'".format(trip_id.replace("'", "''")))
+
+        # Travar IDs do gtfs_schema
+        if table in gtfs_schema.GTFS_FILES:
+            cfg = layer.editFormConfig()
+            columns = gtfs_schema.GTFS_FILES[table]["columns"]
+            for col in columns:
+                if not col.editable:
+                    idx = layer.fields().indexFromName(col.name)
+                    if idx >= 0:
+                        cfg.setReadOnly(idx, True)
+            layer.setEditFormConfig(cfg)
+
+        QgsProject.instance().addMapLayer(layer)
+        layer.startEditing()
+        iface.showAttributeTable(layer)
+        self._edit_layer = layer
+
+        if table in ["stops", "shapes"]:
+            iface.setActiveLayer(layer)
+            extent = layer.extent()
+            if not extent.isEmpty():
+                iface.mapCanvas().setExtent(extent)
+                iface.mapCanvas().refresh()
+            if hasattr(iface, "actionVertexToolActiveLayer"):
+                iface.actionVertexToolActiveLayer().trigger()
+            elif hasattr(iface, "actionVertexTool"):
+                iface.actionVertexTool().trigger()
+
+        iface.messageBar().pushMessage(
+            "Info",
+            "Tabela edit_{} aberta para edição no QGIS. O diálogo foi fechado.".format(table),
+            level=Qgis.Info, duration=8
+        )
+        self.close()
+
+    def validateClicked(self):
+        """
+        Valida os dados da edição atual (feed_edit.gpkg) usando o GtfsValidator.
+        """
+        if self._working_copy is None or not self._working_copy.is_active():
+            iface.messageBar().pushMessage(
+                "Aviso",
+                "Nenhuma edição ativa para validar.",
+                level=Qgis.Warning, duration=8
+            )
+            return
+
+        gpkg_path = self._working_copy.edit_path
+        if not os.path.exists(gpkg_path):
+            iface.messageBar().pushMessage(
+                "Erro",
+                "Arquivo de edição GeoPackage não encontrado.",
+                level=Qgis.Critical, duration=8
+            )
+            return
+
+        try:
+            validator = GtfsValidator(gpkg_path)
+            errors, warnings = validator.validate()
+        except Exception as e:
+            msg = "Erro durante a validação: {}".format(e)
+            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.Critical)
+            iface.messageBar().pushMessage(
+                "Erro",
+                msg,
+                level=Qgis.Critical, duration=10
+            )
+            return
+
+        # Registrar no log
+        QgsMessageLog.logMessage("Iniciando validação de GTFS no SIG-Bus...", 'SIG-Bus', Qgis.Info)
+
+        # Logar cada erro
+        for err in errors:
+            QgsMessageLog.logMessage("[Erro] {}".format(err), 'SIG-Bus', Qgis.Warning)
+
+        # Logar cada aviso
+        for warn in warnings:
+            QgsMessageLog.logMessage("[Aviso] {}".format(warn), 'SIG-Bus', Qgis.Info)
+
+        # Reportar resumo via messageBar
+        if errors and warnings:
+            msg = "Validação concluída com {} erro(s) e {} aviso(s). Veja o painel de log (SIG-Bus) para detalhes.".format(
+                len(errors), len(warnings)
+            )
+            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.Critical, duration=10)
+        elif errors:
+            msg = "Validação concluída com {} erro(s). Veja o painel de log (SIG-Bus) para detalhes.".format(
+                len(errors)
+            )
+            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.Critical, duration=10)
+        elif warnings:
+            msg = "Validação concluída com {} aviso(s). Veja o painel de log (SIG-Bus) para detalhes.".format(
+                len(warnings)
+            )
+            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.Warning, duration=10)
+        else:
+            iface.messageBar().pushMessage(
+                "Validação GTFS",
+                "GTFS validado com sucesso! Nenhum erro ou aviso encontrado.",
+                level=Qgis.Info, duration=8
+            )
+
+    def exportClicked(self):
+        """
+        Inicia a exportação dos dados do GeoPackage (ativo de edição ou original)
+        para um arquivo .zip normalizado em segundo plano.
+        """
+        if self._working_copy is not None and self._working_copy.is_active():
+            gpkg_source = self._working_copy.edit_path
+        else:
+            gpkg_source = self._resolve_gpkg(prompt_if_missing=True)
+
+        if not gpkg_source:
+            iface.messageBar().pushMessage(
+                "Aviso",
+                "GeoPackage não encontrado. Carregue ou reconecte o GTFS primeiro.",
+                level=Qgis.Warning, duration=8
+            )
+            return
+
+        try:
+            validator = GtfsValidator(gpkg_source)
+            errors, warnings = validator.validate()
+        except Exception as e:
+            msg = "Erro durante a validação pré-exportação: {}".format(e)
+            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.Critical)
+            iface.messageBar().pushMessage(
+                "Erro",
+                msg,
+                level=Qgis.Critical, duration=10
+            )
+            return
+
+        if errors:
+            QgsMessageLog.logMessage("Erro de validação pré-exportação bloqueou a exportação.", 'SIG-Bus', Qgis.Critical)
+            for err in errors:
+                QgsMessageLog.logMessage("[Erro Fatal] {}".format(err), 'SIG-Bus', Qgis.Warning)
+
+            msg_relatorio = "\n".join("- {}".format(err) for err in errors[:10])
+            if len(errors) > 10:
+                msg_relatorio += "\n... e mais {} erro(s).".format(len(errors) - 10)
+
+            QMessageBox.critical(
+                self,
+                "Erro de Validação - Exportação Cancelada",
+                "A exportação foi cancelada devido a erros de validação:\n\n" + msg_relatorio + "\n\nConsulte o painel de log (SIG-Bus) para detalhes."
+            )
+            return
+
+        if warnings:
+            QgsMessageLog.logMessage("Avisos de validação pré-exportação encontrados.", 'SIG-Bus', Qgis.Info)
+            for warn in warnings:
+                QgsMessageLog.logMessage("[Aviso] {}".format(warn), 'SIG-Bus', Qgis.Info)
+
+            msg_avisos = "\n".join("- {}".format(warn) for warn in warnings[:5])
+            if len(warnings) > 5:
+                msg_avisos += "\n... e mais {} aviso(s).".format(len(warnings) - 5)
+
+            reply = QMessageBox.warning(
+                self,
+                "Avisos de Validação",
+                "A validação encontrou alguns avisos. Deseja prosseguir com a exportação mesmo assim?\n\n" + msg_avisos,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Exportar GTFS",
+            "feed_novo.zip",
+            "Zip (*.zip)"
+        )
+        if not save_path:
+            return
+
+        if not save_path.lower().endswith(".zip"):
+            save_path += ".zip"
+
+        task = GtfsExporter(gpkg_source, save_path)
+        # ponytail: Mantemos a referência da task em self._export_task para
+        # evitar que o Garbage Collector a destrua prematuramente.
+        self._export_task = task
+        QgsApplication.taskManager().addTask(task)
+
+        iface.messageBar().pushMessage(
+            "Info",
+            "Exportando GTFS em segundo plano...",
+            level=Qgis.Info, duration=8
+        )
+
+    def _refresh_edit_status(self):
+        """
+        Atualiza o rótulo de status e o estado de habilitação dos botões da aba de edição.
+        """
+        active = self._working_copy is not None and self._working_copy.is_active()
+        if active:
+            filename = os.path.basename(self._working_copy.edit_path)
+            self.label_edit_status.setText("Edição em andamento: {}".format(filename))
+            self.button_edit_enter.setEnabled(False)
+            self.combo_edit_table.setEnabled(True)
+            self.button_edit_open.setEnabled(True)
+            self.button_edit_validate.setEnabled(True)
+            self.button_edit_export.setEnabled(True)
+            self.button_edit_discard.setEnabled(True)
+        else:
+            self.label_edit_status.setText("Nenhuma edição em andamento.")
+            self.button_edit_enter.setEnabled(True)
+            self.combo_edit_table.setEnabled(False)
+            self.button_edit_open.setEnabled(False)
+            self.button_edit_validate.setEnabled(False)
+            self.button_edit_export.setEnabled(True)
+            self.button_edit_discard.setEnabled(False)
+
+        self._update_stop_times_selectors()
+
+    def _on_build_back_clicked(self):
+        current = self.stacked_build.currentIndex()
+        if current > 0:
+            self.stacked_build.setCurrentIndex(current - 1)
+            self._update_build_nav_buttons()
+
+    def _on_build_next_clicked(self):
+        current = self.stacked_build.currentIndex()
+        if current == 1:
+            # Página Nova Linha
+            short_name = self.input_route_short_name.text().strip()
+            if not short_name:
+                QMessageBox.warning(self, "Campo obrigatório", "Por favor, preencha o Nome Curto (route_short_name) da linha.")
+                return
+        elif current == 2:
+            # Página Paradas (confirmação no mapa): "Confirmar e avançar"
+            if not self._working_copy or not self._working_copy.is_active() or not self._working_copy.edit_path:
+                QMessageBox.warning(self, "Erro", "Cópia de trabalho não está ativa.")
+                return
+            
+            paradas = []
+            for row_data in self.stop_rows:
+                address = row_data["input_address"].text().strip()
+                if not address:
+                    continue
+                lat_val = row_data["input_lat"].text().strip()
+                lon_val = row_data["input_lon"].text().strip()
+                try:
+                    lat = float(lat_val) if lat_val else 0.0
+                except ValueError:
+                    lat = 0.0
+                try:
+                    lon = float(lon_val) if lon_val else 0.0
+                except ValueError:
+                    lon = 0.0
+
+                stop_id = None
+                if row_data["checkbox_reuse"].isChecked() and row_data["stop_id"]:
+                    stop_id = row_data["stop_id"]
+
+                paradas.append({
+                    "stop_id": stop_id,
+                    "stop_name": address,
+                    "stop_desc": address,
+                    "stop_lat": lat,
+                    "stop_lon": lon
+                })
+
+            if not paradas:
+                QMessageBox.warning(self, "Aviso", "Por favor, adicione pelo menos uma parada válida.")
+                return
+
+            gpkg_path = self._working_copy.edit_path
+            from sig_bus.gtfs_builder_core import save_route
+            try:
+                save_route(
+                    gpkg_path=gpkg_path,
+                    agency=None,
+                    linha=None,
+                    paradas=paradas,
+                    service=None,
+                    frequencia=None
+                )
+            except Exception as e:
+                QMessageBox.critical(self, "Erro ao salvar", f"Ocorreu um erro ao salvar as paradas: {str(e)}")
+                return
+
+            # Adiciona uma camada temporária de pontos no projeto e ativa a ferramenta de vértices
+            uri = gpkg_path + '|layername=stops'
+            layer = QgsVectorLayer(uri, 'stops_temp', 'ogr')
+            if layer.isValid():
+                QgsProject.instance().addMapLayer(layer)
+                layer.startEditing()
+                iface.setActiveLayer(layer)
+                extent = layer.extent()
+                if not extent.isEmpty():
+                    iface.mapCanvas().setExtent(extent)
+                    iface.mapCanvas().refresh()
+                
+                if hasattr(iface, "actionVertexToolActiveLayer"):
+                    iface.actionVertexToolActiveLayer().trigger()
+                elif hasattr(iface, "actionVertexTool"):
+                    iface.actionVertexTool().trigger()
+                
+                self._edit_layer = layer
+            else:
+                QMessageBox.warning(self, "Aviso", "Não foi possível carregar a camada temporária de paradas.")
+
+            # Popula a página de sequência com as paradas salvas
+            self.list_widget_sequencia.clear()
+            from sig_bus.gtfs_builder_core import find_existing_stop
+            for row_data in self.stop_rows:
+                address = row_data["input_address"].text().strip()
+                if not address:
+                    continue
+                lat_val = row_data["input_lat"].text().strip()
+                lon_val = row_data["input_lon"].text().strip()
+                try:
+                    lat = float(lat_val) if lat_val else 0.0
+                except ValueError:
+                    lat = 0.0
+                try:
+                    lon = float(lon_val) if lon_val else 0.0
+                except ValueError:
+                    lon = 0.0
+
+                stop_id = row_data["stop_id"]
+                if not stop_id:
+                    stop_id = find_existing_stop(gpkg_path, address)
+                    row_data["stop_id"] = stop_id
+                
+                item = QtWidgets.QListWidgetItem(address)
+                stop_data = {
+                    "stop_id": stop_id,
+                    "stop_name": address,
+                    "stop_desc": address,
+                    "stop_lat": lat,
+                    "stop_lon": lon
+                }
+                item.setData(Qt.UserRole, stop_data)
+                item.stop_data = stop_data
+                self.list_widget_sequencia.addItem(item)
+        elif current == 3:
+            # Página Sequência: lista reordenável das paradas confirmadas da linha
+            if self.list_widget_sequencia.count() == 0:
+                QMessageBox.warning(self, "Aviso", "A lista de paradas está vazia. Volte e adicione paradas.")
+                return
+
+            # Se houver a camada temporária de paradas, atualiza seus atributos com as coordenadas geográficas
+            # (caso o usuário tenha arrastado os pontos no canvas com a ferramenta de vértices) e salva as edições.
+            if hasattr(self, "_edit_layer") and self._edit_layer and self._edit_layer.isValid():
+                if self._edit_layer.isEditable():
+                    lat_idx = self._edit_layer.fields().indexFromName("stop_lat")
+                    lon_idx = self._edit_layer.fields().indexFromName("stop_lon")
+                    self._edit_layer.beginEditCommand("Sincronizar atributos de coordenadas das paradas")
+                    for feature in self._edit_layer.getFeatures():
+                        geom = feature.geometry()
+                        if geom and not geom.isEmpty():
+                            point = geom.asPoint()
+                            if lat_idx >= 0:
+                                self._edit_layer.changeAttributeValue(feature.id(), lat_idx, str(point.y()))
+                            if lon_idx >= 0:
+                                self._edit_layer.changeAttributeValue(feature.id(), lon_idx, str(point.x()))
+                    self._edit_layer.endEditCommand()
+                    self._edit_layer.commitChanges()
+
+            # Lê as coordenadas mais atualizadas diretamente da camada de paradas para refletir no fluxo seguinte
+            updated_coords = {}
+            if hasattr(self, "_edit_layer") and self._edit_layer and self._edit_layer.isValid():
+                for feature in self._edit_layer.getFeatures():
+                    sid = feature["stop_id"]
+                    geom = feature.geometry()
+                    if geom and not geom.isEmpty():
+                        point = geom.asPoint()
+                        updated_coords[sid] = (point.y(), point.x())
+
+            self.sequenced_stops = []
+            for i in range(self.list_widget_sequencia.count()):
+                item = self.list_widget_sequencia.item(i)
+                stop_data = item.data(Qt.UserRole)
+                if not stop_data and hasattr(item, "stop_data"):
+                    stop_data = item.stop_data
+                if stop_data:
+                    # Copia para evitar modificar o dicionário original compartilhado
+                    stop_data = dict(stop_data)
+                    sid = stop_data.get("stop_id")
+                    if sid in updated_coords:
+                        stop_data["stop_lat"] = updated_coords[sid][0]
+                        stop_data["stop_lon"] = updated_coords[sid][1]
+                    self.sequenced_stops.append(stop_data)
+            
+            # Carrega calendários para a página de horários (index 4)
+            self._load_calendars_for_build()
+        elif current == 4:
+            # Página Horários: formulário de frequência
+            # 1. Validações do calendário
+            is_new = (self.combo_calendar.currentIndex() == 0)
+            if is_new:
+                service_id = self.input_service_id.text().strip()
+                if not service_id:
+                    QMessageBox.warning(self, "Campo obrigatório", "Por favor, preencha o ID do Serviço (service_id).")
+                    return
+                
+                # Pelo menos um dia da semana deve ser marcado
+                has_day = any(chk.isChecked() for chk in self.chk_days)
+                if not has_day:
+                    QMessageBox.warning(self, "Dia de operação", "Por favor, selecione pelo menos um dia de operação para o calendário.")
+                    return
+                
+                start_date = self.date_start_date.date()
+                end_date = self.date_end_date.date()
+                if start_date > end_date:
+                    QMessageBox.warning(self, "Vigência inválida", "A data de início da vigência deve ser anterior ou igual à data de término.")
+                    return
+                
+                calendar_data = {
+                    "service_id": service_id,
+                    "monday": "1" if self.chk_monday.isChecked() else "0",
+                    "tuesday": "1" if self.chk_tuesday.isChecked() else "0",
+                    "wednesday": "1" if self.chk_wednesday.isChecked() else "0",
+                    "thursday": "1" if self.chk_thursday.isChecked() else "0",
+                    "friday": "1" if self.chk_friday.isChecked() else "0",
+                    "saturday": "1" if self.chk_saturday.isChecked() else "0",
+                    "sunday": "1" if self.chk_sunday.isChecked() else "0",
+                    "start_date": start_date.toString("yyyyMMdd"),
+                    "end_date": end_date.toString("yyyyMMdd")
+                }
+            else:
+                data = self.combo_calendar.currentData()
+                if not data:
+                    QMessageBox.warning(self, "Calendário inválido", "Nenhum calendário selecionado.")
+                    return
+                # data is a tuple representing service
+                calendar_data = data[0] # The service_id
+                
+            # 2. Validações da Frequência
+            t_start = self.time_start.time()
+            t_end = self.time_end.time()
+            start_sec = t_start.hour() * 3600 + t_start.minute() * 60 + t_start.second()
+            end_sec = t_end.hour() * 3600 + t_end.minute() * 60 + t_end.second()
+            if start_sec > end_sec:
+                QMessageBox.warning(self, "Hora inválida", "A hora de início deve ser anterior ou igual à hora de fim.")
+                return
+                
+            interval_min = self.spin_interval.value()
+            if interval_min <= 0:
+                QMessageBox.warning(self, "Intervalo inválido", "O intervalo de frequência deve ser maior que 0.")
+                return
+                
+            # 3. Chama expand_frequency_to_stop_times
+            from sig_bus.gtfs_builder_core import expand_frequency_to_stop_times
+            stop_ids = [stop.get("stop_id") for stop in self.sequenced_stops if stop.get("stop_id")]
+            if not stop_ids:
+                QMessageBox.warning(self, "Paradas vazias", "A lista de paradas está vazia. Volte e adicione paradas.")
+                return
+                
+            hora_inicio = t_start.toString("HH:mm:ss")
+            hora_fim = t_end.toString("HH:mm:ss")
+            
+            trips_list, stop_times_list = expand_frequency_to_stop_times(
+                stop_ids=stop_ids,
+                hora_inicio=hora_inicio,
+                hora_fim=hora_fim,
+                intervalo_min=interval_min
+            )
+            
+            # Salva temporariamente na instância para uso pela próxima etapa (passo 51)
+            self.build_service = calendar_data
+            self.build_frequencia = (hora_inicio, hora_fim, interval_min)
+            self.build_trips = trips_list
+            self.build_stop_times = stop_times_list
+            
+            # Mostra o resumo na página de revisão (index 5)
+            stops_summary = " -> ".join(stop.get("stop_name") for stop in self.sequenced_stops)
+            cal_summary = "Calendário: {}".format(calendar_data if isinstance(calendar_data, str) else calendar_data['service_id'])
+            freq_summary = "Das {} às {} a cada {} min".format(t_start.toString('HH:mm'), t_end.toString('HH:mm'), interval_min)
+            trips_count_summary = "Total de viagens geradas: {}".format(len(trips_list))
+            
+            summary_text = (
+                "<b>RESUMO DA LINHA:</b><br/><br/>"
+                "<b>Paradas na sequência:</b><br/>{}<br/><br/>"
+                "<b>{}</b><br/>"
+                "<b>Janela de Horário:</b> {}<br/>"
+                "<b>Viagens:</b> {}".format(stops_summary, cal_summary, freq_summary, trips_count_summary)
+            )
+            self.label_revisao_summary.setText(summary_text)
+            
+            # Reseta estado dos botões da página de revisão para nova edição da linha/sentido
+            self.btn_salvar_linha.setEnabled(True)
+            self.btn_segundo_sentido.setEnabled(False)
+            self.btn_nova_linha.setEnabled(False)
+            self.btn_ir_para_edicao.setEnabled(False)
+
+        if current < self.stacked_build.count() - 1:
+            self.stacked_build.setCurrentIndex(current + 1)
+            self._update_build_nav_buttons()
+
+    def _update_build_nav_buttons(self):
+        current = self.stacked_build.currentIndex()
+        self.button_build_back.setEnabled(current > 0)
+        if current == 0:
+            self.button_build_next.setEnabled(self._is_agency_saved())
+            self.button_build_next.setText("Avançar")
+            self.button_build_next.setVisible(True)
+        elif current == 2:
+            self.button_build_next.setEnabled(current < self.stacked_build.count() - 1)
+            self.button_build_next.setText("Confirmar e avançar")
+            self.button_build_next.setVisible(True)
+        elif current == 5:
+            self.button_build_next.setEnabled(False)
+            self.button_build_next.setVisible(False)
+        else:
+            self.button_build_next.setEnabled(current < self.stacked_build.count() - 1)
+            self.button_build_next.setText("Avançar")
+            self.button_build_next.setVisible(True)
+
+    def _on_tab_changed(self, index):
+        if self.tabWidget.tabText(index) == "Construir GTFS":
+            active = self._working_copy is not None and self._working_copy.is_active()
+            if not active:
+                gpkg = self._resolve_gpkg(prompt_if_missing=False)
+                if not gpkg:
+                    project_home = QgsProject.instance().homePath()
+                    if project_home and os.path.isdir(project_home):
+                        gpkg = os.path.join(project_home, "feed.gpkg")
+                    else:
+                        gpkg = os.path.join(os.path.expanduser('~'), "feed.gpkg")
+                
+                self._working_copy = WorkingCopy(gpkg)
+                self._working_copy.enter_empty(overwrite=True)
+                self._refresh_edit_status()
+            self._update_build_progress()
+            self._load_agency_data()
+            self._update_build_nav_buttons()
+        elif self.tabWidget.tabText(index) == "Edição GTFS":
+            self._refresh_edit_status()
+            if self.combo_edit_table.currentText() == "stop_times":
+                self._populate_edit_routes()
+
+    def _is_agency_saved(self):
+        if not self._working_copy or not self._working_copy.is_active() or not self._working_copy.edit_path:
+            return False
+        gpkg_path = self._working_copy.edit_path
+        if not os.path.exists(gpkg_path):
+            return False
+        try:
+            conn = sqlite3.connect(gpkg_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM agency WHERE agency_name IS NOT NULL AND TRIM(agency_name) != ''")
+            count = cursor.fetchone()[0]
+            conn.close()
+            return count > 0
+        except Exception:
+            return False
+
+    def _load_agency_data(self):
+        if not self._working_copy or not self._working_copy.is_active() or not self._working_copy.edit_path:
+            return
+        gpkg_path = self._working_copy.edit_path
+        if not os.path.exists(gpkg_path):
+            return
+        try:
+            conn = sqlite3.connect(gpkg_path)
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(agency)")
+            cols = [row[1] for row in cursor.fetchall()]
+            cursor.execute("SELECT * FROM agency LIMIT 1")
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                agency_data = dict(zip(cols, row))
+                self.input_agency_name.setText(agency_data.get("agency_name", ""))
+                self.input_agency_url.setText(agency_data.get("agency_url", ""))
+                self.input_agency_timezone.setText(agency_data.get("agency_timezone", ""))
+                self.input_agency_lang.setText(agency_data.get("agency_lang", ""))
+                self.input_agency_phone.setText(agency_data.get("agency_phone", ""))
+        except Exception:
+            pass
+
+    def _on_save_agency_clicked(self):
+        name = self.input_agency_name.text().strip()
+        url = self.input_agency_url.text().strip()
+        timezone = self.input_agency_timezone.text().strip()
+        lang = self.input_agency_lang.text().strip()
+        phone = self.input_agency_phone.text().strip()
+        
+        if not name or not url or not timezone:
+            QMessageBox.warning(self, "Campos obrigatórios", "Por favor, preencha todos os campos obrigatórios (*).")
+            return
+            
+        agency_data = {
+            "agency_name": name,
+            "agency_url": url,
+            "agency_timezone": timezone,
+            "agency_lang": lang if lang else None,
+            "agency_phone": phone if phone else None
+        }
+        
+        gpkg_path = self._working_copy.edit_path
+        
+        from sig_bus.gtfs_builder_core import save_route
+        try:
+            save_route(
+                gpkg_path=gpkg_path,
+                agency=agency_data,
+                linha=None,
+                paradas=[],
+                service=None,
+                frequencia=None
+            )
+            self._update_build_progress()
+            self.stacked_build.setCurrentIndex(1)
+            self._update_build_nav_buttons()
+        except Exception as e:
+            QMessageBox.critical(self, "Erro ao salvar", f"Ocorreu um erro ao salvar a agência: {str(e)}")
+
+    def _update_build_progress(self):
+        if not self._working_copy or not self._working_copy.is_active() or not self._working_copy.edit_path:
+            self.progress_min.setValue(0)
+            self.progress_max.setValue(0)
+            self.label_build_todo.setText("falta: ...")
+            return
+
+        gpkg_path = self._working_copy.edit_path
+        if not os.path.exists(gpkg_path):
+            self.progress_min.setValue(0)
+            self.progress_max.setValue(0)
+            self.label_build_todo.setText("falta: ...")
+            return
+
+        pct_min, pct_max, faltando_minimo, faltando_maximo = compute_progress(gpkg_path)
+        self.progress_min.setValue(int(pct_min))
+        self.progress_max.setValue(int(pct_max))
+
+        if faltando_minimo:
+            todo_text = "falta: " + ", ".join(faltando_minimo)
+        elif faltando_maximo:
+            todo_text = "falta: " + ", ".join(faltando_maximo)
+        else:
+            todo_text = "falta: nada"
+        
+        self.label_build_todo.setText(todo_text)
+
+    def _on_salvar_linha_clicked(self):
+        if not self._working_copy or not self._working_copy.is_active() or not self._working_copy.edit_path:
+            QMessageBox.warning(self, "Erro", "Cópia de trabalho não está ativa.")
+            return
+
+        gpkg_path = self._working_copy.edit_path
+
+        # Gather route info
+        short_name = self.input_route_short_name.text().strip()
+        long_name = self.input_route_long_name.text().strip()
+        route_type = self.combo_route_type.currentData()
+        
+        if not short_name:
+            QMessageBox.warning(self, "Aviso", "Por favor, defina o nome curto da rota na etapa 2.")
+            return
+
+        # Generates shape_id
+        direction_id = str(self.build_direction_id)
+        shape_id = "shape_{}_{}".format(short_name, direction_id)
+        route_id = "route_{}".format(short_name)
+
+        # Determine trip headsign: name of the last stop, fallback to long_name
+        last_stop_name = self.sequenced_stops[-1].get("stop_name", "") if self.sequenced_stops else ""
+        trip_headsign = last_stop_name if last_stop_name else long_name
+
+        linha = {
+            "route_id": route_id,
+            "route_short_name": short_name,
+            "route_long_name": long_name,
+            "route_type": route_type,
+            "direction_id": direction_id,
+            "trip_headsign": trip_headsign,
+            "shape_id": shape_id
+        }
+
+        # Check if we have service and frequency data
+        if not hasattr(self, "build_service") or not hasattr(self, "build_frequencia"):
+            QMessageBox.warning(self, "Aviso", "Dados de horários/calendário não foram configurados.")
+            return
+
+        service = self.build_service
+        frequencia = self.build_frequencia
+
+        from sig_bus.gtfs_builder_core import save_route, build_line_shape
+        try:
+            # 1. Salva a rota, trips, stops, calendar, stop_times
+            save_route(
+                gpkg_path=gpkg_path,
+                agency=None,
+                linha=linha,
+                paradas=self.sequenced_stops,
+                service=service,
+                frequencia=frequencia
+            )
+
+            # 2. Calcula o traçado via roteamento OSM com fallback por trecho e gera a camada shapes
+            build_line_shape(gpkg_path, shape_id, self.sequenced_stops)
+
+            # 3. Atualiza a barra de progresso
+            self._update_build_progress()
+
+            QMessageBox.information(self, "Sucesso", "Linha salva com sucesso no GeoPackage!")
+
+            # 4. Habilita botões para adicionar segundo sentido ou nova linha
+            if self.build_direction_id == '0':
+                self.btn_segundo_sentido.setEnabled(True)
+            else:
+                self.btn_segundo_sentido.setEnabled(False)
+            self.btn_nova_linha.setEnabled(True)
+            self.btn_salvar_linha.setEnabled(False)
+            self.btn_ir_para_edicao.setEnabled(True)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erro ao salvar", f"Ocorreu um erro ao salvar a linha: {str(e)}")
+
+    def _on_segundo_sentido_clicked(self):
+        # 1. Remove a camada temporária de paradas se existir
+        if hasattr(self, "_edit_layer") and self._edit_layer:
+            try:
+                QgsProject.instance().removeMapLayer(self._edit_layer.id())
+            except Exception:
+                pass
+            self._edit_layer = None
+
+        # 2. Inverte o sentido (direção)
+        self.build_direction_id = '1' if self.build_direction_id == '0' else '0'
+
+        # 3. Inverte a ordem das paradas (stop_rows)
+        stops_data = []
+        for row in self.stop_rows:
+            stops_data.append({
+                "address": row["input_address"].text().strip(),
+                "lat": row["input_lat"].text().strip(),
+                "lon": row["input_lon"].text().strip(),
+                "reuse": row["checkbox_reuse"].isChecked(),
+                "reuse_visible": row["checkbox_reuse"].isVisible(),
+                "status": row["label_status"].text(),
+                "stop_id": row["stop_id"]
+            })
+
+        while self.stop_rows:
+            self._remove_stop_row(self.stop_rows[0])
+
+        stops_data.reverse()
+
+        for data in stops_data:
+            self._add_stop_row()
+            new_row = self.stop_rows[-1]
+            new_row["input_address"].setText(data["address"])
+            new_row["input_lat"].setText(data["lat"])
+            new_row["input_lon"].setText(data["lon"])
+            new_row["checkbox_reuse"].setChecked(data["reuse"])
+            if data["reuse_visible"]:
+                new_row["checkbox_reuse"].show()
+            else:
+                new_row["checkbox_reuse"].hide()
+            new_row["label_status"].setText(data["status"])
+            new_row["stop_id"] = data["stop_id"]
+
+        # 4. Reseta os estados dos botões da revisão
+        self.btn_salvar_linha.setEnabled(True)
+        self.btn_segundo_sentido.setEnabled(False)
+        self.btn_nova_linha.setEnabled(False)
+        self.btn_ir_para_edicao.setEnabled(False)
+
+        # 5. Navega de volta para a página de paradas (index 2)
+        self.stacked_build.setCurrentIndex(2)
+        self._update_build_nav_buttons()
+
+    def _on_nova_linha_clicked(self):
+        # 1. Remove a camada temporária de paradas se existir
+        if hasattr(self, "_edit_layer") and self._edit_layer:
+            try:
+                QgsProject.instance().removeMapLayer(self._edit_layer.id())
+            except Exception:
+                pass
+            self._edit_layer = None
+
+        # 2. Reseta direção
+        self.build_direction_id = '0'
+
+        # 3. Limpa identidade da linha
+        self.input_route_short_name.clear()
+        self.input_route_long_name.clear()
+        self.combo_route_type.setCurrentIndex(0)
+
+        # 4. Limpa paradas
+        while self.stop_rows:
+            self._remove_stop_row(self.stop_rows[0])
+        self._add_stop_row()
+
+        self.sequenced_stops = []
+        self.list_widget_sequencia.clear()
+
+        # 5. Reseta botões
+        self.btn_salvar_linha.setEnabled(True)
+        self.btn_segundo_sentido.setEnabled(False)
+        self.btn_nova_linha.setEnabled(False)
+        self.btn_ir_para_edicao.setEnabled(False)
+
+        # 6. Navega para a página "Nova linha: identidade" (index 1)
+        self.stacked_build.setCurrentIndex(1)
+        self._update_build_nav_buttons()
+
+    def _on_ir_para_edicao_clicked(self):
+        # 1. Remove a camada temporária de paradas se existir
+        if hasattr(self, "_edit_layer") and self._edit_layer:
+            try:
+                QgsProject.instance().removeMapLayer(self._edit_layer.id())
+            except Exception:
+                pass
+            self._edit_layer = None
+
+        # 2. Navega para a aba "Edição GTFS" (index 0)
+        self.tabWidget.setCurrentIndex(0)
+
+    def _load_calendars_for_build(self):
+        self.combo_calendar.blockSignals(True)
+        self.combo_calendar.clear()
+        self.combo_calendar.addItem("Criar Novo Calendário", None)
+        
+        if self._working_copy and self._working_copy.is_active() and self._working_copy.edit_path:
+            from sig_bus.gtfs_builder_core import list_reusable_calendars
+            calendars = list_reusable_calendars(self._working_copy.edit_path)
+            for cal in calendars:
+                # cal: (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+                self.combo_calendar.addItem(cal[0], cal)
+                
+        self.combo_calendar.blockSignals(False)
+        self._on_combo_calendar_changed()
+
+    def _on_combo_calendar_changed(self):
+        from qgis.PyQt.QtCore import QDate
+        data = self.combo_calendar.currentData()
+        if data is None:
+            # Enable new calendar inputs and set defaults
+            self.input_service_id.setEnabled(True)
+            self.input_service_id.clear()
+            for chk in self.chk_days:
+                chk.setEnabled(True)
+                chk.setChecked(True)
+            self.date_start_date.setEnabled(True)
+            self.date_start_date.setDate(QDate.currentDate())
+            self.date_end_date.setEnabled(True)
+            self.date_end_date.setDate(QDate.currentDate().addYears(1))
+        else:
+            # Populate fields and disable them
+            # data tuple: (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+            self.input_service_id.setText(str(data[0]))
+            self.input_service_id.setEnabled(False)
+            
+            # Monday is at index 1, Sunday is at index 7
+            for idx, chk in enumerate(self.chk_days):
+                val = data[idx + 1]
+                chk.setChecked(val == 1 or val == '1' or val is True)
+                chk.setEnabled(False)
+                
+            start_date_str = str(data[8])
+            end_date_str = str(data[9])
+            start_date = QDate.fromString(start_date_str, "yyyyMMdd")
+            end_date = QDate.fromString(end_date_str, "yyyyMMdd")
+            
+            if start_date.isValid():
+                self.date_start_date.setDate(start_date)
+            self.date_start_date.setEnabled(False)
+            
+            if end_date.isValid():
+                self.date_end_date.setDate(end_date)
+            self.date_end_date.setEnabled(False)
+
+    def _update_estimated_trips(self):
+        t_start = self.time_start.time()
+        t_end = self.time_end.time()
+        
+        start_sec = t_start.hour() * 3600 + t_start.minute() * 60 + t_start.second()
+        end_sec = t_end.hour() * 3600 + t_end.minute() * 60 + t_end.second()
+        
+        interval_min = self.spin_interval.value()
+        step_sec = interval_min * 60
+        
+        if step_sec <= 0:
+            count = 0
+        elif end_sec < start_sec:
+            count = 0
+        else:
+            count = (end_sec - start_sec) // step_sec + 1
+            
+        self.label_trips_summary.setText("Número estimado de viagens: <b>{}</b>".format(count))
+
+    def _move_sequence_up(self):
+        row = self.list_widget_sequencia.currentRow()
+        if row > 0:
+            item = self.list_widget_sequencia.takeItem(row)
+            self.list_widget_sequencia.insertItem(row - 1, item)
+            self.list_widget_sequencia.setCurrentRow(row - 1)
+
+    def _move_sequence_down(self):
+        row = self.list_widget_sequencia.currentRow()
+        if row >= 0 and row < self.list_widget_sequencia.count() - 1:
+            item = self.list_widget_sequencia.takeItem(row)
+            self.list_widget_sequencia.insertItem(row + 1, item)
+            self.list_widget_sequencia.setCurrentRow(row + 1)
+
+    def _add_stop_row(self):
+        # Create a container frame
+        frame = QtWidgets.QFrame()
+        frame.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        frame.setFrameShadow(QtWidgets.QFrame.Raised)
+        
+        # Set a subtle border/padding stylesheet so it looks beautiful and grouped
+        frame.setStyleSheet("""
+            QFrame {
+                background-color: #fcfcfc;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                padding: 6px;
+                margin-bottom: 4px;
+            }
+        """)
+        
+        row_layout = QtWidgets.QHBoxLayout(frame)
+        row_layout.setContentsMargins(4, 4, 4, 4)
+        
+        # Address input
+        input_address = QtWidgets.QLineEdit()
+        input_address.setPlaceholderText("Endereço da parada (ex: Av. Paulista, 1000)")
+        input_address.setStyleSheet("border: 1px solid #ccc; border-radius: 4px; padding: 4px;")
+        row_layout.addWidget(input_address, stretch=4)
+        
+        # Latitude input
+        input_lat = QtWidgets.QLineEdit()
+        input_lat.setPlaceholderText("Latitude")
+        input_lat.setFixedWidth(90)
+        input_lat.setStyleSheet("border: 1px solid #ccc; border-radius: 4px; padding: 4px;")
+        row_layout.addWidget(input_lat)
+        
+        # Longitude input
+        input_lon = QtWidgets.QLineEdit()
+        input_lon.setPlaceholderText("Longitude")
+        input_lon.setFixedWidth(90)
+        input_lon.setStyleSheet("border: 1px solid #ccc; border-radius: 4px; padding: 4px;")
+        row_layout.addWidget(input_lon)
+        
+        # Checkbox for reuse
+        checkbox_reuse = QtWidgets.QCheckBox("parada já existe — reaproveitar")
+        checkbox_reuse.setStyleSheet("color: #2b6cb0; font-weight: bold; border: none; background: transparent;")
+        checkbox_reuse.hide()
+        row_layout.addWidget(checkbox_reuse)
+        
+        # Status Label
+        label_status = QtWidgets.QLabel("")
+        label_status.setStyleSheet("color: #e53e3e; font-style: italic; border: none; background: transparent;")
+        row_layout.addWidget(label_status)
+        
+        # Remove button
+        button_remove = QtWidgets.QPushButton("Remover")
+        button_remove.setStyleSheet("""
+            QPushButton {
+                background-color: #e53e3e;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QPushButton:hover {
+                background-color: #c53030;
+            }
+        """)
+        row_layout.addWidget(button_remove)
+        
+        # Add to scroll layout
+        self.layout_scroll_paradas.addWidget(frame)
+        
+        row_data = {
+            "frame": frame,
+            "input_address": input_address,
+            "input_lat": input_lat,
+            "input_lon": input_lon,
+            "checkbox_reuse": checkbox_reuse,
+            "label_status": label_status,
+            "stop_id": None
+        }
+        
+        # Connections
+        button_remove.clicked.connect(lambda: self._remove_stop_row(row_data))
+        input_address.editingFinished.connect(lambda: self._check_existing_stop_for_row(row_data))
+        
+        self.stop_rows.append(row_data)
+
+    def _remove_stop_row(self, row_data):
+        self.layout_scroll_paradas.removeWidget(row_data["frame"])
+        row_data["frame"].deleteLater()
+        if row_data in self.stop_rows:
+            self.stop_rows.remove(row_data)
+
+    def _geocode_stops(self):
+        from sig_bus.geocoding import NominatimGeocoder
+        from sig_bus.gtfs_builder_core import find_existing_stop
+        
+        gpkg_path = self._working_copy.edit_path if (self._working_copy and self._working_copy.edit_path) else None
+
+        for row_data in self.stop_rows:
+            address = row_data["input_address"].text().strip()
+            if not address:
+                continue
+            
+            # Call geocoder
+            results = NominatimGeocoder.geocode(address)
+            if results:
+                # Take the first candidate
+                candidate = results[0]
+                lat = str(candidate.get("lat", ""))
+                lon = str(candidate.get("lon", ""))
+                row_data["input_lat"].setText(lat)
+                row_data["input_lon"].setText(lon)
+                row_data["label_status"].setText("")
+            else:
+                row_data["label_status"].setText("não encontrado")
+
+            # Check existing stop too
+            if gpkg_path:
+                stop_id = find_existing_stop(gpkg_path, address)
+                if stop_id:
+                    row_data["stop_id"] = stop_id
+                    row_data["checkbox_reuse"].show()
+                    row_data["checkbox_reuse"].setChecked(True)
+                else:
+                    row_data["stop_id"] = None
+                    row_data["checkbox_reuse"].hide()
+                    row_data["checkbox_reuse"].setChecked(False)
+
+    def _check_existing_stop_for_row(self, row_data):
+        address = row_data["input_address"].text().strip()
+        if not address:
+            row_data["checkbox_reuse"].hide()
+            row_data["checkbox_reuse"].setChecked(False)
+            row_data["stop_id"] = None
+            return
+
+        if not self._working_copy or not self._working_copy.edit_path:
+            return
+
+        from sig_bus.gtfs_builder_core import find_existing_stop
+        stop_id = find_existing_stop(self._working_copy.edit_path, address)
+        if stop_id:
+            row_data["stop_id"] = stop_id
+            row_data["checkbox_reuse"].show()
+            row_data["checkbox_reuse"].setChecked(True)
+        else:
+            row_data["stop_id"] = None
+            row_data["checkbox_reuse"].hide()
+            row_data["checkbox_reuse"].setChecked(False)
+
+    def _on_edit_table_changed(self, table_name):
+        self._update_stop_times_selectors()
+
+    def _update_stop_times_selectors(self):
+        active = self._working_copy is not None and self._working_copy.is_active()
+        table_selected = self.combo_edit_table.currentText()
+        is_stop_times = (table_selected == "stop_times")
+        enable_filters = active and is_stop_times
+
+        self.label_edit_route.setEnabled(enable_filters)
+        self.combo_edit_route.setEnabled(enable_filters)
+        self.label_edit_trip.setEnabled(enable_filters)
+        self.combo_edit_trip.setEnabled(enable_filters)
+
+        if enable_filters:
+            if self.combo_edit_route.count() == 0:
+                self._populate_edit_routes()
+        else:
+            self.combo_edit_route.clear()
+            self.combo_edit_trip.clear()
+
+    def _populate_edit_routes(self):
+        self.combo_edit_route.clear()
+        self.combo_edit_trip.clear()
+        if not self._working_copy or not self._working_copy.edit_path:
+            return
+        gpkg = self._working_copy.edit_path
+        if not os.path.exists(gpkg):
+            return
+
+        try:
+            with sqlite3.connect(gpkg) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT DISTINCT route_short_name FROM routes "
+                    "WHERE route_short_name IS NOT NULL AND route_short_name != '' "
+                    "ORDER BY route_short_name"
+                )
+                routes = [row[0] for row in cursor.fetchall()]
+                self.combo_edit_route.addItems(routes)
+        except sqlite3.Error:
+            pass
+
+    def _on_edit_route_changed(self, route_short_name):
+        self.combo_edit_trip.clear()
+        if not route_short_name or not self._working_copy or not self._working_copy.edit_path:
+            return
+        gpkg = self._working_copy.edit_path
+        if not os.path.exists(gpkg):
+            return
+
+        try:
+            with sqlite3.connect(gpkg) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT DISTINCT t.trip_id FROM trips t "
+                    "JOIN routes r ON t.route_id = r.route_id "
+                    "WHERE r.route_short_name = ? AND t.trip_id IS NOT NULL AND t.trip_id != '' "
+                    "ORDER BY t.trip_id",
+                    (route_short_name,)
+                )
+                trips = [row[0] for row in cursor.fetchall()]
+                self.combo_edit_trip.addItems(trips)
+        except sqlite3.Error:
+            pass
 
     # ------------------------------------------------------------------
     def _cluster_stops(self, stop_list, k):

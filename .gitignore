@@ -15,6 +15,9 @@ gtfs_corrigido.zip
 *.gpkg-shm
 *.gpkg-wal
 
+# Pacotes de build (gerados por `make zip`/`make package`, não código-fonte)
+dist/
+
 # Sistema
 .DS_Store
 Thumbs.db
