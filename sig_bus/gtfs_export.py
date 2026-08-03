@@ -59,8 +59,8 @@ class GtfsExporter(QgsTask):
         :param gpkg_path: Caminho do GeoPackage de entrada.
         :param out_zip: Caminho do arquivo ZIP de destino.
         """
-        # ponytail: QgsTask.CanCancel permite que o usuário aborte a exportação longa.
-        super(GtfsExporter, self).__init__('Exportar GTFS', QgsTask.CanCancel)
+        # ponytail: QgsTask.Flag.CanCancel permite que o usuário aborte a exportação longa.
+        super(GtfsExporter, self).__init__('Exportar GTFS', QgsTask.Flag.CanCancel)
         self.gpkg_path = gpkg_path
         self.out_zip = out_zip
         self._erro = None
@@ -222,8 +222,8 @@ class GtfsExporter(QgsTask):
         if ok:
             QgsMessageLog.logMessage(
                 "GTFS exportado com sucesso para: {}".format(self.out_zip),
-                LOG_TAG, Qgis.Info
+                LOG_TAG, Qgis.MessageLevel.Info
             )
         else:
             msg = "Falha ao exportar GTFS: {}".format(self._erro) if self._erro else "Exportação cancelada."
-            QgsMessageLog.logMessage(msg, LOG_TAG, Qgis.Critical)
+            QgsMessageLog.logMessage(msg, LOG_TAG, Qgis.MessageLevel.Critical)

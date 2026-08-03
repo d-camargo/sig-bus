@@ -34,7 +34,6 @@ import sqlite3
 from pathlib import Path
 from zipfile import ZipFile, BadZipFile
 
-from qgis.PyQt.QtCore import QVariant
 from qgis.core import (
     Qgis,
     QgsCoordinateTransformContext,
@@ -47,6 +46,14 @@ from qgis.core import (
     QgsVectorLayer,
     QgsVirtualLayerDefinition,
 )
+
+from qgis.PyQt.QtCore import QMetaType
+
+# QVariant.Type não existe mais no PyQt6 (QGIS 4): QgsField(nome,
+# QMetaType.Type) é a forma suportada desde o QGIS 3.38 e a única no QGIS 4
+# (decisão 36, PLAN.md). Um caminho de código só — roda no QGIS 3.40 e no 4.
+FIELD_STRING = QMetaType.Type.QString
+FIELD_INT = QMetaType.Type.Int
 
 LOG_TAG = 'SIG-Bus'
 
@@ -160,7 +167,7 @@ class GtfsReader:
                 # deve abortar o feed inteiro — registra e segue.
                 QgsMessageLog.logMessage(
                     "Tabela ignorada ({}): {}".format(out_name, e),
-                    LOG_TAG, Qgis.Warning)
+                    LOG_TAG, Qgis.MessageLevel.Warning)
 
         if not created:
             raise GtfsError("Nenhuma tabela do GTFS pôde ser importada.")
@@ -210,11 +217,11 @@ class GtfsReader:
         if missing:
             QgsMessageLog.logMessage(
                 "Camadas GTFS obrigatórias ausentes: {}".format(missing),
-                LOG_TAG, Qgis.Warning)
+                LOG_TAG, Qgis.MessageLevel.Warning)
         else:
             QgsMessageLog.logMessage(
                 "Todas as camadas GTFS obrigatórias estão presentes.",
-                LOG_TAG, Qgis.Success)
+                LOG_TAG, Qgis.MessageLevel.Success)
 
     def build_shapes_line(self, gpkg_path):
         """Constrói as linhas (polilinhas) a partir da camada de pontos
@@ -229,7 +236,7 @@ class GtfsReader:
         if not points.isValid() or points.featureCount() == 0:
             QgsMessageLog.logMessage(
                 "Sem shapes_point; pulando construção das linhas.",
-                LOG_TAG, Qgis.Info)
+                LOG_TAG, Qgis.MessageLevel.Info)
             return None
 
         # Agrupa pontos por shape_id, guardando (sequência, ponto).
@@ -249,7 +256,7 @@ class GtfsReader:
         line_layer = QgsVectorLayer(
             "LineString?crs=epsg:4326", "shapes_line", "memory")
         provider = line_layer.dataProvider()
-        provider.addAttributes([QgsField("shape_id", QVariant.String)])
+        provider.addAttributes([QgsField("shape_id", FIELD_STRING)])
         line_layer.updateFields()
 
         for shape_id, pts in grouped.items():
@@ -309,10 +316,10 @@ def create_join_indexes(gpkg_path):
                     except sqlite3.OperationalError as e:
                         QgsMessageLog.logMessage(
                             "Índice ignorado ({}): {}".format(table, e),
-                            LOG_TAG, Qgis.Info)
+                            LOG_TAG, Qgis.MessageLevel.Info)
     except sqlite3.Error as e:
         QgsMessageLog.logMessage(
-            "Falha ao criar índices: {}".format(e), LOG_TAG, Qgis.Warning)
+            "Falha ao criar índices: {}".format(e), LOG_TAG, Qgis.MessageLevel.Warning)
 
 
 def stop_events_virtual_layer(gpkg_path, shape_id=None, name='horarios_paradas'):

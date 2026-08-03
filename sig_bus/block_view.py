@@ -31,12 +31,12 @@ class BlockView(QGraphicsView):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setRenderHint(QPainter.Antialiasing, True)
-        self.setRenderHint(QPainter.TextAntialiasing, True)
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
-        self.setDragMode(QGraphicsView.NoDrag)
-        self.setBackgroundBrush(Qt.white)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        self.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self.setBackgroundBrush(Qt.GlobalColor.white)
         self._scale = 1.0
         self._panning = False
         self._pan_last = None
@@ -63,16 +63,16 @@ class BlockView(QGraphicsView):
         if scene is None:
             return
         self.resetTransform()
-        self.fitInView(scene.sceneRect(), Qt.KeepAspectRatio)
+        self.fitInView(scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
         # Registra a escala resultante para os limites de zoom funcionarem.
         self._scale = self.transform().m11() or 1.0
 
     # --- Pan (botão do meio) -------------------------------------------
     def mousePressEvent(self, event):
-        if event.button() == Qt.MiddleButton:
+        if event.button() == Qt.MouseButton.MiddleButton:
             self._panning = True
             self._pan_last = event.pos()
-            self.setCursor(Qt.ClosedHandCursor)
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
             return
         super().mousePressEvent(event)
@@ -90,7 +90,7 @@ class BlockView(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MiddleButton and self._panning:
+        if event.button() == Qt.MouseButton.MiddleButton and self._panning:
             self._panning = False
             self.unsetCursor()
             event.accept()
@@ -105,10 +105,10 @@ class BlockView(QGraphicsView):
             return False
         rect = scene.sceneRect()
         img = QImage(int(rect.width() * scale), int(rect.height() * scale),
-                     QImage.Format_ARGB32)
-        img.fill(Qt.white)
+                     QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.white)
         painter = QPainter(img)
-        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         scene.render(painter, target=img.rect(), source=rect)
         painter.end()
         return img.save(path, 'PNG')

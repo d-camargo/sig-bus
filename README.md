@@ -61,7 +61,8 @@ plugin by CTU GeoForAll Lab (GPL v2+). No external plugin is required.
 
 ## Requirements
 
-- QGIS 3.0 or later (tested on 3.22 LTS and recent Flatpak builds)
+- QGIS 3.40 LTR or later — runs on both QGIS 3.40 (Qt 5) and QGIS 4 (Qt 6)
+  (tested on 3.44 and 4.2)
 - QGIS built-in Python (no external dependencies beyond QGIS itself)
 
 ## Installation
@@ -162,7 +163,8 @@ necessário.
 
 ## Requisitos
 
-- QGIS 3.0 ou superior (testado em 3.22 LTS e Flatpak recente)
+- QGIS 3.40 LTR ou superior — roda tanto no QGIS 3.40 (Qt 5) quanto no
+  QGIS 4 (Qt 6) (testado em 3.44 e 4.2)
 - Python embutido do QGIS (sem dependências externas além do QGIS)
 
 ## Instalação

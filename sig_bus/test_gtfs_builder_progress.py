@@ -10,7 +10,7 @@ import sys
 # Adiciona o diretório do projeto ao path
 sys.path.insert(0, '/home/diego/projects/sig-bus')
 
-from qgis.core import QgsPointXY
+from qgis.core import Qgis, QgsPointXY
 from sig_bus.gtfs_edit_core import WorkingCopy
 from sig_bus.gtfs_builder_core import (
     compute_progress,
@@ -431,6 +431,11 @@ class TestGtfsBuilderProgress(unittest.TestCase):
 
         conn.close()
 
+    # Contra um QGIS real anterior ao 3.38, QgsField(nome, QMetaType.Type) não
+    # existe — abaixo do qgisMinimumVersion=3.40 declarado no metadata.txt
+    # (decisões 36-37, PLAN.md). Com os mocks do conftest o teste roda sempre.
+    @unittest.skipIf(getattr(Qgis, 'QGIS_VERSION_INT', 999999) < 33800,
+                     'exige QGIS >= 3.38 (QgsField com QMetaType.Type)')
     @patch('sig_bus.osm_routing.route_stops')
     def test_build_line_shape(self, mock_route_stops):
         # 1. Setup mock route_stops to return 3 QgsPointXY points

@@ -12,6 +12,45 @@ o **Diagrama de Blocos** (alocação de frota). Feed de referência nos testes: 
 
 ---
 
+## Não lançado — Suporte a QGIS 4 / Qt 6
+
+O **QGIS 4 roda sobre Qt 6**, e o PyQt6 removeu os enums "curtos" do Qt 5
+(`Qt.AlignTop`, `Qt.Horizontal`, `QMessageBox.Yes`, `.exec_()` etc.), assim
+como o QGIS 4 removeu os aliases depreciados dos seus próprios enums
+(`Qgis.Critical`, `QgsTask.CanCancel`, `QgsUnitTypes.LayoutMillimeters`). Sem
+essa migração o plugin nem abria no QGIS 4 (`AttributeError: type object 'Qt'
+has no attribute 'AlignTop'`). A forma qualificada usada aqui vale nos dois
+ambientes: **um único caminho de código**, sem shim de versão, rodando tanto
+no QGIS 3.40 LTR (Qt 5) quanto no QGIS 4 (Qt 6).
+
+- **Enums qualificados em todo o pacote**: `SigBus.py`, `SigBus_dialog.py`,
+  `gtfs_reader.py`, `gtfs_export.py`, `block_core.py`,
+  `block_diagram_dialog.py`, `block_scene.py` e `block_view.py` passaram a
+  usar a forma qualificada dos enums Qt/QGIS (`Qt.AlignmentFlag.AlignTop`,
+  `Qgis.MessageLevel.Critical`, `QgsTask.Flag.CanCancel`,
+  `Qgis.LayoutUnit.Millimeters`, `.exec()`).
+- **`QVariant.Type` → `QMetaType.Type`**: `QVariant.Type` não existe mais no
+  PyQt6, então `QgsField(nome, QVariant.String)` é quebra dura no QGIS 4.
+  `gtfs_reader.py` expõe `FIELD_STRING`/`FIELD_INT` (`QMetaType.Type.QString`/
+  `.Int`), usados por todas as criações de campo do plugin.
+- **`qgisMinimumVersion` atualizado** de `3.0` para `3.40` e
+  `supportsQt6=True` acrescentado em `metadata.txt` — o `QgsField` com
+  `QMetaType` exige QGIS ≥ 3.38 (3.40 é o LTR), e sem o flag o QGIS 4 não
+  considera o plugin instalável.
+- **Guarda de regressão**: novo `test_qt6_compat.py` varre todo o pacote por
+  padrão de texto em busca de enums na forma antiga (Qt5) e falha se algum
+  reaparecer — evita que copy-paste de código antigo reintroduza a
+  regressão.
+
+### Arquivos tocados
+
+`SigBus.py`, `SigBus_dialog.py`, `gtfs_reader.py`, `gtfs_export.py`,
+`block_core.py`, `block_diagram_dialog.py`, `block_scene.py`,
+`block_view.py`, `metadata.txt`, `conftest.py`, `README.md`,
+`test_qt6_compat.py` (novo).
+
+---
+
 ## v0.4 — Refino do Diagrama de Blocos e reorganização da interface
 
 Versão focada em **legibilidade** do diagrama e em **fidelidade do modelo de frota**.

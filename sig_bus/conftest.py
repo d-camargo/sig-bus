@@ -48,6 +48,12 @@ class QVariant:
     Int = "Int"
     Double = "Double"
 
+class QMetaType:
+    class Type:
+        QString = "QString"
+        Int = "Int"
+        Double = "Double"
+
 class QgsFeature:
     def __init__(self):
         self._geom = None
@@ -146,6 +152,12 @@ class Qgis:
     Success = 1
     Warning = 2
     Critical = 3
+    # Forma qualificada exigida pelo Qt6/QGIS 4 (decisão 38, PLAN.md).
+    class MessageLevel:
+        Info = 0
+        Success = 1
+        Warning = 2
+        Critical = 3
 
 class QgsCoordinateTransformContext:
     def __init__(self):
@@ -420,6 +432,7 @@ if should_mock:
     qgis_pyqt_core_attrs = {
         'QUrl': QUrl,
         'QVariant': QVariant,
+        'QMetaType': QMetaType,
     }
 
     qgis_pyqt_network_attrs = {

@@ -32,7 +32,7 @@ from datetime import datetime
 from zipfile import ZipFile
 
 from qgis.PyQt import uic, QtWidgets
-from qgis.PyQt.QtCore import QVariant, Qt, QDate, QTime
+from qgis.PyQt.QtCore import Qt, QDate, QTime
 from qgis.PyQt.QtGui import QFont
 from qgis.PyQt.QtWidgets import (
     QFileDialog,
@@ -74,7 +74,6 @@ from qgis.core import (
     QgsTask,
     QgsRendererCategory,
     QgsRendererRange,
-    QgsUnitTypes,
     QgsVectorFileWriter,
     QgsVectorLayer,
 )
@@ -83,6 +82,8 @@ import processing as _processing
 
 from .gtfs_reader import (
     ESSENTIAL_LAYERS,
+    FIELD_INT,
+    FIELD_STRING,
     GtfsError,
     GtfsReader,
     create_join_indexes,
@@ -170,7 +171,7 @@ class _HorariosTask(QgsTask):
     - Resultado: camada de pontos em memória — abre instantaneamente."""
 
     def __init__(self, gpkg_path, route_name):
-        super().__init__('Carregando horários', QgsTask.CanCancel)
+        super().__init__('Carregando horários', QgsTask.Flag.CanCancel)
         self.gpkg_path = gpkg_path
         self.route_name = str(route_name)
         # (stop_id, seq, arr, dep, trip_id, route_id, shape_id, dir, svc, nome, wkt)
@@ -234,22 +235,22 @@ class _HorariosTask(QgsTask):
                 "Erro",
                 "Falha ao carregar horários: {}".format(
                     self.error or "tarefa interrompida."),
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
 
         mem = QgsVectorLayer("Point?crs=EPSG:4326", "horarios_paradas", "memory")
         provider = mem.dataProvider()
         provider.addAttributes([
-            QgsField('stop_id',        QVariant.String),
-            QgsField('stop_sequence',  QVariant.String),
-            QgsField('arrival_time',   QVariant.String),
-            QgsField('departure_time', QVariant.String),
-            QgsField('trip_id',        QVariant.String),
-            QgsField('shape_id',       QVariant.String),
-            QgsField('direction_id',   QVariant.String),
-            QgsField('service_id',     QVariant.String),
-            QgsField('stop_name',      QVariant.String),
-            QgsField('linha',          QVariant.String),
+            QgsField('stop_id',        FIELD_STRING),
+            QgsField('stop_sequence',  FIELD_STRING),
+            QgsField('arrival_time',   FIELD_STRING),
+            QgsField('departure_time', FIELD_STRING),
+            QgsField('trip_id',        FIELD_STRING),
+            QgsField('shape_id',       FIELD_STRING),
+            QgsField('direction_id',   FIELD_STRING),
+            QgsField('service_id',     FIELD_STRING),
+            QgsField('stop_name',      FIELD_STRING),
+            QgsField('linha',          FIELD_STRING),
         ])
         mem.updateFields()
 
@@ -284,13 +285,13 @@ class _HorariosTask(QgsTask):
                 "Info",
                 "Horários carregados: {} registros para a linha {}.".format(
                     mem.featureCount(), self.route_name),
-                level=Qgis.Info, duration=8)
+                level=Qgis.MessageLevel.Info, duration=8)
         else:
             iface.messageBar().pushMessage(
                 "Aviso",
                 "Nenhum horário encontrado para a linha {}.".format(
                     self.route_name),
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
 
 
 class _GtfsLoadTask(QgsTask):
@@ -302,7 +303,7 @@ class _GtfsLoadTask(QgsTask):
     para mexer em QgsProject."""
 
     def __init__(self, gtfs_path, gpkg_path):
-        super().__init__('Carregando GTFS', QgsTask.CanCancel)
+        super().__init__('Carregando GTFS', QgsTask.Flag.CanCancel)
         self.gtfs_path = gtfs_path
         self.gpkg_path = gpkg_path
         self.reader = GtfsReader(gtfs_path)
@@ -338,7 +339,7 @@ class _GtfsLoadTask(QgsTask):
             msg = self.error or "tarefa cancelada ou interrompida."
             iface.messageBar().pushMessage(
                 "Erro", "Falha ao carregar o GTFS: {}".format(msg),
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
 
         # Carrega apenas as camadas essenciais como camadas de mapa. As
@@ -364,7 +365,7 @@ class _GtfsLoadTask(QgsTask):
             "GTFS carregado em '{}'. Escolha uma linha e clique em "
             "'Filtrar dados' para ver os horários por parada.".format(
                 os.path.basename(self.gpkg_path)),
-            level=Qgis.Info, duration=12)
+            level=Qgis.MessageLevel.Info, duration=12)
 
 
 class _DemandLoadTask(QgsTask):
@@ -376,7 +377,7 @@ class _DemandLoadTask(QgsTask):
     que rodava na thread da GUI e travava com muitos registros."""
 
     def __init__(self, data_path, gpkg_path):
-        super().__init__('Carregando dados de demanda', QgsTask.CanCancel)
+        super().__init__('Carregando dados de demanda', QgsTask.Flag.CanCancel)
         self.data_path = data_path
         self.gpkg_path = gpkg_path
         self.error = None
@@ -430,14 +431,14 @@ class _DemandLoadTask(QgsTask):
                 "Erro",
                 "Falha ao carregar a demanda: {}".format(
                     self.error or "tarefa interrompida."),
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
         iface.addVectorLayer(
             self.gpkg_path + '|layername=dados_demanda',
             'dados_demanda', 'ogr')
         iface.messageBar().pushMessage(
             "Info", "Dados de demanda carregados (chave de ligação: LINHA).",
-            level=Qgis.Info, duration=10)
+            level=Qgis.MessageLevel.Info, duration=10)
 
 
 class _AlocacaoTask(QgsTask):
@@ -456,7 +457,7 @@ class _AlocacaoTask(QgsTask):
     _DIR_LABEL = {'0': 'ida', '1': 'volta'}
 
     def __init__(self, gpkg_path, route_name, hora=None, demand_gpkg=None):
-        super().__init__('Alocando demanda', QgsTask.CanCancel)
+        super().__init__('Alocando demanda', QgsTask.Flag.CanCancel)
         self.gpkg_path = gpkg_path          # GTFS (routes/trips/stops)
         self.demand_gpkg = demand_gpkg or gpkg_path   # dados_demanda
         self.route_name = str(route_name)
@@ -585,7 +586,7 @@ class _AlocacaoTask(QgsTask):
             QgsMessageLog.logMessage(
                 "  {} shape {}: {} viagens, {} paradas, {:.1f} km{}".format(
                     sent_lbl, sid, n_trips, len(stops), length_km, extra_msg),
-                'SIG-Bus', Qgis.Info)
+                'SIG-Bus', Qgis.MessageLevel.Info)
 
     # ------------------------------------------------------------------
     def run(self):
@@ -727,7 +728,7 @@ class _AlocacaoTask(QgsTask):
                                 'hora {:02d}h'.format(self.hora)
                                 if self.hora is not None else 'total',
                                 n_shapes, n_trips_total, shape_id, n_viagens),
-                        'SIG-Bus', Qgis.Info)
+                        'SIG-Bus', Qgis.MessageLevel.Info)
                     if n_shapes > 1:
                         self._avisos.append(
                             "PC={} (sentido {}): {} traçados distintos na janela; "
@@ -809,25 +810,25 @@ class _AlocacaoTask(QgsTask):
             iface.messageBar().pushMessage(
                 "Erro",
                 "Falha na alocação: {}".format(self.error or "cancelada."),
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
 
         mem = QgsVectorLayer("LineString?crs=EPSG:4326",
                              "tramos_demanda", "memory")
         prov = mem.dataProvider()
         prov.addAttributes([
-            QgsField('seq_from',          QVariant.Int),
-            QgsField('stop_id_from',      QVariant.String),
-            QgsField('stop_name_from',    QVariant.String),
-            QgsField('stop_id_to',        QVariant.String),
-            QgsField('stop_name_to',      QVariant.String),
-            QgsField('embarques',         QVariant.Int),
-            QgsField('passageiros_acum',  QVariant.Int),
-            QgsField('pc',                QVariant.String),
-            QgsField('sentido',           QVariant.String),
-            QgsField('linha',             QVariant.String),
-            QgsField('hora',              QVariant.String),
-            QgsField('n_viagens',         QVariant.Int),
+            QgsField('seq_from',          FIELD_INT),
+            QgsField('stop_id_from',      FIELD_STRING),
+            QgsField('stop_name_from',    FIELD_STRING),
+            QgsField('stop_id_to',        FIELD_STRING),
+            QgsField('stop_name_to',      FIELD_STRING),
+            QgsField('embarques',         FIELD_INT),
+            QgsField('passageiros_acum',  FIELD_INT),
+            QgsField('pc',                FIELD_STRING),
+            QgsField('sentido',           FIELD_STRING),
+            QgsField('linha',             FIELD_STRING),
+            QgsField('hora',              FIELD_STRING),
+            QgsField('n_viagens',         FIELD_INT),
         ])
         mem.updateFields()
         fields = mem.fields()
@@ -870,7 +871,7 @@ class _AlocacaoTask(QgsTask):
             except Exception as _e:
                 QgsMessageLog.logMessage(
                     'Simbologia graduada falhou: {}'.format(_e),
-                    'SIG-Bus', Qgis.Warning)
+                    'SIG-Bus', Qgis.MessageLevel.Warning)
 
             total_emb = sum(s[6] for s in self._segments)
             # Carga máxima = maior passageiros_acum entre todos os tramos
@@ -892,11 +893,11 @@ class _AlocacaoTask(QgsTask):
             if self._avisos:
                 msg += " Avisos: " + ' '.join(self._avisos)
             iface.messageBar().pushMessage(
-                "Info", msg, level=Qgis.Info, duration=12)
+                "Info", msg, level=Qgis.MessageLevel.Info, duration=12)
         else:
             iface.messageBar().pushMessage(
                 "Aviso", "Nenhum tramo gerado.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
 
 
 class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
@@ -1101,7 +1102,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.scroll_content_paradas.setStyleSheet("background-color: white;")
         self.layout_scroll_paradas = QVBoxLayout(self.scroll_content_paradas)
         from qgis.PyQt.QtCore import Qt
-        self.layout_scroll_paradas.setAlignment(Qt.AlignTop)
+        self.layout_scroll_paradas.setAlignment(Qt.AlignmentFlag.AlignTop)
         
         self.scroll_paradas.setWidget(self.scroll_content_paradas)
         layout_paradas.addWidget(self.scroll_paradas)
@@ -1167,7 +1168,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         
         # QListWidget para reordenação
         self.list_widget_sequencia = QtWidgets.QListWidget()
-        self.list_widget_sequencia.setDragDropMode(QtWidgets.QAbstractItemView.InternalMove)
+        self.list_widget_sequencia.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.InternalMove)
         self.list_widget_sequencia.setDragEnabled(True)
         self.list_widget_sequencia.setAcceptDrops(True)
         self.list_widget_sequencia.setDropIndicatorShown(True)
@@ -1474,7 +1475,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if not feature.isValid() or not field:
             iface.messageBar().pushMessage(
                 "Aviso", "Escolha uma linha antes de filtrar.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
         value = feature[field]
         if value is None:
@@ -1487,7 +1488,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 "Aviso",
                 "GeoPackage não encontrado. Use 'Reconectar GeoPackage' "
                 "para localizá-lo.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
 
         # Resolve os shape_ids da linha (route_short_name → route_id → shapes)
@@ -1548,7 +1549,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if not gtfs_path or not os.path.isfile(gtfs_path):
             iface.messageBar().pushMessage(
                 "Erro", "Selecione um arquivo GTFS (.zip) válido.",
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
 
         with ZipFile(gtfs_path) as zin:
@@ -1560,7 +1561,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 iface.messageBar().pushMessage(
                     "Info",
                     "O GTFS já contém calendar.txt; nenhuma correção necessária.",
-                    level=Qgis.Info, duration=10)
+                    level=Qgis.MessageLevel.Info, duration=10)
                 return
 
             if not has_calendar_dates:
@@ -1568,7 +1569,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     "Erro",
                     "O GTFS não contém calendar.txt nem calendar_dates.txt — "
                     "feed inválido segundo a especificação.",
-                    level=Qgis.Critical, duration=10)
+                    level=Qgis.MessageLevel.Critical, duration=10)
                 return
 
             # Feed só com calendar_dates.txt: sintetiza calendar.txt a partir dele.
@@ -1588,7 +1589,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             "Info",
             "calendar.txt gerado a partir de calendar_dates.txt. "
             "Utilize o arquivo 'gtfs_corrigido.zip'.",
-            level=Qgis.Info, duration=10)
+            level=Qgis.MessageLevel.Info, duration=10)
 
     @staticmethod
     def _calendar_from_dates(text_stream):
@@ -1640,7 +1641,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if not data_path or not os.path.isfile(data_path):
             iface.messageBar().pushMessage(
                 "Erro", "Selecione um arquivo CSV de demanda válido.",
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
 
         gpkg_path = os.path.join(os.path.dirname(data_path), 'sigt.gpkg')
@@ -1650,7 +1651,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             "Info",
             "Carregando dados de demanda em segundo plano… acompanhe o "
             "Gerenciador de Tarefas do QGIS.",
-            level=Qgis.Info, duration=8)
+            level=Qgis.MessageLevel.Info, duration=8)
 
 
 
@@ -1771,7 +1772,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if added:
             msg += " Camadas readicionadas: {}.".format(', '.join(added))
         msg += " Use 'Filtrar dados' para carregar os horários da linha."
-        iface.messageBar().pushMessage("Info", msg, level=Qgis.Info, duration=12)
+        iface.messageBar().pushMessage("Info", msg, level=Qgis.MessageLevel.Info, duration=12)
 
     def alocacaoClicked(self):
         """Aloca os embarques do CSV de demanda nos tramos da linha selecionada.
@@ -1783,7 +1784,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if not feature.isValid() or not field:
             iface.messageBar().pushMessage(
                 "Aviso", "Escolha uma linha antes de alocar a demanda.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
         value = feature[field]
         if value is None:
@@ -1795,7 +1796,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 "Aviso",
                 "GeoPackage não encontrado. Use 'Reconectar GeoPackage' "
                 "para localizá-lo.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
 
         # Localiza onde dados_demanda foi gravado (pode ser sigt.gpkg separado)
@@ -1805,7 +1806,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 "Aviso",
                 "Dados de demanda não encontrados. Use 'Inserir' para "
                 "carregá-los antes de alocar.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
 
         hora_text = self.combo_hora.currentText()
@@ -1818,7 +1819,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             "Info",
             "Alocando demanda para a linha {} ({}) em segundo plano…".format(
                 value, hora_text),
-            level=Qgis.Info, duration=6)
+            level=Qgis.MessageLevel.Info, duration=6)
 
     def diagramaClicked(self):
         """Abre o Diagrama de Blocos (tempo × linha/sentido) para o GTFS atual.
@@ -1832,14 +1833,14 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 'Aviso',
                 "GeoPackage do GTFS não encontrado. Carregue um GTFS ou use "
                 "'Reconectar GeoPackage'.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
         try:
             from .block_diagram_dialog import BlockDiagramDialog
         except Exception as e:   # noqa: BLE001
             iface.messageBar().pushMessage(
                 'Erro', 'Falha ao abrir o Diagrama de Blocos: {}'.format(e),
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
         # Parenteia à janela principal do QGIS (não a este diálogo), para a
         # janela do diagrama sobreviver ao fechamento do SIG-Bus. A referência
@@ -1862,7 +1863,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if not gtfs_path or not os.path.isfile(gtfs_path):
             iface.messageBar().pushMessage(
                 "Erro", "Selecione um arquivo GTFS (.zip) válido.",
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
 
         # Prefere o feed corrigido, se existir ao lado do original.
@@ -1887,7 +1888,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             "Info",
             "Carregando GTFS em segundo plano… acompanhe o Gerenciador de "
             "Tarefas do QGIS.",
-            level=Qgis.Info, duration=8)
+            level=Qgis.MessageLevel.Info, duration=8)
 
     # ------------------------------------------------------------------
     def relatorioClicked(self):
@@ -1905,14 +1906,14 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 'Aviso',
                 "Execute 'Alocar Demanda' antes de gerar o relatório.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
         tramos = tramos_layers[0]
         feats = list(tramos.getFeatures())
         if not feats:
             iface.messageBar().pushMessage(
                 'Aviso', "Camada 'tramos_demanda' está vazia.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
 
         linha    = feats[0]['linha']
@@ -1961,7 +1962,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 'Aviso',
                 'Gráficos não gerados — verifique o log SIG-Bus para detalhes.',
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
 
         # 7. Caminho de saída ----------------------------------------------
         gpkg = self._resolve_gpkg() or ''
@@ -1979,7 +1980,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             return
 
         # 8. Layout — uma página A4 landscape por sentido com dados ----------
-        MM = QgsUnitTypes.LayoutMillimeters
+        MM = Qgis.LayoutUnit.Millimeters
         PAGE_W, PAGE_H, PAGE_GAP = 297.0, 210.0, 10.0  # mm
 
         # Páginas a criar: apenas sentidos com dados de demanda
@@ -1992,7 +1993,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if not pages_data:
             iface.messageBar().pushMessage(
                 'Aviso', 'Sem dados de demanda para gerar o relatório.',
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             for p in tmp_pngs:
                 try:
                     os.unlink(p)
@@ -2186,12 +2187,12 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 'Info',
                 'Relatório exportado: {}'.format(save_path),
-                level=Qgis.Info, duration=12)
+                level=Qgis.MessageLevel.Info, duration=12)
         else:
             iface.messageBar().pushMessage(
                 'Erro',
                 'Falha ao exportar PDF (código {}).'.format(res),
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
 
     def editEnterClicked(self):
         """
@@ -2203,7 +2204,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Aviso",
                 "GTFS não encontrado — carregue ou reconecte o GeoPackage primeiro.",
-                level=Qgis.Warning, duration=8
+                level=Qgis.MessageLevel.Warning, duration=8
             )
             return
 
@@ -2214,10 +2215,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 self,
                 "Edição em andamento",
                 "Já existe uma edição em andamento. Recriar do zero? (Não = retomar a atual)",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
             )
-            if reply == QMessageBox.Yes:
+            if reply == QMessageBox.StandardButton.Yes:
                 ok = wc.enter(overwrite=True)
             else:
                 ok = True  # Retoma a edição existente
@@ -2227,7 +2228,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 iface.messageBar().pushMessage(
                     "Erro",
                     "Falha ao criar a cópia de trabalho do GeoPackage (feed_edit.gpkg).",
-                    level=Qgis.Critical, duration=10
+                    level=Qgis.MessageLevel.Critical, duration=10
                 )
                 return
 
@@ -2236,7 +2237,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Info",
                 "Modo de edição do GTFS ativado com sucesso.",
-                level=Qgis.Info, duration=8
+                level=Qgis.MessageLevel.Info, duration=8
             )
             self._refresh_edit_status()
 
@@ -2248,7 +2249,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Aviso",
                 "Nenhuma edição para descartar.",
-                level=Qgis.Warning, duration=8
+                level=Qgis.MessageLevel.Warning, duration=8
             )
             return
 
@@ -2256,25 +2257,25 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self,
             "Descartar Edição",
             "Tem certeza que deseja descartar todas as alterações não salvas? Esta operação não pode ser desfeita.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
 
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.StandardButton.Yes:
             wc = self._working_copy
             if wc.discard():
                 self._working_copy = None
                 iface.messageBar().pushMessage(
                     "Info",
                     "Edição descartada e arquivo temporário excluído.",
-                    level=Qgis.Info, duration=8
+                    level=Qgis.MessageLevel.Info, duration=8
                 )
                 self._refresh_edit_status()
             else:
                 iface.messageBar().pushMessage(
                     "Erro",
                     "Falha ao apagar o arquivo de edição temporário.",
-                    level=Qgis.Critical, duration=10
+                    level=Qgis.MessageLevel.Critical, duration=10
                 )
 
     def editOpenClicked(self):
@@ -2286,7 +2287,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Aviso",
                 "Entre no modo edição primeiro.",
-                level=Qgis.Warning, duration=8
+                level=Qgis.MessageLevel.Warning, duration=8
             )
             return
 
@@ -2297,7 +2298,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 iface.messageBar().pushMessage(
                     "Aviso",
                     "Selecione uma viagem para editar a tabela stop_times.",
-                    level=Qgis.Warning, duration=8
+                    level=Qgis.MessageLevel.Warning, duration=8
                 )
                 return
             trip_id = trip_id.strip()
@@ -2313,7 +2314,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Erro",
                 "Falha ao carregar a camada edit_{}.".format(table),
-                level=Qgis.Critical, duration=10
+                level=Qgis.MessageLevel.Critical, duration=10
             )
             return
 
@@ -2350,7 +2351,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         iface.messageBar().pushMessage(
             "Info",
             "Tabela edit_{} aberta para edição no QGIS. O diálogo foi fechado.".format(table),
-            level=Qgis.Info, duration=8
+            level=Qgis.MessageLevel.Info, duration=8
         )
         self.close()
 
@@ -2362,7 +2363,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Aviso",
                 "Nenhuma edição ativa para validar.",
-                level=Qgis.Warning, duration=8
+                level=Qgis.MessageLevel.Warning, duration=8
             )
             return
 
@@ -2371,7 +2372,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Erro",
                 "Arquivo de edição GeoPackage não encontrado.",
-                level=Qgis.Critical, duration=8
+                level=Qgis.MessageLevel.Critical, duration=8
             )
             return
 
@@ -2380,46 +2381,46 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             errors, warnings = validator.validate()
         except Exception as e:
             msg = "Erro durante a validação: {}".format(e)
-            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.Critical)
+            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.MessageLevel.Critical)
             iface.messageBar().pushMessage(
                 "Erro",
                 msg,
-                level=Qgis.Critical, duration=10
+                level=Qgis.MessageLevel.Critical, duration=10
             )
             return
 
         # Registrar no log
-        QgsMessageLog.logMessage("Iniciando validação de GTFS no SIG-Bus...", 'SIG-Bus', Qgis.Info)
+        QgsMessageLog.logMessage("Iniciando validação de GTFS no SIG-Bus...", 'SIG-Bus', Qgis.MessageLevel.Info)
 
         # Logar cada erro
         for err in errors:
-            QgsMessageLog.logMessage("[Erro] {}".format(err), 'SIG-Bus', Qgis.Warning)
+            QgsMessageLog.logMessage("[Erro] {}".format(err), 'SIG-Bus', Qgis.MessageLevel.Warning)
 
         # Logar cada aviso
         for warn in warnings:
-            QgsMessageLog.logMessage("[Aviso] {}".format(warn), 'SIG-Bus', Qgis.Info)
+            QgsMessageLog.logMessage("[Aviso] {}".format(warn), 'SIG-Bus', Qgis.MessageLevel.Info)
 
         # Reportar resumo via messageBar
         if errors and warnings:
             msg = "Validação concluída com {} erro(s) e {} aviso(s). Veja o painel de log (SIG-Bus) para detalhes.".format(
                 len(errors), len(warnings)
             )
-            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.Critical, duration=10)
+            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.MessageLevel.Critical, duration=10)
         elif errors:
             msg = "Validação concluída com {} erro(s). Veja o painel de log (SIG-Bus) para detalhes.".format(
                 len(errors)
             )
-            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.Critical, duration=10)
+            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.MessageLevel.Critical, duration=10)
         elif warnings:
             msg = "Validação concluída com {} aviso(s). Veja o painel de log (SIG-Bus) para detalhes.".format(
                 len(warnings)
             )
-            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.Warning, duration=10)
+            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.MessageLevel.Warning, duration=10)
         else:
             iface.messageBar().pushMessage(
                 "Validação GTFS",
                 "GTFS validado com sucesso! Nenhum erro ou aviso encontrado.",
-                level=Qgis.Info, duration=8
+                level=Qgis.MessageLevel.Info, duration=8
             )
 
     def exportClicked(self):
@@ -2436,7 +2437,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Aviso",
                 "GeoPackage não encontrado. Carregue ou reconecte o GTFS primeiro.",
-                level=Qgis.Warning, duration=8
+                level=Qgis.MessageLevel.Warning, duration=8
             )
             return
 
@@ -2445,18 +2446,18 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             errors, warnings = validator.validate()
         except Exception as e:
             msg = "Erro durante a validação pré-exportação: {}".format(e)
-            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.Critical)
+            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.MessageLevel.Critical)
             iface.messageBar().pushMessage(
                 "Erro",
                 msg,
-                level=Qgis.Critical, duration=10
+                level=Qgis.MessageLevel.Critical, duration=10
             )
             return
 
         if errors:
-            QgsMessageLog.logMessage("Erro de validação pré-exportação bloqueou a exportação.", 'SIG-Bus', Qgis.Critical)
+            QgsMessageLog.logMessage("Erro de validação pré-exportação bloqueou a exportação.", 'SIG-Bus', Qgis.MessageLevel.Critical)
             for err in errors:
-                QgsMessageLog.logMessage("[Erro Fatal] {}".format(err), 'SIG-Bus', Qgis.Warning)
+                QgsMessageLog.logMessage("[Erro Fatal] {}".format(err), 'SIG-Bus', Qgis.MessageLevel.Warning)
 
             msg_relatorio = "\n".join("- {}".format(err) for err in errors[:10])
             if len(errors) > 10:
@@ -2470,9 +2471,9 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             return
 
         if warnings:
-            QgsMessageLog.logMessage("Avisos de validação pré-exportação encontrados.", 'SIG-Bus', Qgis.Info)
+            QgsMessageLog.logMessage("Avisos de validação pré-exportação encontrados.", 'SIG-Bus', Qgis.MessageLevel.Info)
             for warn in warnings:
-                QgsMessageLog.logMessage("[Aviso] {}".format(warn), 'SIG-Bus', Qgis.Info)
+                QgsMessageLog.logMessage("[Aviso] {}".format(warn), 'SIG-Bus', Qgis.MessageLevel.Info)
 
             msg_avisos = "\n".join("- {}".format(warn) for warn in warnings[:5])
             if len(warnings) > 5:
@@ -2482,10 +2483,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 self,
                 "Avisos de Validação",
                 "A validação encontrou alguns avisos. Deseja prosseguir com a exportação mesmo assim?\n\n" + msg_avisos,
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
             )
-            if reply != QMessageBox.Yes:
+            if reply != QMessageBox.StandardButton.Yes:
                 return
 
         save_path, _ = QFileDialog.getSaveFileName(
@@ -2509,7 +2510,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         iface.messageBar().pushMessage(
             "Info",
             "Exportando GTFS em segundo plano...",
-            level=Qgis.Info, duration=8
+            level=Qgis.MessageLevel.Info, duration=8
         )
 
     def _refresh_edit_status(self):
@@ -2656,7 +2657,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     "stop_lat": lat,
                     "stop_lon": lon
                 }
-                item.setData(Qt.UserRole, stop_data)
+                item.setData(Qt.ItemDataRole.UserRole, stop_data)
                 item.stop_data = stop_data
                 self.list_widget_sequencia.addItem(item)
         elif current == 3:
@@ -2696,7 +2697,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self.sequenced_stops = []
             for i in range(self.list_widget_sequencia.count()):
                 item = self.list_widget_sequencia.item(i)
-                stop_data = item.data(Qt.UserRole)
+                stop_data = item.data(Qt.ItemDataRole.UserRole)
                 if not stop_data and hasattr(item, "stop_data"):
                     stop_data = item.stop_data
                 if stop_data:
@@ -3226,8 +3227,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
     def _add_stop_row(self):
         # Create a container frame
         frame = QtWidgets.QFrame()
-        frame.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        frame.setFrameShadow(QtWidgets.QFrame.Raised)
+        frame.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        frame.setFrameShadow(QtWidgets.QFrame.Shadow.Raised)
         
         # Set a subtle border/padding stylesheet so it looks beautiful and grouped
         frame.setStyleSheet("""
@@ -3456,8 +3457,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         mem = QgsVectorLayer('Point?crs=EPSG:4326', '_km_tmp', 'memory')
         prov = mem.dataProvider()
         prov.addAttributes([
-            QgsField('emb', QVariant.Int),
-            QgsField('seq', QVariant.Int),
+            QgsField('emb', FIELD_INT),
+            QgsField('seq', FIELD_INT),
         ])
         mem.updateFields()
         fields = mem.fields()
@@ -3478,10 +3479,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             })['OUTPUT']
         except Exception as exc:
             msg = 'K-means falhou: {}'.format(exc)
-            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.Warning)
+            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.MessageLevel.Warning)
             iface.messageBar().pushMessage(
                 'Aviso', 'Clustering falhou — gráficos omitidos. ' + msg,
-                level=Qgis.Warning, duration=10)
+                level=Qgis.MessageLevel.Warning, duration=10)
             return empty
 
         # Agrega por cluster; ordena pelo seq médio para manter a
@@ -3522,7 +3523,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         fields = tramos_layer.fields()
         if fields.indexFromName('cluster_id') < 0:
             tramos_layer.dataProvider().addAttributes(
-                [QgsField('cluster_id', QVariant.String)])
+                [QgsField('cluster_id', FIELD_STRING)])
             tramos_layer.updateFields()
 
         cidx = tramos_layer.fields().indexFromName('cluster_id')
@@ -3567,10 +3568,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             W, H = 825, 669
             ML, MR, MT, MB = 80, 25, 55, 70  # margens esq/dir/topo/base
 
-            img = QImage(W, H, QImage.Format_RGB32)
-            img.fill(Qt.white)
+            img = QImage(W, H, QImage.Format.Format_RGB32)
+            img.fill(Qt.GlobalColor.white)
             p = QPainter(img)
-            p.setRenderHint(QPainter.Antialiasing)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
             cw = W - ML - MR   # largura da área do gráfico
             ch = H - MT - MB   # altura da área do gráfico
@@ -3579,7 +3580,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             bw = int(spacing * 0.65)
 
             # Barras — cor por cluster (igual ao mapa); fallback = cor do sentido
-            p.setPen(Qt.NoPen)
+            p.setPen(Qt.PenStyle.NoPen)
             for i, val in enumerate(values):
                 bh = max(1, int(ch * val / v_max))
                 x  = ML + int(i * spacing + (spacing - bw) / 2)
@@ -3594,7 +3595,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 bh = max(1, int(ch * val / v_max))
                 xc = ML + int(i * spacing + spacing / 2)
                 p.drawText(QRect(xc - 25, MT + ch - bh - 17, 50, 15),
-                           Qt.AlignCenter, str(val))
+                           Qt.AlignmentFlag.AlignCenter, str(val))
 
             # Eixos
             axis_pen = QPen(QColor('#555555'))
@@ -3605,7 +3606,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
             # Linha de grade no topo (valor máximo)
             grid_pen = QPen(QColor('#cccccc'))
-            grid_pen.setStyle(Qt.DotLine)
+            grid_pen.setStyle(Qt.PenStyle.DotLine)
             p.setPen(grid_pen)
             p.drawLine(ML, MT, ML + cw, MT)
             mid_y = MT + ch // 2
@@ -3616,21 +3617,21 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             p.setFont(QFont('Sans Serif', 7))
             for y_pos, y_val in [(MT + ch, 0), (mid_y, v_max // 2), (MT, v_max)]:
                 p.drawText(QRect(0, y_pos - 8, ML - 6, 16),
-                           Qt.AlignRight | Qt.AlignVCenter, str(y_val))
+                           Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(y_val))
 
             # Rótulos do eixo X
             p.setFont(QFont('Sans Serif', 8))
             for i, label in enumerate(labels):
                 xc = ML + int(i * spacing + spacing / 2)
                 p.drawText(QRect(xc - 20, MT + ch + 5, 40, 18),
-                           Qt.AlignCenter, label)
+                           Qt.AlignmentFlag.AlignCenter, label)
 
             # Título dos eixos
-            p.drawText(QRect(ML, MT + ch + 30, cw, 18), Qt.AlignCenter, 'Cluster')
+            p.drawText(QRect(ML, MT + ch + 30, cw, 18), Qt.AlignmentFlag.AlignCenter, 'Cluster')
             p.save()
             p.translate(14, MT + ch // 2)
             p.rotate(-90)
-            p.drawText(QRect(-50, -9, 100, 18), Qt.AlignCenter, 'Embarques')
+            p.drawText(QRect(-50, -9, 100, 18), Qt.AlignmentFlag.AlignCenter, 'Embarques')
             p.restore()
 
             # Título do gráfico
@@ -3639,7 +3640,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             p.setFont(title_font)
             p.setPen(QColor('#222222'))
             p.drawText(
-                QRect(0, 6, W, 30), Qt.AlignCenter,
+                QRect(0, 6, W, 30), Qt.AlignmentFlag.AlignCenter,
                 'Embarques por cluster — {} ({})'.format(dir_label, hora_str))
 
             p.end()
@@ -3652,5 +3653,5 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         except Exception as exc:
             QgsMessageLog.logMessage(
                 'Falha ao gerar gráfico: {}'.format(exc),
-                'SIG-Bus', Qgis.Warning)
+                'SIG-Bus', Qgis.MessageLevel.Warning)
             return None

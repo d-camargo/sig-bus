@@ -180,10 +180,10 @@ class TripItem(QGraphicsRectItem):
         self.setPen(self._base_pen)
         self.setAcceptHoverEvents(True)
         self.setToolTip(self._tooltip())
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         # Recorta o rótulo-filho ao retângulo da barra (defesa extra além do
         # elide), para a sigla nunca vazar por cima das barras vizinhas.
-        self.setFlag(QGraphicsItem.ItemClipsChildrenToShape, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
         if code:
             self._add_label(rect, code, color)
 
@@ -192,7 +192,7 @@ class TripItem(QGraphicsRectItem):
         if rect.width() < _BAR_LABEL_MIN_W or rect.height() < _BAR_LABEL_MIN_H:
             return
         fm = QFontMetrics(_BAR_LABEL_FONT)
-        elided = fm.elidedText(text, Qt.ElideRight, int(rect.width() - 4))
+        elided = fm.elidedText(text, Qt.TextElideMode.ElideRight, int(rect.width() - 4))
         if not elided or elided == '…':
             return
         label = QGraphicsSimpleTextItem(elided, self)
@@ -205,7 +205,7 @@ class TripItem(QGraphicsRectItem):
         label.setZValue(1)
         # O rótulo é puramente visual: ignora o mouse para o clique cair na
         # barra (TripItem.mousePressEvent) em vez de ser engolido pelo texto.
-        label.setAcceptedMouseButtons(Qt.NoButton)
+        label.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         label.setAcceptHoverEvents(False)
 
     # Hachura da volta: linhas diagonais semi-transparentes, espaçamento em px.
@@ -327,7 +327,7 @@ class BlockScene(QGraphicsScene):
         x2, y2 = r_sel.left(), r_sel.center().y()
 
         pen = QPen(QColor('#111111'))
-        pen.setStyle(Qt.DashLine)
+        pen.setStyle(Qt.PenStyle.DashLine)
         pen.setWidthF(1.2)
         self._headway_items.append(self.addLine(x1, y1, x2, y2, pen))
         # marcadores verticais nos dois inícios
@@ -481,7 +481,7 @@ class BlockScene(QGraphicsScene):
         if not self._idle_segments:
             return
         pen = QPen(QColor('#9aa6b2'))
-        pen.setStyle(Qt.DotLine)
+        pen.setStyle(Qt.PenStyle.DotLine)
         pen.setWidthF(0.8)
         for x0, y0, x1, y1 in self._idle_segments:
             if x1 > x0:
@@ -536,7 +536,7 @@ class BlockScene(QGraphicsScene):
             # Fundo alternado para legibilidade
             bg = QGraphicsRectItem(QRectF(m.left, top, right - m.left, height))
             bg.setBrush(QBrush(QColor('#f4f6f8' if idx % 2 == 0 else '#e9edf1')))
-            bg.setPen(QPen(Qt.NoPen))
+            bg.setPen(QPen(Qt.PenStyle.NoPen))
             bg.setZValue(-10)
             self.addItem(bg)
 
@@ -557,7 +557,7 @@ class BlockScene(QGraphicsScene):
         # sem rótulo, para situar embarques no meio da hora cheia.
         half_pen = QPen(QColor('#d6dde3'))
         half_pen.setWidthF(0.5)
-        half_pen.setStyle(Qt.DashLine)
+        half_pen.setStyle(Qt.PenStyle.DashLine)
 
         x_max = m.x(t_max)
         first_h = int(t_min // 3600)

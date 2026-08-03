@@ -8,6 +8,7 @@ __pycache__/
 *.qgs~
 *.qgz~
 *.bak
+sig_bus/resources_rc.py
 
 # Dados gerados em runtime (não são código-fonte)
 sigt.gpkg
