@@ -27,6 +27,15 @@ Estas escolhas guiam toda a arquitetura abaixo:
 29. **Geração de shapes reutilizando `GtfsReader.build_shapes_line`**: Ao invés de duplicar a lógica de escrever strings de caminhos e geometrias em arquivo, o assistente popula a tabela de apoio intermediária `shapes_point`. O leitor de GTFS existente (`gtfs_reader.py`) é então utilizado para ler os pontos, ordená-los e convertê-los na polilinha final da tabela `shapes`.
 30. **Assistente baseado em `QStackedWidget` na própria aba "Construir GTFS"**: O assistente foi concebido sem arquivos de interface `.ui` gerados no Qt Designer. Ele é inteiramente construído dinamicamente via código no arquivo `SigBus_dialog.py` através de um `QStackedWidget`. Duas barras de progresso (Mínimo e Máximo) permanecem visíveis no topo do widget exibindo o progresso e o checklist de itens ausentes.
 31. **Núcleo de construção puro (sem QGIS) sempre que aplicável**: Funções de progresso, normalização de texto, expansão de horários por frequência e interação direta com SQLite foram isoladas em `gtfs_builder_core.py` utilizando apenas as bibliotecas padrão Python (`sqlite3`, `json`, `math`) e `osgeo.ogr`. Isso possibilita a validação de testes unitários offline e de forma standalone.
+32. **Decisão 42 (Estilização de Legibilidade e Suporte a Temas)**: Padronização das folhas de estilo em constantes centralizadas em `SigBus_dialog.py` (`QSS_INPUT`, `QSS_CARD`, `QSS_HINT`, `QSS_STATUS_OK`, `QSS_STATUS_ERR`), garantindo contraste legível em temas claros e escuros (Night Mapping).
+33. **Decisão 43 (Padrão de Endereço e Formato CSV em Lote)**: Isolamento do formato de endereço (`Logradouro, Número - Bairro`) no módulo puro `address_format.py` e suporte ao formato de lote em `;` (UTF-8 com BOM) no módulo `stops_csv.py`, além do modelo versionado `sig_bus/modelo_paradas.csv`.
+34. **Decisão 44 (Geocodificação Estruturada com Cascata de Busca)**: Extensão do `NominatimGeocoder` em `geocoding.py` para busca estruturada por contexto (com número -> sem número -> busca livre), com preservação de retrocompatibilidade.
+35. **Decisão 45 (Contexto Geográfico da Agência - Município e UF)**: Inclusão dos campos obrigatórios de Município e UF no cadastro da Agência para direcionar a geocodificação e delimitar o escopo urbano do feed.
+36. **Decisão 46 (Tabela de Configuração Interna `sig_bus_config`)**: Tabela chave-valor no GeoPackage de trabalho para persistir parâmetros internos (município, UF, bbox do município), ignorada durante a exportação GTFS.
+37. **Decisão 47 (Bounding Box do Município para Geocodificação)**: Cálculo e armazenamento da caixa envolvente do município (`city_bbox` / `build_city_viewbox`) para aplicar restrição espacial (`viewbox` + `bounded=1`) na busca Nominatim.
+38. **Decisão 48 (Supressão Visual de Lat/Lon e Indicadores de Status)**: Remoção dos campos de texto visíveis de lat/lon na tabela de paradas, substituídos por rótulos visuais de status (`✓ localizado`, `✗ não encontrado`, `📍 marcado no mapa`).
+39. **Decisão 49 (Ferramenta Interativa `PickStopPointTool` de Captura no Canvas)**: Módulo `map_tools.py` provendo ferramenta de mapa para seleção direta de pontos no canvas do QGIS para linhas rurais ou sem endereço.
+40. **Decisão 50 (Mapa de Fundo OSM Automático `ensure_osm_basemap`)**: Adição dinâmica de camada raster OpenStreetMap WMS/XYZ ao projeto para suporte visual durante a marcação de paradas no mapa.
 
 ---
 
@@ -133,12 +142,34 @@ Provê a conversão de endereços em coordenadas geográficas.
 
 ---
 
-## 6. EXTENSÕES DO CORE — `WorkingCopy.enter_empty()`
+## 6. EXTENSÕES DO CORE E MÓDULOS AUXILIARES
 
+### 6.1 `WorkingCopy.enter_empty()`
 Implementado em `gtfs_edit_core.py`:
 *   Inicializa um GeoPackage (`.gpkg`) vazio a partir do zero.
 *   Adiciona a definição espacial `EPSG:4326` (WGS84) para as tabelas `stops` e `shapes_point` (tipo ponto) e para `shapes` (tipo linha).
 *   Popula as colunas da tabela de acordo com as especificações do `gtfs_schema.py`.
+
+### 6.2 Formatação de Endereços — `address_format.py`
+Módulo Python puro (sem dependência Qt/QGIS):
+*   `parse_address(texto)`: Decompõe endereços no padrão `Logradouro, Número - Bairro` em um dicionário estruturado.
+*   `format_address(partes)`: Monta o endereço no formato canônico.
+
+### 6.3 Processamento de Lote CSV — `stops_csv.py`
+Módulo puro para gerenciar importação/exportação de paradas:
+*   `write_template(caminho)`: Gera o modelo CSV com delimitador `;`, codificação UTF-8 com BOM e exemplos.
+*   `parse_stops_csv(caminho)`: Realiza a leitura e validação das paradas em lote, suportando endereços ou coordenadas diretas.
+
+### 6.4 Ferramentas de Mapa — `map_tools.py`
+Módulo de apoio visual e captura no QGIS canvas:
+*   `PickStopPointTool`: Ferramenta interativa (`QgsMapToolEmitPoint`) para captura de coordenadas diretamente por clique no mapa.
+*   `ensure_osm_basemap()`: Adiciona uma camada raster OpenStreetMap XYZ no fundo do projeto QGIS caso nenhuma esteja presente.
+
+### 6.5 Configurações Internas — Tabela `sig_bus_config`
+Gerenciada por `set_config` e `get_config` em `gtfs_builder_core.py`:
+*   Tabela relacional em SQLite de chave-valor (`chave TEXT PRIMARY KEY, valor TEXT`).
+*   Armazena `build_city`, `build_state`, `build_country` e a caixa envolvente `build_city_viewbox`.
+*   Totalmente isolada do feed GTFS exportado (não consta na whitelist de exportação).
 
 ---
 

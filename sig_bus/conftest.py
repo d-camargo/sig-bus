@@ -3,6 +3,12 @@ import os
 import types
 from unittest.mock import MagicMock
 
+try:
+    import processing
+except ImportError:
+    sys.modules['processing'] = MagicMock()
+
+
 # Define Mock Classes
 class QgsPointXY:
     def __init__(self, x=0.0, y=0.0):

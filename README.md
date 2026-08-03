@@ -30,7 +30,7 @@ Developed as part of the undergraduate research project PIBIC DPPG 113/2021.
   *departed* in that hour is used.
 - **Reconnect GeoPackage:** restores GTFS layers to the project without
   reprocessing the feed (useful after closing and reopening QGIS).
-- **Build GTFS:** allows creating a GTFS feed from scratch via an interactive assistant (agency, routes, geocoded stops, sequences, and frequencies) with automatic OSM-based street routing (see [sig_bus/GUIA_CONSTRUIR_GTFS.md](sig_bus/GUIA_CONSTRUIR_GTFS.md)).
+- **Build GTFS:** allows creating a GTFS feed from scratch via an interactive assistant (agency, routes, geocoded stops, sequences, and frequencies) with automatic OSM-based street routing and batch CSV stop import (see [sig_bus/GUIA_CONSTRUIR_GTFS.md](sig_bus/GUIA_CONSTRUIR_GTFS.md) and template guide in [sig_bus/MODELO_PARADAS_CSV.md](sig_bus/MODELO_PARADAS_CSV.md)).
 - **Edit GTFS:** allows editing GTFS fields and geometry in an isolated working copy (`feed_edit.gpkg`), with built-in validation and normalized export (see [sig_bus/GUIA_EDICAO_GTFS.md](sig_bus/GUIA_EDICAO_GTFS.md)).
 
 The GTFS reader is **built-in** (`gtfs_reader.py`), adapted from the *GTFS Loader*
@@ -54,6 +54,8 @@ plugin by CTU GeoForAll Lab (GPL v2+). No external plugin is required.
     ├── GUIA_CONSTRUIR_GTFS.md # user guide for GTFS creation (PT-BR)
     ├── GUIA_EDICAO_GTFS.md  # user guide for GTFS editing (PT-BR)
     ├── METHODS.md           # theoretical foundation of the allocation method
+    ├── MODELO_PARADAS_CSV.md # documentation for CSV stops batch import (PT-BR)
+    ├── modelo_paradas.csv   # template file for batch stops import
     ├── metadata.txt
     ├── icon.png
     └── resources.py / resources.qrc
@@ -131,7 +133,7 @@ Desenvolvido no contexto do projeto de Iniciação Científica PIBIC DPPG 113/20
   viagens que *iniciaram* naquela hora.
 - **Reconectar GeoPackage:** restaura as camadas GTFS ao projeto sem
   reprocessar o feed (útil após fechar e reabrir o QGIS).
-- **Construir GTFS:** permite criar um feed GTFS do zero por meio de um assistente interativo (agência, rotas, paradas geocodificadas, sequências e frequências) com roteamento automático por ruas via OSM (veja [sig_bus/GUIA_CONSTRUIR_GTFS.md](sig_bus/GUIA_CONSTRUIR_GTFS.md)).
+- **Construir GTFS:** permite criar um feed GTFS do zero por meio de um assistente interativo (agência, rotas, paradas geocodificadas, sequências e frequências) com roteamento automático por ruas via OSM e importação de paradas em lote via CSV (veja [sig_bus/GUIA_CONSTRUIR_GTFS.md](sig_bus/GUIA_CONSTRUIR_GTFS.md) e o guia do modelo em [sig_bus/MODELO_PARADAS_CSV.md](sig_bus/MODELO_PARADAS_CSV.md)).
 - **Edição GTFS:** permite editar campos e geometria em uma cópia de trabalho isolada (`feed_edit.gpkg`), com validação integrada e exportação normalizada (veja [sig_bus/GUIA_EDICAO_GTFS.md](sig_bus/GUIA_EDICAO_GTFS.md)).
 
 O leitor de GTFS é **embutido** (`gtfs_reader.py`), adaptado do plugin
@@ -156,6 +158,8 @@ necessário.
     ├── GUIA_CONSTRUIR_GTFS.md # guia do usuário para criação de GTFS (PT-BR)
     ├── GUIA_EDICAO_GTFS.md  # guia do usuário para edição de GTFS (PT-BR)
     ├── METHODS.md           # embasamento teórico do método de alocação
+    ├── MODELO_PARADAS_CSV.md # documentação do modelo de importação de paradas em CSV
+    ├── modelo_paradas.csv   # arquivo modelo de exemplo para importação em lote
     ├── metadata.txt
     ├── icon.png
     └── resources.py / resources.qrc

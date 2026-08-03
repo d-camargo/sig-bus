@@ -25,10 +25,10 @@ Um checklist ("**falta: ...**") é exibido logo abaixo das barras de progresso, 
 O assistente guia o usuário página por página (uma linha de cada vez) através de uma interface baseada em abas dinâmicas:
 
 ### 1. Configuração Inicial (Agência)
-* **Objetivo:** Cadastrar as informações da operadora de transporte.
-* **Campos Obrigatórios:** Nome da agência (`agency_name`), URL (`agency_url`) e Fuso Horário (`agency_timezone`).
-* **Campos Opcionais:** Idioma (`agency_lang`) e Telefone (`agency_phone`).
-* **Nota:** Essas informações são salvas globalmente e configuradas uma única vez ao iniciar a criação do feed.
+* **Objetivo:** Cadastrar as informações da operadora de transporte e a localização geográfica da agência.
+* **Campos Obrigatórios:** Nome da agência (`agency_name`), URL (`agency_url`), Fuso Horário (`agency_timezone`), Município (`build_city`) e UF (`build_state`).
+* **Campos Opcionais:** Idioma (`agency_lang`), Telefone (`agency_phone`) e País (`build_country`, fixo em "Brasil").
+* **Nota:** O Município e a UF são salvos na tabela interna `sig_bus_config` e definem o contexto e o bounding box (`viewbox`) para restringir a geocodificação de paradas.
 
 ### 2. Nova Linha: Identidade
 * **Objetivo:** Definir os dados básicos de identificação da linha de ônibus/rota.
@@ -36,10 +36,15 @@ O assistente guia o usuário página por página (uma linha de cada vez) atravé
 
 ### 3. Paradas (Endereços e Geocodificação)
 * **Objetivo:** Informar onde ficam localizados os pontos de embarque/desembarque da linha.
-* **Geocodificação Automática (Nominatim):** O usuário digita os endereços textuais e clica em **Geocodificar**. O plugin consulta o serviço público do Nominatim (OpenStreetMap) de forma síncrona e preenche a latitude e longitude de cada ponto.
-* **Deduplicação de Paradas:** Se o endereço normalizado (espaços colapsados e minúsculas) coincidir com alguma parada já salva no GeoPackage, o assistente exibe a opção `"parada já existe — reaproveitar"` ativada por padrão, evitando duplicar registros.
+* **Padrão de Endereço:** Os endereços devem ser inseridos no padrão `Logradouro, Número - Bairro` (ex.: `Rua Giuseppe Fórmolo, 210 - Centro`). O bairro é opcional. O município e a UF vêm automaticamente da configuração da agência.
+* **Geocodificação Automática Estruturada (Nominatim):** O usuário digita os endereços textuais e clica em **Geocodificar**. O plugin executa uma busca síncrona estruturada por contexto no Nominatim em cascata (com número, sem número, e busca livre), delimitada pela caixa envolvente do município.
+* **Status Visual das Paradas:** Os campos visuais de latitude e longitude foram suprimidos da tabela para simplificar a interface, sendo substituídos por rótulos visuais de status (`✓ localizado`, `✗ não encontrado`, `📍 marcado no mapa`).
+* **Botão "Marcar no mapa":** Para cada parada (especialmente em linhas rurais sem endereço textual), o usuário pode clicar em **Marcar no mapa**. O plugin oculta temporariamente o assistente, ativa a ferramenta interativa `PickStopPointTool` e permite selecionar o ponto com um clique no canvas do QGIS. Se o projeto não possuir uma camada base, uma camada raster OpenStreetMap é adicionada automaticamente via `ensure_osm_basemap`.
+* **Importação e Exportação por CSV em Lote:**
+  * **Baixar modelo CSV:** Gera o modelo `modelo_paradas.csv` (formato `;`, UTF-8 com BOM) para preenchimento no Excel/LibreOffice.
+  * **Importar CSV:** Permite carregar um lote de paradas de um arquivo CSV, suportando tanto endereços no padrão quanto coordenadas lat/lon diretas (linhas rurais).
+* **Deduplicação de Paradas:** Se o endereço normalizado coincidir com alguma parada já salva no GeoPackage, o assistente exibe a opção `"parada já existe — reaproveitar"` ativada por padrão, evitando duplicar registros.
 * **Ajuste Manual e no Mapa:**
-  * Caso um endereço não seja encontrado pela geocodificação, o usuário pode digitar manualmente a latitude e a longitude.
   * Ao clicar em "Confirmar e avançar", os pontos são carregados temporariamente em uma camada do QGIS (`stops_temp`) e o plugin ativa a ferramenta nativa de edição de vértices para permitir que os pontos sejam arrastados e reposicionados no mapa.
 
 ### 4. Sequência de Paradas
@@ -76,9 +81,9 @@ Um dos grandes diferenciais do SIG-Bus na criação do GTFS é a geração do tr
 ## Passo a Passo: Fluxo Feliz Completo
 
 1. **Acessar o assistente:** Clique na aba **Construir GTFS**.
-2. **Definir Agência:** Preencha os campos obrigatórios da operadora na página "Configuração Inicial" e clique em **Salvar e continuar**.
+2. **Definir Agência:** Preencha os campos obrigatórios da operadora (incluindo Município e UF) na página "Configuração Inicial" e clique em **Salvar e continuar**.
 3. **Identificar a Linha:** Insira o Nome Curto (ex: "105"), Nome Longo e selecione o Tipo de Rota. Clique em **Avançar**.
-4. **Adicionar Paradas:** Digite o nome/endereço de cada ponto de parada, clique em **Geocodificar** para encontrar as coordenadas automaticamente. Insira ou ajuste coordenadas manualmente se necessário.
+4. **Adicionar Paradas:** Digite os endereços no padrão (ou importe um lote via **Importar CSV** / `modelo_paradas.csv`), clique em **Geocodificar** para encontrar as coordenadas automaticamente. Para paradas rurais ou sem endereço, use o botão **Marcar no mapa** para indicar a posição diretamente no canvas.
 5. **Confirmar no Mapa:** Clique em **Confirmar e avançar**. As paradas temporárias serão carregadas no canvas do QGIS. Use a ferramenta de vértices para arrastar as paradas para a posição correta na via, se necessário.
 6. **Ordenar Paradas:** Avance para a página "Sequência" (as coordenadas editadas no canvas serão salvas automaticamente). Ordene os pontos de parada usando os botões de mover para cima/baixo.
 7. **Definir Horários:** Configure ou selecione o calendário de operação, defina a hora de início, hora de término e o intervalo (ex: a cada 20 minutos). Clique em **Avançar**.

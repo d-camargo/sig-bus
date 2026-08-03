@@ -42,6 +42,7 @@ from qgis.PyQt.QtWidgets import (
     QPushButton,
     QMessageBox,
     QComboBox,
+    QInputDialog,
 )
 from qgis.core import (
     Qgis,
@@ -93,6 +94,14 @@ from . import gtfs_schema
 from .gtfs_export import GtfsExporter
 from .gtfs_validator import GtfsValidator
 from .gtfs_builder_core import compute_progress
+from .address_format import ADDRESS_PATTERN_HINT, ADDRESS_PLACEHOLDER
+
+# Folhas de estilo padronizadas para o assistente (Fase 8, passo 72, decisão 42)
+QSS_INPUT = "border: 1px solid #ccc; border-radius: 4px; padding: 4px; background-color: #ffffff; color: #2d3748;"
+QSS_CARD = "background-color: #fcfcfc; color: #2d3748; border: 1px solid #e0e0e0; border-radius: 6px; padding: 6px; margin-bottom: 4px;"
+QSS_HINT = "color: #4a5568; background-color: transparent; margin-bottom: 8px;"
+QSS_STATUS_OK = "color: #276749; background-color: transparent; font-weight: bold; border: none;"
+QSS_STATUS_ERR = "color: #e53e3e; background-color: transparent; font-style: italic; border: none;"
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 
@@ -1021,18 +1030,38 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.input_agency_timezone = QtWidgets.QLineEdit()
         self.input_agency_lang = QtWidgets.QLineEdit()
         self.input_agency_phone = QtWidgets.QLineEdit()
-        
+        self.input_city = QtWidgets.QLineEdit()
+        self.input_state = QtWidgets.QLineEdit()
+        self.input_country = QtWidgets.QLineEdit()
+
+        self.input_agency_name.setStyleSheet(QSS_INPUT)
+        self.input_agency_url.setStyleSheet(QSS_INPUT)
+        self.input_agency_timezone.setStyleSheet(QSS_INPUT)
+        self.input_agency_lang.setStyleSheet(QSS_INPUT)
+        self.input_agency_phone.setStyleSheet(QSS_INPUT)
+        self.input_city.setStyleSheet(QSS_INPUT)
+        self.input_state.setStyleSheet(QSS_INPUT)
+        self.input_country.setStyleSheet(QSS_INPUT)
+
         self.input_agency_name.setPlaceholderText("Nome da Agência (ex: Transporte Urbano)")
         self.input_agency_url.setPlaceholderText("URL da Agência (ex: http://www.transporte.com)")
         self.input_agency_timezone.setPlaceholderText("Fuso Horário (ex: America/Sao_Paulo)")
         self.input_agency_lang.setPlaceholderText("Idioma (opcional, ex: pt)")
         self.input_agency_phone.setPlaceholderText("Telefone (opcional, ex: 11 3456-7890)")
-        
+        self.input_city.setPlaceholderText("Caxias do Sul")
+        self.input_state.setPlaceholderText("RS")
+        self.input_state.setMaxLength(2)
+        self.input_country.setText("Brasil")
+        self.input_country.setReadOnly(True)
+
         form_layout.addRow("Nome da Agência *:", self.input_agency_name)
         form_layout.addRow("URL da Agência *:", self.input_agency_url)
         form_layout.addRow("Fuso Horário *:", self.input_agency_timezone)
         form_layout.addRow("Idioma:", self.input_agency_lang)
         form_layout.addRow("Telefone:", self.input_agency_phone)
+        form_layout.addRow("Município *:", self.input_city)
+        form_layout.addRow("UF *:", self.input_state)
+        form_layout.addRow("País:", self.input_country)
         
         layout_config.addLayout(form_layout)
         
@@ -1053,6 +1082,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.input_route_short_name = QtWidgets.QLineEdit()
         self.input_route_long_name = QtWidgets.QLineEdit()
         self.combo_route_type = QtWidgets.QComboBox()
+        
+        self.input_route_short_name.setStyleSheet(QSS_INPUT)
+        self.input_route_long_name.setStyleSheet(QSS_INPUT)
+        self.combo_route_type.setStyleSheet(QSS_INPUT)
         
         self.input_route_short_name.setPlaceholderText("Nome Curto (ex: 101, CIRCULAR)")
         self.input_route_long_name.setPlaceholderText("Nome Longo (ex: Centro / Bairro)")
@@ -1089,17 +1122,21 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         title_label.setStyleSheet("font-size: 14px; margin-bottom: 4px;")
         layout_paradas.addWidget(title_label)
         
-        desc_label = QLabel("Insira os endereços das paradas na ordem em que ocorrem na linha. Clique em 'Geocodificar' para obter lat/lon.")
-        desc_label.setStyleSheet("color: #666; margin-bottom: 8px;")
+        desc_label = QLabel("Insira os endereços das paradas na ordem em que ocorrem na linha.")
+        desc_label.setStyleSheet(QSS_HINT)
         layout_paradas.addWidget(desc_label)
+        
+        hint_label = QLabel(ADDRESS_PATTERN_HINT)
+        hint_label.setStyleSheet(QSS_HINT)
+        layout_paradas.addWidget(hint_label)
         
         # Scroll Area para as paradas
         self.scroll_paradas = QtWidgets.QScrollArea()
         self.scroll_paradas.setWidgetResizable(True)
-        self.scroll_paradas.setStyleSheet("border: 1px solid #ddd; border-radius: 4px; background-color: white;")
+        self.scroll_paradas.setStyleSheet(QSS_CARD)
         
         self.scroll_content_paradas = QWidget()
-        self.scroll_content_paradas.setStyleSheet("background-color: white;")
+        self.scroll_content_paradas.setStyleSheet(QSS_CARD)
         self.layout_scroll_paradas = QVBoxLayout(self.scroll_content_paradas)
         from qgis.PyQt.QtCore import Qt
         self.layout_scroll_paradas.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -1111,6 +1148,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         layout_botoes_paradas = QtWidgets.QHBoxLayout()
         self.button_add_stop = QtWidgets.QPushButton("Adicionar Endereço")
         self.button_geocode = QtWidgets.QPushButton("Geocodificar")
+        self.button_download_csv_template = QtWidgets.QPushButton("Baixar modelo CSV")
+        self.button_import_csv = QtWidgets.QPushButton("Importar CSV")
         
         self.button_add_stop.setStyleSheet("""
             QPushButton {
@@ -1123,6 +1162,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
             QPushButton:hover {
                 background-color: #2c5282;
+                color: white;
             }
         """)
         
@@ -1137,11 +1177,44 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
             QPushButton:hover {
                 background-color: #2c7a7b;
+                color: white;
+            }
+        """)
+
+        self.button_download_csv_template.setStyleSheet("""
+            QPushButton {
+                background-color: #4a5568;
+                color: white;
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #2d3748;
+                color: white;
+            }
+        """)
+
+        self.button_import_csv.setStyleSheet("""
+            QPushButton {
+                background-color: #805ad5;
+                color: white;
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #6b46c1;
+                color: white;
             }
         """)
         
         layout_botoes_paradas.addWidget(self.button_add_stop)
         layout_botoes_paradas.addWidget(self.button_geocode)
+        layout_botoes_paradas.addWidget(self.button_download_csv_template)
+        layout_botoes_paradas.addWidget(self.button_import_csv)
         layout_paradas.addLayout(layout_botoes_paradas)
         
         self.stacked_build.addWidget(self.page_paradas)
@@ -1149,9 +1222,12 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         # Conexões
         self.button_add_stop.clicked.connect(self._add_stop_row)
         self.button_geocode.clicked.connect(self._geocode_stops)
+        self.button_download_csv_template.clicked.connect(self._download_csv_template)
+        self.button_import_csv.clicked.connect(self._import_stops_csv)
         
         # Mantém uma lista para controlar os widgets das linhas
         self.stop_rows = []
+        self._pick_tool = None
         self.sequenced_stops = []
         self.build_direction_id = '0'
         
@@ -1163,7 +1239,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         
         # Label/Instruções
         label_instructions = QLabel("Organize as paradas na sequência correta de atendimento da linha. Você pode arrastá-las na lista ou usar os botões:")
-        label_instructions.setStyleSheet("font-weight: bold; margin-bottom: 8px;")
+        label_instructions.setStyleSheet("font-weight: bold; " + QSS_HINT)
         layout_sequencia.addWidget(label_instructions)
         
         # QListWidget para reordenação
@@ -1178,6 +1254,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 border-radius: 6px;
                 padding: 5px;
                 background-color: #ffffff;
+                color: #2d3748;
             }
             QListWidget::item {
                 border: 1px solid #e2e8f0;
@@ -1185,6 +1262,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 padding: 8px;
                 margin-bottom: 4px;
                 background-color: #f7fafc;
+                color: #2d3748;
             }
             QListWidget::item:selected {
                 background-color: #ebf8ff;
@@ -1193,6 +1271,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
             QListWidget::item:hover {
                 background-color: #edf2f7;
+                color: #2d3748;
             }
         """)
         layout_sequencia.addWidget(self.list_widget_sequencia)
@@ -1213,6 +1292,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
             QPushButton:hover {
                 background-color: #2c5282;
+                color: white;
             }
             QPushButton:disabled {
                 background-color: #cbd5e0;
@@ -1352,6 +1432,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.label_revisao_summary.setStyleSheet("""
             QLabel {
                 background-color: #f7fafc;
+                color: #2d3748;
                 border: 1px solid #e2e8f0;
                 border-radius: 6px;
                 padding: 12px;
@@ -1377,6 +1458,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
             QPushButton:hover {
                 background-color: #2c5282;
+                color: white;
             }
             QPushButton:disabled {
                 background-color: #cbd5e0;
@@ -2559,20 +2641,16 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 return
             
             paradas = []
+            sem_coordenada = []
             for row_data in self.stop_rows:
-                address = row_data["input_address"].text().strip()
+                address = self._stop_row_name(row_data)
                 if not address:
                     continue
-                lat_val = row_data["input_lat"].text().strip()
-                lon_val = row_data["input_lon"].text().strip()
-                try:
-                    lat = float(lat_val) if lat_val else 0.0
-                except ValueError:
-                    lat = 0.0
-                try:
-                    lon = float(lon_val) if lon_val else 0.0
-                except ValueError:
-                    lon = 0.0
+                lat = row_data["lat"]
+                lon = row_data["lon"]
+                if lat is None or lon is None:
+                    sem_coordenada.append(address)
+                    continue
 
                 stop_id = None
                 if row_data["checkbox_reuse"].isChecked() and row_data["stop_id"]:
@@ -2585,6 +2663,16 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     "stop_lat": lat,
                     "stop_lon": lon
                 })
+
+            if sem_coordenada:
+                QMessageBox.warning(
+                    self,
+                    "Parada sem coordenada",
+                    "Estas paradas ainda não têm coordenada — geocodifique o "
+                    "endereço ou marque o ponto no mapa antes de avançar:\n\n- "
+                    + "\n- ".join(sem_coordenada)
+                )
+                return
 
             if not paradas:
                 QMessageBox.warning(self, "Aviso", "Por favor, adicione pelo menos uma parada válida.")
@@ -2630,19 +2718,13 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self.list_widget_sequencia.clear()
             from sig_bus.gtfs_builder_core import find_existing_stop
             for row_data in self.stop_rows:
-                address = row_data["input_address"].text().strip()
+                address = self._stop_row_name(row_data)
                 if not address:
                     continue
-                lat_val = row_data["input_lat"].text().strip()
-                lon_val = row_data["input_lon"].text().strip()
-                try:
-                    lat = float(lat_val) if lat_val else 0.0
-                except ValueError:
-                    lat = 0.0
-                try:
-                    lon = float(lon_val) if lon_val else 0.0
-                except ValueError:
-                    lon = 0.0
+                lat = row_data["lat"]
+                lon = row_data["lon"]
+                if lat is None or lon is None:
+                    continue
 
                 stop_id = row_data["stop_id"]
                 if not stop_id:
@@ -2897,17 +2979,25 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         except Exception:
             pass
 
+        from sig_bus.gtfs_builder_core import get_config
+        self.input_city.setText(get_config(gpkg_path, "build_city", ""))
+        self.input_state.setText(get_config(gpkg_path, "build_state", ""))
+        self.input_country.setText(get_config(gpkg_path, "build_country", "Brasil"))
+
     def _on_save_agency_clicked(self):
         name = self.input_agency_name.text().strip()
         url = self.input_agency_url.text().strip()
         timezone = self.input_agency_timezone.text().strip()
         lang = self.input_agency_lang.text().strip()
         phone = self.input_agency_phone.text().strip()
-        
-        if not name or not url or not timezone:
+        city = self.input_city.text().strip()
+        state = self.input_state.text().strip()
+        country = self.input_country.text().strip()
+
+        if not name or not url or not timezone or not city or not state:
             QMessageBox.warning(self, "Campos obrigatórios", "Por favor, preencha todos os campos obrigatórios (*).")
             return
-            
+
         agency_data = {
             "agency_name": name,
             "agency_url": url,
@@ -2915,10 +3005,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             "agency_lang": lang if lang else None,
             "agency_phone": phone if phone else None
         }
-        
+
         gpkg_path = self._working_copy.edit_path
-        
-        from sig_bus.gtfs_builder_core import save_route
+
+        from sig_bus.gtfs_builder_core import save_route, set_config
         try:
             save_route(
                 gpkg_path=gpkg_path,
@@ -2928,6 +3018,9 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 service=None,
                 frequencia=None
             )
+            set_config(gpkg_path, "build_city", city)
+            set_config(gpkg_path, "build_state", state)
+            set_config(gpkg_path, "build_country", country)
             self._update_build_progress()
             self.stacked_build.setCurrentIndex(1)
             self._update_build_nav_buttons()
@@ -3053,8 +3146,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         for row in self.stop_rows:
             stops_data.append({
                 "address": row["input_address"].text().strip(),
-                "lat": row["input_lat"].text().strip(),
-                "lon": row["input_lon"].text().strip(),
+                "lat": row["lat"],
+                "lon": row["lon"],
                 "reuse": row["checkbox_reuse"].isChecked(),
                 "reuse_visible": row["checkbox_reuse"].isVisible(),
                 "status": row["label_status"].text(),
@@ -3070,14 +3163,16 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self._add_stop_row()
             new_row = self.stop_rows[-1]
             new_row["input_address"].setText(data["address"])
-            new_row["input_lat"].setText(data["lat"])
-            new_row["input_lon"].setText(data["lon"])
+            new_row["lat"] = data["lat"]
+            new_row["lon"] = data["lon"]
             new_row["checkbox_reuse"].setChecked(data["reuse"])
             if data["reuse_visible"]:
                 new_row["checkbox_reuse"].show()
             else:
                 new_row["checkbox_reuse"].hide()
-            new_row["label_status"].setText(data["status"])
+            self._set_stop_row_status(
+                new_row, data["status"], data["lat"] is not None and data["lon"] is not None
+            )
             new_row["stop_id"] = data["stop_id"]
 
         # 4. Reseta os estados dos botões da revisão
@@ -3231,39 +3326,17 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         frame.setFrameShadow(QtWidgets.QFrame.Shadow.Raised)
         
         # Set a subtle border/padding stylesheet so it looks beautiful and grouped
-        frame.setStyleSheet("""
-            QFrame {
-                background-color: #fcfcfc;
-                border: 1px solid #e0e0e0;
-                border-radius: 6px;
-                padding: 6px;
-                margin-bottom: 4px;
-            }
-        """)
+        frame.setStyleSheet(QSS_CARD)
         
         row_layout = QtWidgets.QHBoxLayout(frame)
         row_layout.setContentsMargins(4, 4, 4, 4)
         
         # Address input
         input_address = QtWidgets.QLineEdit()
-        input_address.setPlaceholderText("Endereço da parada (ex: Av. Paulista, 1000)")
-        input_address.setStyleSheet("border: 1px solid #ccc; border-radius: 4px; padding: 4px;")
+        input_address.setPlaceholderText(ADDRESS_PLACEHOLDER)
+        input_address.setStyleSheet(QSS_INPUT)
         row_layout.addWidget(input_address, stretch=4)
-        
-        # Latitude input
-        input_lat = QtWidgets.QLineEdit()
-        input_lat.setPlaceholderText("Latitude")
-        input_lat.setFixedWidth(90)
-        input_lat.setStyleSheet("border: 1px solid #ccc; border-radius: 4px; padding: 4px;")
-        row_layout.addWidget(input_lat)
-        
-        # Longitude input
-        input_lon = QtWidgets.QLineEdit()
-        input_lon.setPlaceholderText("Longitude")
-        input_lon.setFixedWidth(90)
-        input_lon.setStyleSheet("border: 1px solid #ccc; border-radius: 4px; padding: 4px;")
-        row_layout.addWidget(input_lon)
-        
+
         # Checkbox for reuse
         checkbox_reuse = QtWidgets.QCheckBox("parada já existe — reaproveitar")
         checkbox_reuse.setStyleSheet("color: #2b6cb0; font-weight: bold; border: none; background: transparent;")
@@ -3272,9 +3345,26 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         
         # Status Label
         label_status = QtWidgets.QLabel("")
-        label_status.setStyleSheet("color: #e53e3e; font-style: italic; border: none; background: transparent;")
+        label_status.setStyleSheet(QSS_STATUS_ERR)
         row_layout.addWidget(label_status)
         
+        # Marcar no mapa (decisão 49): cadastra a parada só pelo canvas
+        button_pick = QtWidgets.QPushButton("Marcar no mapa")
+        button_pick.setStyleSheet("""
+            QPushButton {
+                background-color: #319795;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QPushButton:hover {
+                background-color: #2c7a7b;
+                color: white;
+            }
+        """)
+        row_layout.addWidget(button_pick)
+
         # Remove button
         button_remove = QtWidgets.QPushButton("Remover")
         button_remove.setStyleSheet("""
@@ -3287,6 +3377,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
             QPushButton:hover {
                 background-color: #c53030;
+                color: white;
             }
         """)
         row_layout.addWidget(button_remove)
@@ -3297,18 +3388,102 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         row_data = {
             "frame": frame,
             "input_address": input_address,
-            "input_lat": input_lat,
-            "input_lon": input_lon,
+            "lat": None,
+            "lon": None,
             "checkbox_reuse": checkbox_reuse,
             "label_status": label_status,
             "stop_id": None
         }
         
         # Connections
+        button_pick.clicked.connect(lambda: self._pick_stop_on_map(row_data))
         button_remove.clicked.connect(lambda: self._remove_stop_row(row_data))
         input_address.editingFinished.connect(lambda: self._check_existing_stop_for_row(row_data))
         
         self.stop_rows.append(row_data)
+
+    def _set_stop_row_status(self, row_data, texto, ok):
+        """Mostra o status legível da parada ("✓ localizado", "✗ não encontrado",
+        "📍 marcado no mapa") no lugar dos antigos campos de lat/lon."""
+        row_data["label_status"].setText(texto)
+        row_data["label_status"].setStyleSheet(QSS_STATUS_OK if ok else QSS_STATUS_ERR)
+
+    def _stop_row_name(self, row_data):
+        """Nome da parada da linha: o endereço digitado ou, quando ela foi
+        cadastrada só pelo canvas (linha rural, decisão 49), um rótulo com a
+        coordenada marcada. Vazio = linha sem endereço e sem coordenada."""
+        address = row_data["input_address"].text().strip()
+        if address:
+            return address
+        lat = row_data["lat"]
+        lon = row_data["lon"]
+        if lat is None or lon is None:
+            return ""
+        return "Parada (%.5f, %.5f)" % (lat, lon)
+
+    def _pick_stop_on_map(self, row_data):
+        """Marca a parada clicando no canvas do QGIS (decisões 49 e 50).
+
+        O diálogo é modal (`SigBus.py`), então o canvas só recebe o clique com
+        ele escondido: `hide()` → ferramenta ativa → clique → `show()`. A
+        ferramenta de mapa anterior é sempre restaurada, inclusive quando o
+        usuário cancela com ESC ou com o botão direito.
+        """
+        from .map_tools import PickStopPointTool, ensure_osm_basemap
+
+        canvas = iface.mapCanvas()
+        ensure_osm_basemap()
+        previous_tool = canvas.mapTool()
+        tool = None
+
+        def finish(restore_tool=True):
+            # Idempotente: clique, ESC, botão direito e a própria troca de
+            # ferramenta passam todos por aqui.
+            if self._pick_tool is not tool:
+                return
+            self._pick_tool = None
+            try:
+                canvas.keyPressed.disconnect(on_key)
+            except TypeError:
+                pass
+            if restore_tool and canvas.mapTool() is tool:
+                if previous_tool is not None:
+                    canvas.setMapTool(previous_tool)
+                else:
+                    canvas.unsetMapTool(tool)
+            self.show()
+            self.raise_()
+            self.activateWindow()
+
+        def on_pick(lon, lat):
+            # A ferramenta já entrega a coordenada em EPSG:4326.
+            row_data["lat"] = lat
+            row_data["lon"] = lon
+            self._set_stop_row_status(row_data, "📍 marcado no mapa", True)
+            finish()
+
+        def on_click(point, button):
+            # Botão direito cancela: a ferramenta não chama o callback nesse
+            # caso, só devolvemos o diálogo e a ferramenta anterior.
+            if button == Qt.MouseButton.RightButton:
+                finish()
+
+        def on_key(event):
+            if event.key() == Qt.Key.Key_Escape:
+                finish()
+
+        tool = PickStopPointTool(canvas, on_pick)
+        tool.canvasClicked.connect(on_click)
+        # Outra ferramenta assumindo o canvas também devolve o diálogo.
+        tool.deactivated.connect(lambda: finish(restore_tool=False))
+        canvas.keyPressed.connect(on_key)
+        self._pick_tool = tool
+        canvas.setMapTool(tool)
+        iface.messageBar().pushMessage(
+            "SIG-Bus",
+            "Clique no mapa para posicionar a parada — ESC cancela",
+            level=Qgis.MessageLevel.Info, duration=8)
+        self.hide()
 
     def _remove_stop_row(self, row_data):
         self.layout_scroll_paradas.removeWidget(row_data["frame"])
@@ -3318,27 +3493,111 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
     def _geocode_stops(self):
         from sig_bus.geocoding import NominatimGeocoder
-        from sig_bus.gtfs_builder_core import find_existing_stop
-        
+        from sig_bus.gtfs_builder_core import find_existing_stop, get_config, set_config
+
         gpkg_path = self._working_copy.edit_path if (self._working_copy and self._working_copy.edit_path) else None
+
+        city = self.input_city.text().strip() if hasattr(self, "input_city") and self.input_city.text() else ""
+        state = self.input_state.text().strip() if hasattr(self, "input_state") and self.input_state.text() else ""
+        country = self.input_country.text().strip() if hasattr(self, "input_country") and self.input_country.text() else ""
+
+        if gpkg_path:
+            if not city:
+                city = get_config(gpkg_path, "build_city", "") or ""
+            if not state:
+                state = get_config(gpkg_path, "build_state", "") or ""
+            if not country:
+                country = get_config(gpkg_path, "build_country", "Brasil") or "Brasil"
+        if not country:
+            country = "Brasil"
+
+        if not city or not state:
+            QMessageBox.warning(self, "Município não configurado", "Configure o município na página da agência antes de geocodificar")
+            if iface and iface.messageBar():
+                iface.messageBar().pushMessage(
+                    "Geocodificação",
+                    "Configure o município na página da agência antes de geocodificar",
+                    level=Qgis.MessageLevel.Warning,
+                    duration=5
+                )
+            return
+
+        viewbox = None
+        if gpkg_path:
+            viewbox = get_config(gpkg_path, "build_city_viewbox", None)
+
+        if not viewbox:
+            viewbox = NominatimGeocoder.city_bbox(city, state)
+            if viewbox and gpkg_path:
+                set_config(gpkg_path, "build_city_viewbox", viewbox)
+
+        contexto = {
+            "city": city,
+            "state": state,
+            "country": country,
+            "viewbox": viewbox,
+        }
+
+        localizadas = 0
+        pendentes = 0
 
         for row_data in self.stop_rows:
             address = row_data["input_address"].text().strip()
             if not address:
                 continue
-            
-            # Call geocoder
-            results = NominatimGeocoder.geocode(address)
-            if results:
-                # Take the first candidate
+
+            results = NominatimGeocoder.geocode(address, contexto)
+            if not results:
+                row_data["lat"] = None
+                row_data["lon"] = None
+                self._set_stop_row_status(row_data, "✗ não encontrado", False)
+                pendentes += 1
+            elif len(results) == 1:
                 candidate = results[0]
-                lat = str(candidate.get("lat", ""))
-                lon = str(candidate.get("lon", ""))
-                row_data["input_lat"].setText(lat)
-                row_data["input_lon"].setText(lon)
-                row_data["label_status"].setText("")
+                try:
+                    row_data["lat"] = float(candidate.get("lat"))
+                    row_data["lon"] = float(candidate.get("lon"))
+                except (TypeError, ValueError):
+                    row_data["lat"] = None
+                    row_data["lon"] = None
+
+                if row_data["lat"] is None or row_data["lon"] is None:
+                    self._set_stop_row_status(row_data, "✗ não encontrado", False)
+                    pendentes += 1
+                else:
+                    self._set_stop_row_status(row_data, "✓ localizado", True)
+                    localizadas += 1
             else:
-                row_data["label_status"].setText("não encontrado")
+                items = [c.get("display_name", str(c)) for c in results]
+                item, ok = QInputDialog.getItem(
+                    self,
+                    "Selecionar Endereço",
+                    f"Múltiplos candidatos encontrados para '{address}':",
+                    items,
+                    0,
+                    False
+                )
+                if ok and item:
+                    try:
+                        idx = items.index(item)
+                        candidate = results[idx]
+                        row_data["lat"] = float(candidate.get("lat"))
+                        row_data["lon"] = float(candidate.get("lon"))
+                    except (ValueError, TypeError, IndexError):
+                        row_data["lat"] = None
+                        row_data["lon"] = None
+
+                    if row_data["lat"] is None or row_data["lon"] is None:
+                        self._set_stop_row_status(row_data, "✗ não encontrado", False)
+                        pendentes += 1
+                    else:
+                        self._set_stop_row_status(row_data, "✓ localizado", True)
+                        localizadas += 1
+                else:
+                    row_data["lat"] = None
+                    row_data["lon"] = None
+                    self._set_stop_row_status(row_data, "✗ não encontrado", False)
+                    pendentes += 1
 
             # Check existing stop too
             if gpkg_path:
@@ -3351,6 +3610,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     row_data["stop_id"] = None
                     row_data["checkbox_reuse"].hide()
                     row_data["checkbox_reuse"].setChecked(False)
+
+        if iface and iface.messageBar():
+            msg = f"Geocodificação concluída: {localizadas} parada(s) localizada(s), {pendentes} pendente(s)."
+            iface.messageBar().pushMessage("Geocodificação", msg, level=Qgis.MessageLevel.Info, duration=8)
 
     def _check_existing_stop_for_row(self, row_data):
         address = row_data["input_address"].text().strip()
@@ -3373,6 +3636,88 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             row_data["stop_id"] = None
             row_data["checkbox_reuse"].hide()
             row_data["checkbox_reuse"].setChecked(False)
+
+    def _download_csv_template(self):
+        """Baixa o arquivo modelo de CSV em lote de paradas (decisão 43 / passo 85)."""
+        from .stops_csv import write_template
+        caminho, _ = QFileDialog.getSaveFileName(
+            self,
+            "Salvar modelo CSV de paradas",
+            "modelo_paradas.csv",
+            "Arquivos CSV (*.csv)"
+        )
+        if caminho:
+            write_template(caminho)
+            QMessageBox.information(
+                self,
+                "Modelo CSV",
+                "Modelo de CSV salvo com sucesso em:\n{}".format(caminho)
+            )
+
+    def _import_stops_csv(self):
+        """Importa paradas em lote a partir de um arquivo CSV (decisão 43 / passo 85)."""
+        from .stops_csv import parse_stops_csv
+        caminho, _ = QFileDialog.getOpenFileName(
+            self,
+            "Importar CSV de paradas",
+            "",
+            "Arquivos CSV (*.csv)"
+        )
+        if not caminho:
+            return
+
+        linhas_ok, erros = parse_stops_csv(caminho)
+        if erros:
+            msg_erros = "\n".join("- {}".format(err) for err in erros[:10])
+            if len(erros) > 10:
+                msg_erros += "\n... e mais {} erro(s).".format(len(erros) - 10)
+            QMessageBox.warning(
+                self,
+                "Erros no CSV",
+                "Ocorreram erros ao ler o CSV de paradas:\n\n" + msg_erros
+            )
+
+        if not linhas_ok:
+            return
+
+        has_existing_content = False
+        for r in self.stop_rows:
+            if r["input_address"].text().strip() or r["lat"] is not None or r["lon"] is not None:
+                has_existing_content = True
+                break
+
+        if has_existing_content:
+            reply = QMessageBox.question(
+                self,
+                "Importar CSV",
+                "Já existem paradas listadas.\n\nDeseja substituir as paradas existentes?\n\nClique em 'Sim' para substituir ou 'Não' para acrescentar ao final.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
+            )
+            if reply == QMessageBox.StandardButton.Cancel:
+                return
+            elif reply == QMessageBox.StandardButton.Yes:
+                while self.stop_rows:
+                    self._remove_stop_row(self.stop_rows[0])
+
+        if len(self.stop_rows) == 1:
+            r = self.stop_rows[0]
+            if not r["input_address"].text().strip() and r["lat"] is None and r["lon"] is None:
+                self._remove_stop_row(r)
+
+        for item in linhas_ok:
+            self._add_stop_row()
+            row = self.stop_rows[-1]
+            endereco = item.get("endereco") or item.get("nome_parada") or ""
+            if endereco:
+                row["input_address"].setText(endereco)
+            lat = item.get("lat")
+            lon = item.get("lon")
+            if lat is not None and lon is not None:
+                row["lat"] = lat
+                row["lon"] = lon
+                self._set_stop_row_status(row, "✓ localizado", True)
+            elif endereco:
+                self._set_stop_row_status(row, "", False)
 
     def _on_edit_table_changed(self, table_name):
         self._update_stop_times_selectors()

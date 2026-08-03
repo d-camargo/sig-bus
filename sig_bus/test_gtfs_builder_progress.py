@@ -18,6 +18,8 @@ from sig_bus.gtfs_builder_core import (
     find_existing_stop,
     list_reusable_calendars,
     expand_frequency_to_stop_times,
+    set_config,
+    get_config,
 )
 from sig_bus import gtfs_schema
 from sig_bus import gtfs_reader
@@ -489,6 +491,44 @@ class TestGtfsBuilderProgress(unittest.TestCase):
         self.assertAlmostEqual(polyline[1].y(), -23.555)
         self.assertAlmostEqual(polyline[2].x(), -46.64)
         self.assertAlmostEqual(polyline[2].y(), -23.56)
+
+    def test_set_config(self):
+        self.wc.enter_empty(overwrite=True)
+        set_config(self.gpkg_path, "uf", "RS")
+        set_config(self.gpkg_path, "municipio", "Caxias do Sul")
+
+        conn = sqlite3.connect(self.gpkg_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT chave, valor FROM sig_bus_config ORDER BY chave")
+        rows = dict(cursor.fetchall())
+        conn.close()
+
+        self.assertEqual(rows.get("uf"), "RS")
+        self.assertEqual(rows.get("municipio"), "Caxias do Sul")
+
+        # Test update (override)
+        set_config(self.gpkg_path, "uf", "SC")
+        conn = sqlite3.connect(self.gpkg_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT valor FROM sig_bus_config WHERE chave = 'uf'")
+        val = cursor.fetchone()[0]
+        conn.close()
+        self.assertEqual(val, "SC")
+
+    def test_get_config(self):
+        self.wc.enter_empty(overwrite=True)
+        self.assertEqual(get_config(self.gpkg_path, "build_city", ""), "")
+        set_config(self.gpkg_path, "build_city", "Caxias do Sul")
+        self.assertEqual(get_config(self.gpkg_path, "build_city", ""), "Caxias do Sul")
+
+    def test_sig_bus_config_fora_da_exportacao(self):
+        """Trava a decisão 46: a tabela interna de configuração nunca pode
+        entrar na whitelist de tabelas exportadas para o .zip do GTFS."""
+        caminho = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'gtfs_export.py')
+        with open(caminho, encoding='utf-8') as handle:
+            fonte = handle.read()
+        self.assertNotIn('sig_bus_config', fonte)
 
 
 if __name__ == '__main__':

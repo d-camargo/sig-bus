@@ -643,3 +643,55 @@ def build_line_shape(gpkg_path, shape_id, paradas_em_ordem):
     # 4. Reconstrói a camada 'shapes' (linhas) a partir de 'shapes_point'
     reader = gtfs_reader.GtfsReader(gpkg_path)
     return reader.build_shapes_line(gpkg_path)
+
+
+def set_config(gpkg_path, chave, valor):
+    """
+    Grava ou atualiza uma chave de configuração (par chave/valor) no GeoPackage.
+    Cria a tabela 'sig_bus_config' caso ela não exista.
+    """
+    if not os.path.exists(gpkg_path):
+        raise FileNotFoundError(f"GeoPackage não encontrado: {gpkg_path}")
+
+    conn = sqlite3.connect(gpkg_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sig_bus_config (
+                chave TEXT PRIMARY KEY,
+                valor TEXT
+            )
+        """)
+        cursor.execute(
+            "INSERT OR REPLACE INTO sig_bus_config (chave, valor) VALUES (?, ?)",
+            (str(chave), str(valor) if valor is not None else None),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_config(gpkg_path, chave, default=None):
+    """
+    Lê uma chave de configuração do GeoPackage. Devolve 'default' se o
+    GeoPackage, a tabela 'sig_bus_config' ou a chave não existirem.
+    """
+    if not os.path.exists(gpkg_path):
+        return default
+
+    conn = sqlite3.connect(gpkg_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT name FROM sqlite_master WHERE type='table' AND name='sig_bus_config'
+        """)
+        if not cursor.fetchone():
+            return default
+        cursor.execute(
+            "SELECT valor FROM sig_bus_config WHERE chave = ?", (str(chave),)
+        )
+        row = cursor.fetchone()
+        return row[0] if row is not None else default
+    finally:
+        conn.close()
+

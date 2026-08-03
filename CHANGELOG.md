@@ -12,6 +12,24 @@ o **Diagrama de Blocos** (alocação de frota). Feed de referência nos testes: 
 
 ---
 
+## Não lançado — Construção de GTFS (Fase 8): Padrão de Endereço, Geocodificação e Lote
+
+Melhorias de legibilidade, usabilidade e robustez na aba **Construir GTFS**:
+
+- **Legibilidade e Temas (Decisão 42)**: padronização das folhas de estilo em constantes centralizadas em `SigBus_dialog.py` (`QSS_INPUT`, `QSS_CARD`, `QSS_HINT`, `QSS_STATUS_OK`, `QSS_STATUS_ERR`), garantindo contraste legível em temas claros e escuros (Night Mapping).
+- **Padrão de Endereço (Decisão 43)**: formato padronizado `Logradouro, Número - Bairro` via `sig_bus/address_format.py`, com Município e UF configurados globalmente na agência.
+- **Geocodificação Estruturada por Contexto (Decisões 44, 45 e 47)**: busca síncrona no Nominatim em cascata (com número, sem número, e busca livre), restrita ao contexto e à caixa envolvente (bounding box / `viewbox`) do Município configurado.
+- **Tabela Interna `sig_bus_config` (Decisão 46)**: persistência de metadados da agência e caixa envolvente do município no GeoPackage de trabalho, ignorada na exportação GTFS.
+- **Indicadores Visuais de Status e Supressão de Lat/Lon (Decisão 48)**: remoção dos campos visuais de latitude e longitude da tabela de paradas, substituídos por status visuais (`✓ localizado`, `✗ não encontrado`, `📍 marcado no mapa`).
+- **Marcação no Mapa (Decisões 49 e 50)**: botão **Marcar no mapa** ativa a ferramenta interativa `PickStopPointTool` (`map_tools.py`) para selecionar coordenadas com um clique no canvas (ideal para linhas rurais), com adição automática do raster OpenStreetMap (`ensure_osm_basemap`).
+- **Importação de Paradas em Lote via CSV (Decisão 43)**: suporte à importação por arquivo CSV (delimitador `;`, UTF-8 com BOM, `stops_csv.py`), com o modelo de exemplo `modelo_paradas.csv` e guia explicativo `MODELO_PARADAS_CSV.md`.
+
+### Arquivos tocados
+
+`SigBus_dialog.py`, `geocoding.py`, `gtfs_builder_core.py`, `address_format.py` (novo), `stops_csv.py` (novo), `map_tools.py` (novo), `modelo_paradas.csv` (novo), `MODELO_PARADAS_CSV.md` (novo), `GUIA_CONSTRUIR_GTFS.md`, `ARQUITETURA_CONSTRUIR_GTFS.md`, `README.md`, `CHANGELOG.md`.
+
+---
+
 ## Não lançado — Suporte a QGIS 4 / Qt 6
 
 O **QGIS 4 roda sobre Qt 6**, e o PyQt6 removeu os enums "curtos" do Qt 5
