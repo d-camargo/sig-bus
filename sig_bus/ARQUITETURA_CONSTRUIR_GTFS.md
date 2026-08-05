@@ -36,6 +36,11 @@ Estas escolhas guiam toda a arquitetura abaixo:
 38. **Decisão 48 (Supressão Visual de Lat/Lon e Indicadores de Status)**: Remoção dos campos de texto visíveis de lat/lon na tabela de paradas, substituídos por rótulos visuais de status (`✓ localizado`, `✗ não encontrado`, `📍 marcado no mapa`).
 39. **Decisão 49 (Ferramenta Interativa `PickStopPointTool` de Captura no Canvas)**: Módulo `map_tools.py` provendo ferramenta de mapa para seleção direta de pontos no canvas do QGIS para linhas rurais ou sem endereço.
 40. **Decisão 50 (Mapa de Fundo OSM Automático `ensure_osm_basemap`)**: Adição dinâmica de camada raster OpenStreetMap WMS/XYZ ao projeto para suporte visual durante a marcação de paradas no mapa.
+41. **Decisão 51 (Enum qualificado, não shim de versão)**: A correção de compatibilidade com o Qt6/QGIS 4 é sempre a forma qualificada do enum (`QNetworkReply.NetworkError.NoError`, `QgsVectorFileWriter.WriterError.NoError`, `QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwrite*`, `QgsBlockingNetworkRequest.ErrorCode.NoError`, `QgsVectorLayerDirector.Direction.DirectionBoth`, `QgsLayoutExporter.ExportResult.Success`) — todas existem tanto no PyQt5/QGIS 3 quanto no PyQt6/QGIS 4. Nada de `hasattr` nem de `if QT_VERSION`: um caminho de código só (decisão 35).
+42. **Decisão 52 (Falha de rede nunca é silenciosa)**: O `except Exception: return []` do `NominatimGeocoder._buscar` continua (a decisão 19 exige que a geocodificação nunca bloqueie o fluxo), mas cada tentativa agora registra no `QgsMessageLog`, sob a tag `SIG-Bus`, a URL consultada, o código de erro do reply e o número de candidatos — e, no ramo de exceção, o `traceback` completo. Sem isso, um erro de programação fica indistinguível de "endereço inexistente", que foi exatamente o que escondeu o bug do enum não qualificado no QGIS 4.
+43. **Decisão 53 (`bounded=1` é filtro de qualidade, não regra dura)**: Revisão da decisão 47. Se a cascata inteira com `viewbox`+`bounded=1` voltar vazia, o `geocode` repete a cascata sem esses dois parâmetros antes de declarar "não encontrado" — uma bbox errada, desatualizada ou de município homônimo deixa de zerar permanentemente o resultado. Na busca livre, o bairro é omitido quando é o próprio município (comparação normalizada), para não gerar `"…, Caxias do Sul, Caxias do Sul - RS, Brasil"`.
+44. **Decisão 54 (A bbox pertence ao par município/UF)**: `build_city_viewbox` é calculada e gravada junto de `build_city`/`build_state` ao salvar a agência, e invalidada assim que qualquer um dos dois mudar — nunca fica cacheada apontando para outra cidade. Falha de rede nesse ponto não bloqueia o salvamento da agência: no máximo o feed fica sem bbox.
+45. **Decisão 55 (A guarda de Qt6 cobre também rede e I/O)**: O teste-guarda `test_qt6_compat.py` (decisão 41) só varria `Qt.*` e alguns widgets, e por isso `QNetworkReply.NoError`, `QgsVectorFileWriter.NoError`, `QgsBlockingNetworkRequest.NoError` e `QgsVectorLayerDirector.DirectionBoth` sobreviveram à Fase 7. A guarda passa a listar essas classes e a varrer também os arquivos de teste (os mocks eram parte do problema) — uma linha de regex por classe, e é a única coisa que impede a regressão de voltar.
 
 ---
 
@@ -139,6 +144,8 @@ Provê a conversão de endereços em coordenadas geográficas.
     *   Usa a classe `QgsNetworkAccessManager` para executar a requisição de forma bloqueante síncrona dentro da lógica do assistente.
     *   Implementa o *throttle* de requisições de 1.0 segundo com `time.sleep` para cumprimento das políticas públicas do Nominatim.
     *   Tratamento de exceções robusto: qualquer falha na conexão, time out ou parsing retorna uma lista vazia `[]`, não quebrando o fluxo principal do usuário.
+    *   Toda tentativa é registrada no `QgsMessageLog` com a tag `SIG-Bus` (decisão 52): URL, código de erro e número de candidatos em nível `Info`; falha de rede, resposta vazia/inesperada e exceção (com `traceback`) em nível `Warning`. `[]` deixou de significar silêncio.
+    *   Cascata com `viewbox`+`bounded=1` primeiro; se ela inteira voltar vazia, a mesma cascata é repetida sem esses parâmetros (decisão 53) antes de devolver `[]`.
 
 ---
 

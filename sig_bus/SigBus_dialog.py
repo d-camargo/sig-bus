@@ -422,10 +422,11 @@ class _DemandLoadTask(QgsTask):
             opt = QgsVectorFileWriter.SaveVectorOptions()
             opt.driverName = 'GPKG'
             opt.layerName = 'dados_demanda'
-            opt.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
+            opt.actionOnExistingFile = (
+                QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteFile)
             res = QgsVectorFileWriter.writeAsVectorFormatV3(
                 vlayer, self.gpkg_path, QgsCoordinateTransformContext(), opt)
-            if res[0] != QgsVectorFileWriter.NoError:
+            if res[0] != QgsVectorFileWriter.WriterError.NoError:
                 self.error = "Falha ao gravar dados_demanda: {}".format(res[1])
                 return False
             self.setProgress(100)
@@ -2265,7 +2266,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             except OSError:
                 pass
 
-        if res == QgsLayoutExporter.Success:
+        if res == QgsLayoutExporter.ExportResult.Success:
             iface.messageBar().pushMessage(
                 'Info',
                 'Relatório exportado: {}'.format(save_path),
@@ -3008,7 +3009,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
         gpkg_path = self._working_copy.edit_path
 
-        from sig_bus.gtfs_builder_core import save_route, set_config
+        from sig_bus.gtfs_builder_core import save_route, set_config, get_config
+        from sig_bus.geocoding import NominatimGeocoder
         try:
             save_route(
                 gpkg_path=gpkg_path,
@@ -3018,9 +3020,23 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 service=None,
                 frequencia=None
             )
+            old_city = get_config(gpkg_path, "build_city", "")
+            old_state = get_config(gpkg_path, "build_state", "")
+            old_viewbox = get_config(gpkg_path, "build_city_viewbox", None)
+
             set_config(gpkg_path, "build_city", city)
             set_config(gpkg_path, "build_state", state)
             set_config(gpkg_path, "build_country", country)
+
+            if city != old_city or state != old_state or not old_viewbox:
+                # Falha de rede aqui nunca bloqueia o salvamento da agência: no
+                # máximo o feed fica sem bbox (a geocodificação segue sem ela).
+                try:
+                    new_viewbox = NominatimGeocoder.city_bbox(city, state)
+                except Exception:
+                    new_viewbox = None
+                set_config(gpkg_path, "build_city_viewbox", new_viewbox or "")
+
             self._update_build_progress()
             self.stacked_build.setCurrentIndex(1)
             self._update_build_nav_buttons()
@@ -3612,8 +3628,22 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     row_data["checkbox_reuse"].setChecked(False)
 
         if iface and iface.messageBar():
-            msg = f"Geocodificação concluída: {localizadas} parada(s) localizada(s), {pendentes} pendente(s)."
-            iface.messageBar().pushMessage("Geocodificação", msg, level=Qgis.MessageLevel.Info, duration=8)
+            if localizadas == 0 and pendentes > 0:
+                # Nada localizado quase sempre é município/UF errado na agência
+                # ou falha de rede — o detalhe fica no log SIG-Bus (decisão 52).
+                msg = (
+                    f"Nenhuma parada localizada com {city}/{state}. Confira o município "
+                    f"na página da agência e o log SIG-Bus (painel \"Log Messages\") "
+                    f"para o detalhe da falha."
+                )
+                nivel = Qgis.MessageLevel.Warning
+            else:
+                msg = (
+                    f"Geocodificação concluída ({city}/{state}): "
+                    f"{localizadas} parada(s) localizada(s), {pendentes} pendente(s)."
+                )
+                nivel = Qgis.MessageLevel.Info
+            iface.messageBar().pushMessage("Geocodificação", msg, level=nivel, duration=8)
 
     def _check_existing_stop_for_row(self, row_data):
         address = row_data["input_address"].text().strip()

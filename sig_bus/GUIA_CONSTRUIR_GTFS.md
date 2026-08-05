@@ -43,6 +43,10 @@ O assistente guia o usuário página por página (uma linha de cada vez) atravé
 * **Importação e Exportação por CSV em Lote:**
   * **Baixar modelo CSV:** Gera o modelo `modelo_paradas.csv` (formato `;`, UTF-8 com BOM) para preenchimento no Excel/LibreOffice.
   * **Importar CSV:** Permite carregar um lote de paradas de um arquivo CSV, suportando tanto endereços no padrão quanto coordenadas lat/lon diretas (linhas rurais).
+* **Quando a geocodificação não encontra nada:** Se o resumo ao fim da busca disser *"Nenhuma parada localizada com &lt;município&gt;/&lt;UF&gt;"*, siga nesta ordem:
+  1. **Confira o município e a UF na página "Configuração inicial" (agência)** — é o contexto usado em toda a busca. Município errado (ou de outro estado) descarta os candidatos certos.
+  2. **Abra o painel "Log Messages" do QGIS, aba `SIG-Bus`** — cada tentativa registra a URL consultada no Nominatim, o código de erro da resposta e quantos candidatos vieram. É ali que aparece a diferença entre "endereço inexistente" e falha de rede/serviço fora do ar.
+  3. **Use "Marcar no mapa"** — é a saída sempre disponível: nenhuma parada depende da geocodificação para ser cadastrada.
 * **Deduplicação de Paradas:** Se o endereço normalizado coincidir com alguma parada já salva no GeoPackage, o assistente exibe a opção `"parada já existe — reaproveitar"` ativada por padrão, evitando duplicar registros.
 * **Ajuste Manual e no Mapa:**
   * Ao clicar em "Confirmar e avançar", os pontos são carregados temporariamente em uma camada do QGIS (`stops_temp`) e o plugin ativa a ferramenta nativa de edição de vértices para permitir que os pontos sejam arrastados e reposicionados no mapa.
@@ -158,7 +162,10 @@ Abaixo estão listadas as mensagens de aviso e de erro emitidas pelo assistente:
 
 * **Status: "não encontrado"**
   * **Causa:** O endereço digitado é muito específico, incorreto, ou não possui correspondência na base do OpenStreetMap/Nominatim.
-  * **Solução:** Simplifique o endereço (use apenas o nome da rua e cidade, ex: "Av. Afonso Pena, Belo Horizonte") ou preencha a latitude e longitude manualmente.
+  * **Solução:** Simplifique o endereço (use apenas o nome da rua e cidade, ex: "Av. Afonso Pena, Belo Horizonte") ou marque o ponto no mapa.
+* **Aviso: "Nenhuma parada localizada com &lt;município&gt;/&lt;UF&gt;"**
+  * **Causa:** *Todos* os endereços falharam — quase sempre município/UF errados no cadastro da agência ou falha de acesso ao Nominatim (sem internet, serviço fora do ar, limite de uso).
+  * **Solução:** Confira o município e a UF na página da agência e abra o painel **Log Messages** do QGIS, aba `SIG-Bus`: cada tentativa registra a URL, o código de erro e o número de candidatos. Enquanto isso, "Marcar no mapa" continua disponível para cadastrar as paradas.
 
 ---
 

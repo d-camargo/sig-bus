@@ -12,6 +12,49 @@ o **Diagrama de Blocos** (alocação de frota). Feed de referência nos testes: 
 
 ---
 
+## Não lançado — Geocodificação no QGIS 4 (Fase 9): enum de rede e bbox por município
+
+No QGIS 4 (Qt 6) o botão **Geocodificar** devolvia "não encontrado" para *todo*
+endereço, com bairro e sem bairro. A causa era um enum não qualificado —
+`QNetworkReply.NoError`, que o PyQt6 removeu — levantando `AttributeError` dentro
+do `try` do `NominatimGeocoder._buscar` e sendo engolido pelo `except Exception:
+return []`. Toda requisição voltava vazia, sem nenhuma mensagem.
+
+- **Enum de rede corrigido (Decisão 51)**: `QNetworkReply.NetworkError.NoError` e,
+  na mesma varredura, `QgsVectorFileWriter.WriterError.NoError` /
+  `ActionOnExistingFile.CreateOrOverwrite*` (`SigBus_dialog.py`, `gtfs_reader.py`),
+  `QgsBlockingNetworkRequest.ErrorCode.NoError` e
+  `QgsVectorLayerDirector.Direction.DirectionBoth` (`osm_routing.py`) e
+  `QgsLayoutExporter.ExportResult.Success`. Todas as formas foram verificadas no
+  QGIS 3.44/Qt5 **e** no QGIS 4.2/Qt6 — um codebase só, sem shim de versão.
+- **Geocodificação deixou de falhar em silêncio (Decisão 52)**: cada tentativa
+  registra no painel **Log Messages**, aba `SIG-Bus`, a URL consultada, o código de
+  erro e o número de candidatos; exceção vai com `traceback` completo. Erro de
+  programação deixou de ser indistinguível de "endereço inexistente".
+- **`bounded=1` virou filtro de qualidade, não regra dura (Decisão 53)**: se toda a
+  cascata restrita à caixa envolvente do município voltar vazia, ela é repetida sem
+  `viewbox`/`bounded` antes de declarar "não encontrado" — bbox errada ou de
+  município homônimo não zera mais o resultado. Na busca livre, o bairro não é mais
+  repetido quando é o próprio município.
+- **Caixa envolvente do município recalculada na UI (Decisão 54)**: salvar a agência
+  grava `build_city_viewbox` junto de município/UF e a invalida quando o par muda —
+  a bbox nunca fica cacheada apontando para outra cidade. Falha de rede aí não
+  bloqueia o salvamento.
+- **Guarda de Qt6 ampliada (Decisão 55)**: `test_qt6_compat.py` passou a cobrir
+  `QNetworkReply`, `QgsVectorFileWriter`, `QgsBlockingNetworkRequest`,
+  `QgsVectorLayerDirector` e `QgsLayoutExporter`, e a varrer também os arquivos de
+  teste — os mocks do `conftest.py` expunham a forma curta e escondiam a regressão.
+- **Mensagem de resumo com contexto**: quando nenhuma parada é localizada, o aviso
+  mostra o município/UF usados na busca e aponta o log `SIG-Bus`.
+
+### Arquivos tocados
+
+`geocoding.py`, `SigBus_dialog.py`, `gtfs_reader.py`, `osm_routing.py`,
+`conftest.py`, `test_geocoding.py`, `test_qt6_compat.py`,
+`GUIA_CONSTRUIR_GTFS.md`, `ARQUITETURA_CONSTRUIR_GTFS.md`, `CHANGELOG.md`.
+
+---
+
 ## Não lançado — Construção de GTFS (Fase 8): Padrão de Endereço, Geocodificação e Lote
 
 Melhorias de legibilidade, usabilidade e robustez na aba **Construir GTFS**:

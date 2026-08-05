@@ -27,7 +27,7 @@ class TestGeocoding(unittest.TestCase):
         mock_instance.return_value = mock_manager
 
         mock_reply = MagicMock()
-        mock_reply.error.return_value = QNetworkReply.NoError
+        mock_reply.error.return_value = QNetworkReply.NetworkError.NoError
         mock_reply.content.return_value = b'[{"lat": "-23.55", "lon": "-46.63", "display_name": "Sao Paulo"}]'
         mock_manager.blockingGet.return_value = mock_reply
 
@@ -44,7 +44,7 @@ class TestGeocoding(unittest.TestCase):
 
         mock_reply = MagicMock()
         # Simula erro de conexão
-        mock_reply.error.return_value = QNetworkReply.ConnectionRefusedError
+        mock_reply.error.return_value = QNetworkReply.NetworkError.ConnectionRefusedError
         mock_manager.blockingGet.return_value = mock_reply
 
         results = NominatimGeocoder.geocode("Qualquer Endereco")
@@ -56,7 +56,7 @@ class TestGeocoding(unittest.TestCase):
         mock_instance.return_value = mock_manager
 
         mock_reply = MagicMock()
-        mock_reply.error.return_value = QNetworkReply.NoError
+        mock_reply.error.return_value = QNetworkReply.NetworkError.NoError
         mock_reply.content.return_value = b'invalid json response'
         mock_manager.blockingGet.return_value = mock_reply
 
@@ -73,6 +73,22 @@ class TestGeocoding(unittest.TestCase):
         results = NominatimGeocoder.geocode("Qualquer Endereco")
         self.assertEqual(results, [])
 
+    @patch('sig_bus.geocoding.QgsMessageLog')
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_falha_silenciosa_vira_linha_de_log(self, mock_instance, mock_log):
+        """Decisão 52: a falha que zerou a geocodificação no QGIS 4 era um
+        AttributeError engolido pelo except — agora tem que aparecer no log."""
+        mock_manager = MagicMock()
+        mock_instance.return_value = mock_manager
+        mock_manager.blockingGet.side_effect = AttributeError("NoError")
+
+        results = NominatimGeocoder.geocode("Qualquer Endereco")
+
+        self.assertEqual(results, [])
+        self.assertTrue(mock_log.logMessage.called)
+        tags = [chamada.args[1] for chamada in mock_log.logMessage.call_args_list]
+        self.assertIn('SIG-Bus', tags)
+
     @patch('sig_bus.geocoding.time.sleep')
     @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
     def test_geocode_rate_limiting(self, mock_instance, mock_sleep):
@@ -80,7 +96,7 @@ class TestGeocoding(unittest.TestCase):
         mock_instance.return_value = mock_manager
 
         mock_reply = MagicMock()
-        mock_reply.error.return_value = QNetworkReply.NoError
+        mock_reply.error.return_value = QNetworkReply.NetworkError.NoError
         mock_reply.content.return_value = b'[]'
         mock_manager.blockingGet.return_value = mock_reply
 
@@ -125,7 +141,7 @@ class TestGeocodingContexto(unittest.TestCase):
             self.urls.append(_url_da_requisicao(req))
             corpo = respostas[len(self.urls) - 1]
             reply = MagicMock()
-            reply.error.return_value = QNetworkReply.NoError
+            reply.error.return_value = QNetworkReply.NetworkError.NoError
             reply.content.return_value = corpo
             return reply
 
@@ -201,6 +217,49 @@ class TestGeocodingContexto(unittest.TestCase):
 
     @patch('sig_bus.geocoding.time.sleep')
     @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_fallback_sem_bounded_quando_bounded_zera(self, mock_instance, mock_sleep):
+        # 3 tentativas com bounded=1 voltam mudo; a 4ª (primeira sem bounded=1) acha
+        respostas = [b'[]', b'[]', b'[]', b'[{"lat": "-29.16", "lon": "-51.17"}]']
+        self._mock_manager(mock_instance, respostas)
+        contexto = dict(self.CONTEXTO, viewbox="-51.3,-29.0,-51.0,-29.3")
+
+        results = NominatimGeocoder.geocode(self.ENDERECO, contexto)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(self.urls), 4)
+        # As primeiras 3 tentativas contêm bounded=1
+        for u in self.urls[:3]:
+            self.assertIn("bounded=1", unquote(u))
+        # A 4ª tentativa mantém viewbox mas remove bounded=1
+        url_fallback = unquote(self.urls[3])
+        self.assertIn("viewbox=-51.3,-29.0,-51.0,-29.3", url_fallback)
+        self.assertNotIn("bounded=1", url_fallback)
+
+    @patch('sig_bus.geocoding.time.sleep')
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_acerto_na_primeira_rodada_nao_dispara_o_fallback(self, mock_instance, mock_sleep):
+        self._mock_manager(mock_instance, [b'[{"lat": "-29.16", "lon": "-51.17"}]'])
+        contexto = dict(self.CONTEXTO, viewbox="-51.3,-29.0,-51.0,-29.3")
+
+        results = NominatimGeocoder.geocode(self.ENDERECO, contexto)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(self.urls), 1)
+
+    @patch('sig_bus.geocoding.time.sleep')
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_bairro_igual_ao_municipio_nao_se_repete_na_busca_livre(self, mock_instance, mock_sleep):
+        # "…, 210 - Caxias do Sul" faz o parser ler "Caxias do Sul" como bairro:
+        # sem o corte da decisão 53 o q= viria "Caxias do Sul, Caxias do Sul - RS".
+        self._mock_manager(mock_instance, [b'[]', b'[]', b'[]'])
+
+        NominatimGeocoder.geocode(self.ENDERECO, self.CONTEXTO)
+
+        livre = unquote(self.urls[2]).lower()
+        self.assertEqual(livre.count("caxias do sul"), 1)
+
+    @patch('sig_bus.geocoding.time.sleep')
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
     def test_sem_contexto_faz_uma_unica_busca_livre(self, mock_instance, mock_sleep):
         self._mock_manager(mock_instance, [b'[]'])
 
@@ -228,7 +287,7 @@ class TestCityBbox(unittest.TestCase):
         mock_instance.return_value = mock_manager
 
         mock_reply = MagicMock()
-        mock_reply.error.return_value = QNetworkReply.NoError
+        mock_reply.error.return_value = QNetworkReply.NetworkError.NoError
         # Nominatim boundingbox: [lat_min, lat_max, lon_min, lon_max]
         mock_reply.content.return_value = b'[{"boundingbox": ["-29.35", "-29.01", "-51.32", "-50.95"]}]'
         mock_manager.blockingGet.return_value = mock_reply
@@ -251,7 +310,7 @@ class TestCityBbox(unittest.TestCase):
             else:
                 urls_chamadas.append(req._url._url)
             reply = MagicMock()
-            reply.error.return_value = QNetworkReply.NoError
+            reply.error.return_value = QNetworkReply.NetworkError.NoError
             if len(urls_chamadas) == 1:
                 reply.content.return_value = b'[]'
             else:
@@ -271,7 +330,7 @@ class TestCityBbox(unittest.TestCase):
         mock_instance.return_value = mock_manager
 
         mock_reply = MagicMock()
-        mock_reply.error.return_value = QNetworkReply.NoError
+        mock_reply.error.return_value = QNetworkReply.NetworkError.NoError
         mock_reply.content.return_value = b'[]'
         mock_manager.blockingGet.return_value = mock_reply
 

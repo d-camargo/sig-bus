@@ -274,10 +274,11 @@ class GtfsReader:
         options = QgsVectorFileWriter.SaveVectorOptions()
         options.driverName = 'GPKG'
         options.layerName = 'shapes'
-        options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+        options.actionOnExistingFile = (
+            QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteLayer)
         result = QgsVectorFileWriter.writeAsVectorFormatV3(
             line_layer, gpkg_path, ctx, options)
-        if result[0] != QgsVectorFileWriter.NoError:
+        if result[0] != QgsVectorFileWriter.WriterError.NoError:
             raise GtfsError(
                 "Falha ao gravar a camada de linhas (cód. {}: {})"
                 .format(result[0], result[1]))

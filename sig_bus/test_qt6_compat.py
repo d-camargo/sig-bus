@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """Guarda de regressão Qt6: nenhum enum do Qt5/QGIS 3 em forma não
 qualificada pode voltar ao pacote por copy-paste de código antigo
-(decisão 41, PLAN.md). Varredura de texto pura — não importa PyQt nem
+(decisão 41 e decisão 55, PLAN.md). Varredura de texto pura — não importa PyQt nem
 QGIS, roda em qualquer ambiente."""
 import glob
 import os
 import re
 
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
-EXCLUDED_FILES = {'conftest.py', 'resources.py'}
+EXCLUDED_FILES = {'conftest.py', 'resources.py', 'test_qt6_compat.py'}
 
 # Qt.<Membro> fora da forma qualificada Qt.<Enum>.<Membro>.
 QT_MEMBER_RE = re.compile(r'\bQt\.\w+(?:\.\w+)?\b')
@@ -26,6 +26,18 @@ LEGACY_PATTERNS = [
     (re.compile(r'\bQImage\.Format_\w*'), 'QImage.Format.Format_<...>'),
     (re.compile(r'\bQFrame\.(?:StyledPanel|Raised)\b'),
      'QFrame.Shape.StyledPanel / QFrame.Shadow.Raised'),
+    (re.compile(r'\bQNetworkReply\.(?!NetworkError\b)[A-Z]\w*Error\b'),
+     'QNetworkReply.NetworkError.<...>'),
+    (re.compile(r'\bQgsBlockingNetworkRequest\.(?!ErrorCode\b)[A-Z]\w*(?:Error|NoError)\b'),
+     'QgsBlockingNetworkRequest.ErrorCode.<...>'),
+    (re.compile(r'\bQgsVectorFileWriter\.(?:NoError|Err\w+)\b'),
+     'QgsVectorFileWriter.WriterError.<...>'),
+    (re.compile(r'\bQgsVectorFileWriter\.CreateOrOverwrite\w*\b'),
+     'QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwrite<...>'),
+    (re.compile(r'\bQgsLayoutExporter\.(?!ExportResult\b)(?:Success|\w*Error)\b'),
+     'QgsLayoutExporter.ExportResult.<...>'),
+    (re.compile(r'\bQgsVectorLayerDirector\.(?!Direction\b)Direction\w+\b'),
+     'QgsVectorLayerDirector.Direction.Direction<...>'),
     (re.compile(r'\.exec_\('), '.exec() (PyQt6 removeu o alias exec_)'),
 ]
 
@@ -33,7 +45,7 @@ LEGACY_PATTERNS = [
 def _source_files():
     for path in sorted(glob.glob(os.path.join(PACKAGE_DIR, '*.py'))):
         name = os.path.basename(path)
-        if name in EXCLUDED_FILES or name.startswith('test_'):
+        if name in EXCLUDED_FILES:
             continue
         yield path
 

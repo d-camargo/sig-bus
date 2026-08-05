@@ -170,9 +170,14 @@ class QgsCoordinateTransformContext:
         pass
 
 class QgsVectorFileWriter:
-    NoError = 0
-    ErrCreateDataSource = 1
-    CreateOrOverwriteLayer = "CreateOrOverwriteLayer"
+    # Enums na forma qualificada do QGIS 4 / PyQt6 (decisão 41): o mock não
+    # expõe a forma curta, senão esconderia a regressão que ele deveria pegar.
+    class WriterError:
+        NoError = 0
+        ErrCreateDataSource = 1
+    class ActionOnExistingFile:
+        CreateOrOverwriteLayer = "CreateOrOverwriteLayer"
+        CreateOrOverwriteFile = "CreateOrOverwriteFile"
     class SaveVectorOptions:
         def __init__(self):
             self.driverName = "GPKG"
@@ -183,7 +188,8 @@ class QgsVectorFileWriter:
         from osgeo import ogr
         ds = ogr.Open(path, 1)
         if not ds:
-            return (QgsVectorFileWriter.ErrCreateDataSource, "Failed to open GeoPackage")
+            return (QgsVectorFileWriter.WriterError.ErrCreateDataSource,
+                    "Failed to open GeoPackage")
         lyr = ds.GetLayerByName(options.layerName)
         if lyr:
             ds.DeleteLayer(options.layerName)
@@ -207,7 +213,7 @@ class QgsVectorFileWriter:
                 ogr_feat.SetGeometry(ogr_geom)
             lyr.CreateFeature(ogr_feat)
         ds = None
-        return (QgsVectorFileWriter.NoError, "Success")
+        return (QgsVectorFileWriter.WriterError.NoError, "Success")
 
 class QgsVirtualLayerDefinition:
     def __init__(self):
@@ -269,7 +275,8 @@ class QgsGraphBuilder:
         return self._graph
 
 class QgsVectorLayerDirector:
-    DirectionBoth = 0
+    class Direction:
+        DirectionBoth = 0
     def __init__(self, layer, directionFieldId, directDirectionValue, reverseDirectionValue, bothDirectionValue, defaultDirection):
         self._layer = layer
     def addStrategy(self, strategy):
@@ -348,17 +355,19 @@ class QNetworkRequest:
         self._headers[name] = value
 
 class MockQNetworkReply:
-    NoError = 0
-    ConnectionRefusedError = 1
+    class NetworkError:
+        NoError = 0
+        ConnectionRefusedError = 1
     def __init__(self, content):
         self._content = content
     def content(self):
         return self._content
     def error(self):
-        return MockQNetworkReply.NoError
+        return MockQNetworkReply.NetworkError.NoError
 
 class QgsBlockingNetworkRequest:
-    NoError = 0
+    class ErrorCode:
+        NoError = 0
     def __init__(self):
         self._reply = None
     def post(self, request, data, force):
@@ -373,7 +382,7 @@ class QgsBlockingNetworkRequest:
             with urllib.request.urlopen(req, timeout=10) as response:
                 content = response.read()
                 self._reply = MockQNetworkReply(content)
-            return QgsBlockingNetworkRequest.NoError
+            return QgsBlockingNetworkRequest.ErrorCode.NoError
         except Exception:
             return 1
     def reply(self):
@@ -400,7 +409,7 @@ class QgsNetworkAccessManager:
                 return MockQNetworkReply(content)
         except Exception:
             reply = MockQNetworkReply(b'')
-            reply.error = lambda: MockQNetworkReply.ConnectionRefusedError
+            reply.error = lambda: MockQNetworkReply.NetworkError.ConnectionRefusedError
             return reply
 
 # Check if QGIS is installed, otherwise dynamically inject mocks

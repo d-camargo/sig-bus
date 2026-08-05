@@ -8,18 +8,31 @@
 
 import time
 import json
-from qgis.core import QgsNetworkAccessManager
+import traceback
+from qgis.core import Qgis, QgsMessageLog, QgsNetworkAccessManager
 from qgis.PyQt.QtCore import QUrl
 from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
 from .address_format import parse_address
 
 NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
+LOG_TAG = "SIG-Bus"
 
 
 def _pct(valor):
     """Codifica um valor de forma segura para a URL."""
     return QUrl.toPercentEncoding(str(valor)).data().decode('utf-8')
+
+
+def _log(mensagem, nivel):
+    """Registra uma linha no painel "Log Messages", aba SIG-Bus (decisão 52)."""
+    QgsMessageLog.logMessage(
+        "Geocodificação: {}".format(mensagem), LOG_TAG, nivel)
+
+
+def _mesmo_texto(a, b):
+    """Compara dois textos ignorando caixa e espaços repetidos."""
+    return " ".join((a or "").lower().split()) == " ".join((b or "").lower().split())
 
 
 class NominatimGeocoder(object):
@@ -55,7 +68,7 @@ class NominatimGeocoder(object):
             return []
 
         try:
-            urls = cls._montar_urls(endereco, contexto)
+            urls = cls._montar_urls(endereco, contexto, bounded=True)
         except Exception:
             return []
 
@@ -63,6 +76,18 @@ class NominatimGeocoder(object):
             resultados = cls._buscar(url)
             if resultados:
                 return resultados
+
+        if contexto and contexto.get("viewbox"):
+            try:
+                urls_fallback = cls._montar_urls(endereco, contexto, bounded=False)
+            except Exception:
+                return []
+
+            for url in urls_fallback:
+                resultados = cls._buscar(url)
+                if resultados:
+                    return resultados
+
         return []
 
     @classmethod
@@ -113,7 +138,7 @@ class NominatimGeocoder(object):
         return None
 
     @classmethod
-    def _montar_urls(cls, endereco, contexto):
+    def _montar_urls(cls, endereco, contexto, bounded=True):
         """
         Monta as URLs da cascata de tentativas, na ordem em que devem ser feitas.
 
@@ -135,7 +160,9 @@ class NominatimGeocoder(object):
         # Parâmetros comuns a todas as tentativas (decisões 44 e 47).
         comuns = ["format=json", "countrycodes=br", "limit=5", "addressdetails=1"]
         if viewbox:
-            comuns += ["viewbox={}".format(_pct(viewbox)), "bounded=1"]
+            comuns.append("viewbox={}".format(_pct(viewbox)))
+            if bounded:
+                comuns.append("bounded=1")
 
         def estruturada(street):
             params = ["street={}".format(_pct(street))]
@@ -153,7 +180,11 @@ class NominatimGeocoder(object):
         # (b) estruturada sem número (rua inteira → ponto no meio da via).
         if logradouro:
             urls.append(estruturada(logradouro))
-        # (c) busca livre com município/UF/país anexados.
+        # (c) busca livre com município/UF/país anexados. O bairro sai da lista
+        # quando é o próprio município (decisão 53): "Caxias do Sul, Caxias do
+        # Sul - RS" pontua pior no Nominatim do que o município uma vez só.
+        if municipio and _mesmo_texto(bairro, municipio):
+            bairro = ""
         livre = [p for p in (logradouro or endereco, numero, bairro) if p]
         if municipio:
             livre.append("{} - {}".format(municipio, uf) if uf else municipio)
@@ -167,7 +198,8 @@ class NominatimGeocoder(object):
         """
         Faz uma requisição ao Nominatim, respeitando o intervalo de 1 segundo.
 
-        Uma espera por requisição real. Devolve [] em qualquer falha.
+        Uma espera por requisição real. Devolve [] em qualquer falha, registrando
+        a causa no QgsMessageLog em vez de falhar em silêncio (decisão 52).
         """
         # Garante no mínimo 1 segundo de intervalo entre requisições
         now = time.time()
@@ -182,25 +214,42 @@ class NominatimGeocoder(object):
 
             manager = QgsNetworkAccessManager.instance()
             if not manager:
+                _log("QgsNetworkAccessManager indisponível — {}".format(url),
+                     Qgis.MessageLevel.Warning)
                 return []
 
             # Executa a requisição síncrona/bloqueante no QGIS
             reply = manager.blockingGet(req)
             if not reply:
+                _log("sem resposta do Nominatim — {}".format(url),
+                     Qgis.MessageLevel.Warning)
                 return []
 
-            if reply.error() != QNetworkReply.NoError:
+            erro = reply.error()
+            if erro != QNetworkReply.NetworkError.NoError:
+                _log("falha de rede (erro={}) — {}".format(erro, url),
+                     Qgis.MessageLevel.Warning)
                 return []
 
             content = bytes(reply.content()).decode("utf-8")
             if not content:
+                _log("resposta vazia (erro={}) — {}".format(erro, url),
+                     Qgis.MessageLevel.Warning)
                 return []
 
             data = json.loads(content)
-            if isinstance(data, list):
-                return data
-            return []
+            if not isinstance(data, list):
+                _log("resposta em formato inesperado — {}".format(url),
+                     Qgis.MessageLevel.Warning)
+                return []
+
+            _log("erro={} candidatos={} — {}".format(erro, len(data), url),
+                 Qgis.MessageLevel.Info)
+            return data
 
         except Exception:
-            # Garante que nenhuma exceção seja propagada, conforme especificação
+            # Nunca propaga exceção (contrato da geocodificação), mas registra a
+            # causa no log — o silêncio aqui já escondeu um bug inteiro (decisão 52).
+            _log("exceção ao consultar {}\n{}".format(url, traceback.format_exc()),
+                 Qgis.MessageLevel.Warning)
             return []
