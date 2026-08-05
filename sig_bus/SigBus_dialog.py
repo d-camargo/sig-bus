@@ -94,7 +94,7 @@ from . import gtfs_schema
 from .gtfs_export import GtfsExporter
 from .gtfs_validator import GtfsValidator
 from .gtfs_builder_core import compute_progress
-from .address_format import ADDRESS_PATTERN_HINT, ADDRESS_PLACEHOLDER
+from .address_format import ADDRESS_PATTERN_HINT, ADDRESS_PLACEHOLDER, parse_address, normalizar_logradouro
 
 # Folhas de estilo padronizadas para o assistente (Fase 8, passo 72, decisão 42)
 QSS_INPUT = "border: 1px solid #ccc; border-radius: 4px; padding: 4px; background-color: #ffffff; color: #2d3748;"
@@ -3424,6 +3424,33 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         row_data["label_status"].setText(texto)
         row_data["label_status"].setStyleSheet(QSS_STATUS_OK if ok else QSS_STATUS_ERR)
 
+    @staticmethod
+    def _candidate_road_name(candidate):
+        """Nome do logradouro do candidato aceito, para comparar com o
+        digitado (decisão 59). Nominatim traz `address.road`
+        (addressdetails=1); o Photon traz `properties.street`."""
+        address = candidate.get("address")
+        if isinstance(address, dict) and address.get("road"):
+            return address["road"]
+        properties = candidate.get("properties")
+        if isinstance(properties, dict) and properties.get("street"):
+            return properties["street"]
+        return None
+
+    def _set_stop_row_localizado(self, row_data, address, candidate):
+        """Marca a parada como localizada, avisando quando a grafia aceita
+        difere da digitada (decisão 59) em vez de corrigir o cadastro do
+        usuário pelas costas dele."""
+        digitado = parse_address(address).get("logradouro") or ""
+        via = self._candidate_road_name(candidate)
+        if via and normalizar_logradouro(via) != normalizar_logradouro(digitado):
+            self._set_stop_row_status(row_data, "✓ localizado (via: {})".format(via), True)
+            QgsMessageLog.logMessage(
+                "Geocodificação: grafia corrigida — digitado={!r} aceito={!r}".format(digitado, via),
+                "SIG-Bus", Qgis.MessageLevel.Info)
+        else:
+            self._set_stop_row_status(row_data, "✓ localizado", True)
+
     def _stop_row_name(self, row_data):
         """Nome da parada da linha: o endereço digitado ou, quando ela foi
         cadastrada só pelo canvas (linha rural, decisão 49), um rótulo com a
@@ -3555,11 +3582,20 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         }
 
         localizadas = 0
-        pendentes = 0
+        nao_localizadas = 0
+        falharam = []
 
         for row_data in self.stop_rows:
             address = row_data["input_address"].text().strip()
             if not address:
+                continue
+
+            # Parada que já tem coordenada (geocodificada antes ou marcada no
+            # mapa) não é refeita a cada clique: no pior caso são 7 requisições
+            # de 1 s por parada, e marcar no mapa não pode ser desfeito pela
+            # busca (passo 100).
+            if row_data.get("lat") is not None and row_data.get("lon") is not None:
+                localizadas += 1
                 continue
 
             results = NominatimGeocoder.geocode(address, contexto)
@@ -3567,7 +3603,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 row_data["lat"] = None
                 row_data["lon"] = None
                 self._set_stop_row_status(row_data, "✗ não encontrado", False)
-                pendentes += 1
+                nao_localizadas += 1
+                falharam.append(address)
             elif len(results) == 1:
                 candidate = results[0]
                 try:
@@ -3579,9 +3616,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
                 if row_data["lat"] is None or row_data["lon"] is None:
                     self._set_stop_row_status(row_data, "✗ não encontrado", False)
-                    pendentes += 1
+                    nao_localizadas += 1
+                    falharam.append(address)
                 else:
-                    self._set_stop_row_status(row_data, "✓ localizado", True)
+                    self._set_stop_row_localizado(row_data, address, candidate)
                     localizadas += 1
             else:
                 items = [c.get("display_name", str(c)) for c in results]
@@ -3605,15 +3643,17 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
                     if row_data["lat"] is None or row_data["lon"] is None:
                         self._set_stop_row_status(row_data, "✗ não encontrado", False)
-                        pendentes += 1
+                        nao_localizadas += 1
+                        falharam.append(address)
                     else:
-                        self._set_stop_row_status(row_data, "✓ localizado", True)
+                        self._set_stop_row_localizado(row_data, address, candidate)
                         localizadas += 1
                 else:
                     row_data["lat"] = None
                     row_data["lon"] = None
                     self._set_stop_row_status(row_data, "✗ não encontrado", False)
-                    pendentes += 1
+                    nao_localizadas += 1
+                    falharam.append(address)
 
             # Check existing stop too
             if gpkg_path:
@@ -3628,19 +3668,25 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     row_data["checkbox_reuse"].setChecked(False)
 
         if iface and iface.messageBar():
-            if localizadas == 0 and pendentes > 0:
-                # Nada localizado quase sempre é município/UF errado na agência
-                # ou falha de rede — o detalhe fica no log SIG-Bus (decisão 52).
+            if localizadas == 0 and nao_localizadas > 0:
+                # A causa medida (decisão 56) é grafia do logradouro, não
+                # município errado — a mensagem cita os endereços que falharam
+                # e deixa "Marcar no mapa" como saída (decisões 19 e 60).
+                exemplos = "; ".join(f'"{e}"' for e in falharam[:3])
+                resto = f" (e mais {len(falharam) - 3})" if len(falharam) > 3 else ""
                 msg = (
-                    f"Nenhuma parada localizada com {city}/{state}. Confira o município "
-                    f"na página da agência e o log SIG-Bus (painel \"Log Messages\") "
-                    f"para o detalhe da falha."
+                    f"Nenhuma parada localizada: {exemplos}{resto}. A causa mais comum "
+                    f"é a grafia do logradouro — o buscador não corrige erro de "
+                    f"digitação no nome da rua. Contexto usado na busca: {city}/{state}. "
+                    f"Use \"Marcar no mapa\" para cadastrar a parada sem depender da "
+                    f"busca; o detalhe de cada tentativa está no log SIG-Bus "
+                    f"(painel \"Log Messages\")."
                 )
                 nivel = Qgis.MessageLevel.Warning
             else:
                 msg = (
                     f"Geocodificação concluída ({city}/{state}): "
-                    f"{localizadas} parada(s) localizada(s), {pendentes} pendente(s)."
+                    f"{localizadas} parada(s) localizada(s), {nao_localizadas} não localizada(s)."
                 )
                 nivel = Qgis.MessageLevel.Info
             iface.messageBar().pushMessage("Geocodificação", msg, level=nivel, duration=8)

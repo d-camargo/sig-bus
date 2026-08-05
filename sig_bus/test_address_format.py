@@ -6,6 +6,7 @@ from sig_bus.address_format import (
     ADDRESS_PLACEHOLDER,
     parse_address,
     format_address,
+    normalizar_logradouro,
 )
 
 
@@ -55,6 +56,19 @@ def test_parse_address_string_vazia():
     assert parse_address("") == {"logradouro": "", "numero": None, "bairro": None}
     assert parse_address("   ") == {"logradouro": "", "numero": None, "bairro": None}
     assert parse_address(None) == {"logradouro": "", "numero": None, "bairro": None}
+
+
+def test_normalizar_logradouro_grafias_diferentes():
+    assert normalizar_logradouro("Giusepe Fórmolo") != normalizar_logradouro("Giuseppe Fôrmolo")
+
+
+def test_normalizar_logradouro_equivalentes():
+    assert normalizar_logradouro("Rua  Fórmolo") == normalizar_logradouro("rua formolo")
+
+
+def test_normalizar_logradouro_vazio():
+    assert normalizar_logradouro("") == ""
+    assert normalizar_logradouro(None) == ""
 
 
 def test_roundtrip_entradas_canonicas():

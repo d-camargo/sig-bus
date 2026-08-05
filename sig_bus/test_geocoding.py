@@ -9,13 +9,14 @@ from urllib.parse import unquote
 sys.path.insert(0, '/home/diego/projects/sig-bus')
 
 from qgis.PyQt.QtNetwork import QNetworkReply
-from sig_bus.geocoding import NominatimGeocoder
+from sig_bus.geocoding import NominatimGeocoder, PhotonGeocoder
 
 class TestGeocoding(unittest.TestCase):
 
     def setUp(self):
         # Reinicia o tempo da última requisição para evitar delays reais nos testes
         NominatimGeocoder._last_request_time = 0.0
+        NominatimGeocoder.clear_cache()
 
     def test_geocode_empty_or_none(self):
         self.assertEqual(NominatimGeocoder.geocode(""), [])
@@ -89,6 +90,23 @@ class TestGeocoding(unittest.TestCase):
         tags = [chamada.args[1] for chamada in mock_log.logMessage.call_args_list]
         self.assertIn('SIG-Bus', tags)
 
+    @patch('sig_bus.geocoding.QgsMessageLog')
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_log_inclui_etiqueta_da_tentativa(self, mock_instance, mock_log):
+        mock_manager = MagicMock()
+        mock_instance.return_value = mock_manager
+
+        mock_reply = MagicMock()
+        mock_reply.error.return_value = QNetworkReply.NetworkError.NoError
+        mock_reply.content.return_value = b'[]'
+        mock_manager.blockingGet.return_value = mock_reply
+
+        NominatimGeocoder._get_json("https://nominatim.openstreetmap.org/search", etiqueta="a-estruturada-num")
+
+        self.assertTrue(mock_log.logMessage.called)
+        msgs = [chamada.args[0] for chamada in mock_log.logMessage.call_args_list]
+        self.assertTrue(any("[a-estruturada-num]" in msg for msg in msgs))
+
     @patch('sig_bus.geocoding.time.sleep')
     @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
     def test_geocode_rate_limiting(self, mock_instance, mock_sleep):
@@ -110,6 +128,23 @@ class TestGeocoding(unittest.TestCase):
         args, kwargs = mock_sleep.call_args
         self.assertTrue(0.0 < args[0] <= 1.0)
 
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_session_cache_corta_requisicao_repetida(self, mock_instance):
+        mock_manager = MagicMock()
+        mock_instance.return_value = mock_manager
+
+        mock_reply = MagicMock()
+        mock_reply.error.return_value = QNetworkReply.NetworkError.NoError
+        mock_reply.content.return_value = b'[{"lat": "-23.55", "lon": "-46.63", "display_name": "Sao Paulo"}]'
+        mock_manager.blockingGet.return_value = mock_reply
+
+        res1 = NominatimGeocoder._get_json("https://nominatim.openstreetmap.org/search?q=Sao+Paulo")
+        res2 = NominatimGeocoder._get_json("https://nominatim.openstreetmap.org/search?q=Sao+Paulo")
+
+        self.assertEqual(res1, res2)
+        # O blockingGet deve ter sido chamado apenas UMA vez graças ao cache de sessão
+        self.assertEqual(mock_manager.blockingGet.call_count, 1)
+
 def _url_da_requisicao(req):
     """Extrai a URL de um QNetworkRequest (Qt real ou o mock do conftest)."""
     url = getattr(req, "url", None)
@@ -130,6 +165,7 @@ class TestGeocodingContexto(unittest.TestCase):
 
     def setUp(self):
         NominatimGeocoder._last_request_time = 0.0
+        NominatimGeocoder.clear_cache()
 
     def _mock_manager(self, mock_instance, respostas):
         """Prepara o blockingGet para devolver uma resposta por tentativa."""
@@ -139,7 +175,8 @@ class TestGeocodingContexto(unittest.TestCase):
 
         def blocking_get(req):
             self.urls.append(_url_da_requisicao(req))
-            corpo = respostas[len(self.urls) - 1]
+            idx = len(self.urls) - 1
+            corpo = respostas[idx] if idx < len(respostas) else b'[]'
             reply = MagicMock()
             reply.error.return_value = QNetworkReply.NetworkError.NoError
             reply.content.return_value = corpo
@@ -261,19 +298,90 @@ class TestGeocodingContexto(unittest.TestCase):
     @patch('sig_bus.geocoding.time.sleep')
     @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
     def test_sem_contexto_faz_uma_unica_busca_livre(self, mock_instance, mock_sleep):
-        self._mock_manager(mock_instance, [b'[]'])
+        self._mock_manager(mock_instance, [b'[{"lat": "-29.16", "lon": "-51.17"}]'])
 
         results = NominatimGeocoder.geocode(self.ENDERECO)
 
-        self.assertEqual(results, [])
+        self.assertEqual(len(results), 1)
         self.assertEqual(len(self.urls), 1)
         self.assertNotIn("street=", self.urls[0])
+
+    @patch('sig_bus.geocoding.time.sleep')
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_nominatim_acerto_nao_consulta_photon(self, mock_instance, mock_sleep):
+        self._mock_manager(mock_instance, [b'[{"lat": "-29.16", "lon": "-51.17"}]'])
+
+        results = NominatimGeocoder.geocode(self.ENDERECO, self.CONTEXTO)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(self.urls), 1)
+        self.assertIn("nominatim.openstreetmap.org", self.urls[0])
+
+    @patch('sig_bus.geocoding.time.sleep')
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_cascata_vazia_consulta_photon_e_devolve_normalizados(self, mock_instance, mock_sleep):
+        photon_geojson = (
+            b'{"type": "FeatureCollection", "features": ['
+            b'{"geometry": {"type": "Point", "coordinates": [-51.17, -29.16]}, '
+            b'"properties": {"name": "Rua Giuseppe Formolo", "city": "Caxias do Sul", "state": "RS", "country": "Brasil"}}'
+            b']}'
+        )
+        self._mock_manager(mock_instance, [b'[]', b'[]', b'[]', photon_geojson])
+
+        results = NominatimGeocoder.geocode(self.ENDERECO, self.CONTEXTO)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["lat"], "-29.16")
+        self.assertEqual(results[0]["lon"], "-51.17")
+        self.assertIn("photon.komoot.io", self.urls[-1])
+
+    @patch('sig_bus.geocoding.time.sleep')
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_photon_descarta_candidato_de_outro_municipio_sem_bbox(self, mock_instance, mock_sleep):
+        photon_geojson = (
+            b'{"type": "FeatureCollection", "features": ['
+            b'{"geometry": {"type": "Point", "coordinates": [-51.22, -30.03]}, '
+            b'"properties": {"name": "Rua Giuseppe Formolo", "city": "Porto Alegre", "state": "RS", "country": "Brasil"}},'
+            b'{"geometry": {"type": "Point", "coordinates": [-51.17, -29.16]}, '
+            b'"properties": {"name": "Rua Giuseppe Formolo", "city": "Caxias do Sul", "state": "RS", "country": "Brasil"}}'
+            b']}'
+        )
+        self._mock_manager(mock_instance, [b'[]', b'[]', b'[]', photon_geojson])
+
+        results = NominatimGeocoder.geocode(self.ENDERECO, self.CONTEXTO)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["lat"], "-29.16")
+
+    @patch('sig_bus.geocoding.time.sleep')
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_photon_vazio_ou_erro_devolve_lista_vazia(self, mock_instance, mock_sleep):
+        self._mock_manager(mock_instance, [b'[]', b'[]', b'[]', b'[]'])
+
+        results = NominatimGeocoder.geocode(self.ENDERECO, self.CONTEXTO)
+
+        self.assertEqual(results, [])
+
+    @patch('sig_bus.geocoding.QgsMessageLog')
+    @patch('sig_bus.geocoding.time.sleep')
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_cascata_completa_registra_etiquetas_na_ordem(self, mock_instance, mock_sleep, mock_log):
+        self._mock_manager(mock_instance,
+                           [b'[]', b'[]', b'[]', b'{"type": "FeatureCollection", "features": []}'])
+
+        NominatimGeocoder.geocode(self.ENDERECO, self.CONTEXTO)
+
+        msgs = [chamada.args[0] for chamada in mock_log.logMessage.call_args_list]
+        etiquetas = [m.split("]")[0].split("[")[1] for m in msgs if "[" in m]
+        self.assertEqual(etiquetas,
+                         ["a-estruturada-num", "b-estruturada", "c-livre", "photon"])
 
 
 class TestCityBbox(unittest.TestCase):
 
     def setUp(self):
         NominatimGeocoder._last_request_time = 0.0
+        NominatimGeocoder.clear_cache()
 
     def test_city_bbox_empty_or_none(self):
         self.assertIsNone(NominatimGeocoder.city_bbox(""))
@@ -336,6 +444,41 @@ class TestCityBbox(unittest.TestCase):
 
         bbox = NominatimGeocoder.city_bbox("CidadeInexistente", "XX")
         self.assertIsNone(bbox)
+
+
+class TestPhotonGeocoder(unittest.TestCase):
+
+    def setUp(self):
+        NominatimGeocoder._last_request_time = 0.0
+        NominatimGeocoder.clear_cache()
+
+    def test_geocode_empty_or_none(self):
+        self.assertEqual(PhotonGeocoder.geocode(""), [])
+        self.assertEqual(PhotonGeocoder.geocode(None), [])
+
+    @patch('sig_bus.geocoding.time.sleep')
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_geocode_photon_success(self, mock_instance, mock_sleep):
+        mock_manager = MagicMock()
+        mock_instance.return_value = mock_manager
+
+        geojson = (
+            b'{"type": "FeatureCollection", "features": ['
+            b'{"geometry": {"type": "Point", "coordinates": [-51.17, -29.16]}, '
+            b'"properties": {"name": "Rua Giuseppe Formolo", "city": "Caxias do Sul", "state": "RS", "country": "Brasil"}}'
+            b']}'
+        )
+
+        mock_reply = MagicMock()
+        mock_reply.error.return_value = QNetworkReply.NetworkError.NoError
+        mock_reply.content.return_value = geojson
+        mock_manager.blockingGet.return_value = mock_reply
+
+        results = PhotonGeocoder.geocode("Rua Giuseppe Formolo", {"city": "Caxias do Sul", "state": "RS"})
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["lat"], "-29.16")
+        self.assertEqual(results[0]["lon"], "-51.17")
+        self.assertIn("Rua Giuseppe Formolo", results[0]["display_name"])
 
 
 if __name__ == '__main__':

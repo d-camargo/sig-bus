@@ -12,6 +12,71 @@ o **Diagrama de Blocos** (alocação de frota). Feed de referência nos testes: 
 
 ---
 
+## Não lançado — O Nominatim não perdoa erro de digitação (Fase 10)
+
+Depois das correções da Fase 9 a requisição saía e o log provava isso — e mesmo
+assim o botão **Geocodificar** continuava devolvendo "não encontrado". A medição
+de 2026-08-05, reproduzindo as URLs do log contra a API pública uma variável por
+vez, isolou a causa: `viewbox`, `bounded=1`, número da casa e acentuação são
+todos indiferentes; a única variável que zera o resultado é a **grafia do
+logradouro**. `Rua Giusepe Fórmolo` (um `p` a menos que o `Giuseppe` real do
+OpenStreetMap) devolve **0 candidatos**, na busca estruturada e na livre. A
+causa deixou de ser técnica e passou a ser de dado — e as seis tentativas da
+cascata falhavam juntas porque eram o mesmo motor consultado seis vezes.
+
+Do ponto de vista de **transporte público**, isso é o caso comum: o itinerário
+vem de planilha ou de papel da operadora, digitado por gente, e um nome de rua
+de origem italiana (`Giuseppe Fôrmolo`, na serra gaúcha) erra fácil. Sem
+tolerância a typo, o cadastro de paradas por endereço simplesmente não sai do
+lugar.
+
+- **Photon como último degrau da cascata (Decisão 57)**: o
+  `photon.komoot.io` é o geocodificador do Komoot sobre os **mesmos dados do
+  OSM**, público, sem chave e tolerante a erro de digitação por construção.
+  Verificado: `q=Rua Giusepe Fórmolo` + bbox de Caxias do Sul traz
+  `Rua Giuseppe Fôrmolo` em 1º e 2º lugar. O Nominatim **não** foi substituído —
+  continua sendo quem faz busca estruturada e resolve número de casa; o Photon
+  só é consultado depois de a cascata inteira ter voltado vazia. Uma requisição
+  a mais apenas no caso que hoje falha, zero custo no caminho feliz. Dois
+  detalhes medidos viraram código: `lang=pt` devolve HTTP 400 (não enviar
+  `lang`), e a `bbox` do Photon é `minLon,minLat,maxLon,maxLat` — ordem
+  **diferente** do `viewbox` do Nominatim já gravado em `build_city_viewbox`.
+- **Transporte separado de interpretação (`geocoding.py`)**: `_get_json(url)`
+  faz a requisição, respeita o intervalo de 1 s e devolve o JSON decodificado
+  (`list` **ou** `dict`); `_buscar` virou uma casca fina sobre ele para o
+  formato do Nominatim, e o `PhotonGeocoder` tem a sua, para o GeoJSON do
+  Photon — que é normalizado no mesmo dicionário `lat`/`lon`/`display_name` que
+  a UI já consome.
+- **Correção de grafia nunca é silenciosa (Decisão 59)**: quando o logradouro do
+  candidato aceito difere do digitado, o status da parada vira
+  `✓ localizado (via: <nome real>)` em vez de `✓ localizado`, e o par vai para o
+  log `SIG-Bus`. A mesma resposta do Photon trouxe `Rua Giusepe Bressan`, uma
+  rua diferente e existente no mesmo município — o acerto não é garantido, e o
+  assistente não corrige o cadastro do usuário pelas costas dele. A comparação
+  normalizada (minúsculas, acentos removidos, espaços colapsados) mora em
+  `address_format.normalizar_logradouro`, que já é a fonte única do padrão de
+  endereço.
+- **A mensagem de "nada localizado" parou de culpar o município (Decisão 60)**:
+  antes ela mandava "Confira o município na página da agência"; no caso relatado
+  o município estava certo e a orientação levou o usuário a procurar no lugar
+  errado. Agora lista até 3 dos endereços que falharam, aponta a grafia do
+  logradouro como causa mais provável e lembra de "Marcar no mapa" como saída.
+- **Cache de sessão e menos trabalho repetido (Decisão 61)**: com o degrau novo
+  o pior caso virou 7 requisições de 1 s **por parada**, e uma linha importada
+  por CSV tem dezenas delas. Passou a haver cache de sessão por URL, e
+  "Geocodificar" pula as paradas que já têm coordenada — o que também impede que
+  um ponto marcado à mão no canvas seja sobrescrito por um clique a mais.
+- **Cada tentativa etiquetada no log**: `a-estruturada-num`, `b-estruturada`,
+  `c-livre`, `sem-bbox …`, `photon`, `city-bbox`, junto de `erro=` e
+  `candidatos=`, para o próximo diagnóstico não exigir reconstruir a URL à mão.
+- **Alternativa recusada, registrada para ninguém refazer (Decisão 58)**: índice
+  de vias por Overpass + `difflib` também funciona (4.342 vias de Caxias do Sul
+  em 3,8 s; ratio 0,923 no 1º lugar), mas resolve só o nome da via — ainda
+  exigiria voltar ao Nominatim pela coordenada — e pede cache por município e um
+  limiar a calibrar. Fica como plano B se o Photon público sair do ar.
+
+---
+
 ## Não lançado — Geocodificação no QGIS 4 (Fase 9): enum de rede e bbox por município
 
 No QGIS 4 (Qt 6) o botão **Geocodificar** devolvia "não encontrado" para *todo*

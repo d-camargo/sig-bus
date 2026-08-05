@@ -3,6 +3,8 @@
 Não importa Qt nem QGIS.
 """
 
+import unicodedata
+
 ADDRESS_PATTERN_HINT = (
     "Padrão: Logradouro, Número - Bairro (bairro opcional). "
     "Município e UF vêm da configuração da agência."
@@ -116,6 +118,19 @@ def parse_address(texto: str) -> dict:
             "numero": None,
             "bairro": None,
         }
+
+
+def normalizar_logradouro(texto: str) -> str:
+    """Normaliza um logradouro para comparação: minúsculas, sem acentos
+    (via unicodedata.normalize('NFKD', ...)) e espaços colapsados.
+
+    Usada para detectar quando a geocodificação aceitou um candidato com
+    grafia diferente da digitada (decisão 59), sem afetar o texto exibido.
+    """
+    if not texto:
+        return ""
+    sem_acento = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
+    return " ".join(sem_acento.lower().split())
 
 
 def format_address(partes: dict) -> str:

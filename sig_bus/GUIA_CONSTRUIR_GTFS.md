@@ -37,16 +37,20 @@ O assistente guia o usuário página por página (uma linha de cada vez) atravé
 ### 3. Paradas (Endereços e Geocodificação)
 * **Objetivo:** Informar onde ficam localizados os pontos de embarque/desembarque da linha.
 * **Padrão de Endereço:** Os endereços devem ser inseridos no padrão `Logradouro, Número - Bairro` (ex.: `Rua Giuseppe Fórmolo, 210 - Centro`). O bairro é opcional. O município e a UF vêm automaticamente da configuração da agência.
-* **Geocodificação Automática Estruturada (Nominatim):** O usuário digita os endereços textuais e clica em **Geocodificar**. O plugin executa uma busca síncrona estruturada por contexto no Nominatim em cascata (com número, sem número, e busca livre), delimitada pela caixa envolvente do município.
+* **Geocodificação Automática Estruturada (Nominatim e Fallback Photon):** O usuário digita os endereços textuais e clica em **Geocodificar**. O plugin executa uma busca síncrona estruturada por contexto no Nominatim em cascata (com número, sem número e busca livre), delimitada pela caixa envolvente do município. Caso o Nominatim não encontre o endereço, o assistente aciona automaticamente o geocodificador **Photon (Komoot)** como último degrau de fallback, tolerante a erros de digitação. As consultas em lote utilizam cache de sessão para evitar requisições de rede repetidas.
 * **Status Visual das Paradas:** Os campos visuais de latitude e longitude foram suprimidos da tabela para simplificar a interface, sendo substituídos por rótulos visuais de status (`✓ localizado`, `✗ não encontrado`, `📍 marcado no mapa`).
 * **Botão "Marcar no mapa":** Para cada parada (especialmente em linhas rurais sem endereço textual), o usuário pode clicar em **Marcar no mapa**. O plugin oculta temporariamente o assistente, ativa a ferramenta interativa `PickStopPointTool` e permite selecionar o ponto com um clique no canvas do QGIS. Se o projeto não possuir uma camada base, uma camada raster OpenStreetMap é adicionada automaticamente via `ensure_osm_basemap`.
 * **Importação e Exportação por CSV em Lote:**
   * **Baixar modelo CSV:** Gera o modelo `modelo_paradas.csv` (formato `;`, UTF-8 com BOM) para preenchimento no Excel/LibreOffice.
   * **Importar CSV:** Permite carregar um lote de paradas de um arquivo CSV, suportando tanto endereços no padrão quanto coordenadas lat/lon diretas (linhas rurais).
-* **Quando a geocodificação não encontra nada:** Se o resumo ao fim da busca disser *"Nenhuma parada localizada com &lt;município&gt;/&lt;UF&gt;"*, siga nesta ordem:
-  1. **Confira o município e a UF na página "Configuração inicial" (agência)** — é o contexto usado em toda a busca. Município errado (ou de outro estado) descarta os candidatos certos.
-  2. **Abra o painel "Log Messages" do QGIS, aba `SIG-Bus`** — cada tentativa registra a URL consultada no Nominatim, o código de erro da resposta e quantos candidatos vieram. É ali que aparece a diferença entre "endereço inexistente" e falha de rede/serviço fora do ar.
-  3. **Use "Marcar no mapa"** — é a saída sempre disponível: nenhuma parada depende da geocodificação para ser cadastrada.
+* **Erro de digitação no nome da rua (a causa mais comum):** o Nominatim **não corrige typo** — `Rua Giusepe Fórmolo` (um `p` a menos que o `Giuseppe` real do OpenStreetMap) devolve **zero** candidatos em todas as tentativas, mesmo com município, UF e número corretos. É por isso que o Photon entra como último degrau: ele tolera a grafia errada e encontra a rua assim mesmo.
+  * **Como identificar:** quando a busca aceita um logradouro com grafia diferente da digitada, o status da parada não vira `✓ localizado` e sim **`✓ localizado (via: <nome real>)`** — o nome entre parênteses é a rua que o buscador realmente casou. A troca nunca é silenciosa: o par digitado/aceito também vai para o log `SIG-Bus`.
+  * **Quando a via casada não é a desejada:** confira o nome entre parênteses antes de avançar. Ruas de nome parecido existem no mesmo município (ex.: `Giusepe Bressan` × `Giuseppe Fôrmolo`), então o acerto não é garantido. Se estiver errado, corrija a grafia no campo do endereço e clique em **Geocodificar** de novo, ou use **Marcar no mapa** para posicionar o ponto à mão.
+* **Quando a geocodificação não encontra nada:** Se o resumo ao fim da busca disser *"Nenhuma parada localizada: ..."* (com os endereços que falharam), siga nesta ordem:
+  1. **Confira a grafia do logradouro** nos endereços citados na mensagem — é a causa mais provável, pelo motivo do item acima.
+  2. **Confira o município e a UF na página "Configuração inicial" (agência)** — é o contexto usado em toda a busca. Município errado (ou de outro estado) descarta os candidatos certos.
+  3. **Abra o painel "Log Messages" do QGIS, aba `SIG-Bus`** — cada tentativa registra com tag explícita (`[a-estruturada-num]`, `[b-estruturada]`, `[c-livre]`, `[sem-bbox ...]`, `[photon]`, `[city-bbox]`) a URL consultada, o código de erro da resposta e quantos candidatos vieram. É ali que aparece a diferença entre "endereço inexistente" e falha de rede/serviço fora do ar.
+  4. **Use "Marcar no mapa"** — é a saída sempre disponível: nenhuma parada depende da geocodificação para ser cadastrada.
 * **Deduplicação de Paradas:** Se o endereço normalizado coincidir com alguma parada já salva no GeoPackage, o assistente exibe a opção `"parada já existe — reaproveitar"` ativada por padrão, evitando duplicar registros.
 * **Ajuste Manual e no Mapa:**
   * Ao clicar em "Confirmar e avançar", os pontos são carregados temporariamente em uma camada do QGIS (`stops_temp`) e o plugin ativa a ferramenta nativa de edição de vértices para permitir que os pontos sejam arrastados e reposicionados no mapa.
@@ -161,11 +165,14 @@ Abaixo estão listadas as mensagens de aviso e de erro emitidas pelo assistente:
 ### 2. Mensagens do Geocodificador
 
 * **Status: "não encontrado"**
-  * **Causa:** O endereço digitado é muito específico, incorreto, ou não possui correspondência na base do OpenStreetMap/Nominatim.
-  * **Solução:** Simplifique o endereço (use apenas o nome da rua e cidade, ex: "Av. Afonso Pena, Belo Horizonte") ou marque o ponto no mapa.
-* **Aviso: "Nenhuma parada localizada com &lt;município&gt;/&lt;UF&gt;"**
-  * **Causa:** *Todos* os endereços falharam — quase sempre município/UF errados no cadastro da agência ou falha de acesso ao Nominatim (sem internet, serviço fora do ar, limite de uso).
-  * **Solução:** Confira o município e a UF na página da agência e abra o painel **Log Messages** do QGIS, aba `SIG-Bus`: cada tentativa registra a URL, o código de erro e o número de candidatos. Enquanto isso, "Marcar no mapa" continua disponível para cadastrar as paradas.
+  * **Causa:** O endereço digitado é muito específico, incorreto ou não possui correspondência nas bases do Nominatim nem do Photon (Komoot). Erro de digitação no nome da rua é o caso mais frequente.
+  * **Solução:** Confira a grafia do logradouro, simplifique o endereço (use apenas o nome da rua e município, ex: "Rua Afonso Pena, Caxias do Sul") ou marque o ponto diretamente no mapa com **Marcar no mapa**.
+* **Status: "✓ localizado (via: &lt;nome real&gt;)"**
+  * **Causa:** A busca só encontrou a parada com um logradouro de grafia diferente da digitada — normalmente um erro de digitação corrigido pelo Photon.
+  * **Solução:** Nenhuma, se o nome entre parênteses for a rua desejada. Se não for, corrija a grafia e clique em **Geocodificar** novamente, ou use **Marcar no mapa**. O assistente nunca altera o endereço cadastrado por conta própria.
+* **Aviso: "Nenhuma parada localizada: &lt;endereços&gt;"**
+  * **Causa:** *Todos* os endereços falharam na busca (tanto no Nominatim quanto no fallback do Photon). A causa mais comum é a grafia do logradouro; depois dela, município/UF incorretos no cadastro da agência ou falha de conexão de rede/serviço fora do ar.
+  * **Solução:** Confira a grafia dos endereços citados na própria mensagem, depois o município e a UF na página da agência, e verifique o painel **Log Messages** do QGIS (aba `SIG-Bus`): cada consulta registra com tags (`[a-estruturada-num]`, `[b-estruturada]`, `[c-livre]`, `[sem-bbox ...]`, `[photon]`) a URL consultada, o código de erro de rede e a quantidade de candidatos encontrados. A opção **Marcar no mapa** permanece totalmente funcional para incluir as paradas.
 
 ---
 
