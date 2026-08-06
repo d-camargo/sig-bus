@@ -16,6 +16,12 @@ QT_MEMBER_RE = re.compile(r'\bQt\.\w+(?:\.\w+)?\b')
 # Demais enums/API cuja forma curta (não qualificada) deve ter desaparecido:
 # (regex da forma antiga, forma qualificada correta a sugerir na falha).
 LEGACY_PATTERNS = [
+    # Importar PyQt5 direto explode num QGIS 4/Qt6 ("PyQt5 classes cannot be
+    # imported in a QGIS build based on Qt6"). Vale para arquivo gerado também
+    # — `pyrcc5` emite `from PyQt5 import QtCore`, e o `resources_rc.py` que
+    # ele produz é importado pelo smoke do gate.
+    (re.compile(r'\b(?:from|import)\s+PyQt[45]\b'),
+     'qgis.PyQt (wrapper independente de versão)'),
     (re.compile(r'\bQVariant\.(?:String|Int)\b'),
      'QMetaType.Type.QString / QMetaType.Type.Int (QVariant.Type não existe mais no PyQt6)'),
     (re.compile(r'\bQgis\.(?:Critical|Info|Warning|Success)\b'),

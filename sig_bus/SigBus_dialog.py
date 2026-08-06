@@ -1149,6 +1149,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         layout_botoes_paradas = QtWidgets.QHBoxLayout()
         self.button_add_stop = QtWidgets.QPushButton("Adicionar Endereço")
         self.button_geocode = QtWidgets.QPushButton("Geocodificar")
+        self.button_config_geocode = QtWidgets.QPushButton("Configurar geocodificação…")
         self.button_download_csv_template = QtWidgets.QPushButton("Baixar modelo CSV")
         self.button_import_csv = QtWidgets.QPushButton("Importar CSV")
         
@@ -1178,6 +1179,21 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
             QPushButton:hover {
                 background-color: #2c7a7b;
+                color: white;
+            }
+        """)
+
+        self.button_config_geocode.setStyleSheet("""
+            QPushButton {
+                background-color: #4a5568;
+                color: white;
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #2d3748;
                 color: white;
             }
         """)
@@ -1214,6 +1230,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         
         layout_botoes_paradas.addWidget(self.button_add_stop)
         layout_botoes_paradas.addWidget(self.button_geocode)
+        layout_botoes_paradas.addWidget(self.button_config_geocode)
         layout_botoes_paradas.addWidget(self.button_download_csv_template)
         layout_botoes_paradas.addWidget(self.button_import_csv)
         layout_paradas.addLayout(layout_botoes_paradas)
@@ -1223,6 +1240,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         # Conexões
         self.button_add_stop.clicked.connect(self._add_stop_row)
         self.button_geocode.clicked.connect(self._geocode_stops)
+        self.button_config_geocode.clicked.connect(self._open_geocoding_config)
         self.button_download_csv_template.clicked.connect(self._download_csv_template)
         self.button_import_csv.clicked.connect(self._import_stops_csv)
         
@@ -3424,11 +3442,23 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         row_data["label_status"].setText(texto)
         row_data["label_status"].setStyleSheet(QSS_STATUS_OK if ok else QSS_STATUS_ERR)
 
+    #: Rótulo de procedência por `provider` (decisão 70): com quatro fontes
+    #: possíveis, "✓ localizado" não diz mais de onde veio o ponto — um acerto
+    #: do Google (pago, nível-rooftop) e um centro de via adivinhado por
+    #: similaridade no Overpass não merecem o mesmo status.
+    _PROVIDER_LABELS = {
+        "google": "Google",
+        "nominatim": "Nominatim",
+        "photon": "Photon",
+        "osm-overpass": "OSM",
+    }
+
     @staticmethod
     def _candidate_road_name(candidate):
         """Nome do logradouro do candidato aceito, para comparar com o
         digitado (decisão 59). Nominatim traz `address.road`
-        (addressdetails=1); o Photon traz `properties.street`."""
+        (addressdetails=1); o Photon (e o degrau do Overpass, decisão 70)
+        trazem `properties.street`."""
         address = candidate.get("address")
         if isinstance(address, dict) and address.get("road"):
             return address["road"]
@@ -3437,19 +3467,39 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             return properties["street"]
         return None
 
+    @staticmethod
+    def _candidate_provider_label(candidate):
+        """Rótulo de procedência do candidato (decisão 70), ou None para os
+        provedores que não levam rótulo e para candidatos antigos sem o
+        campo `provider`."""
+        return SigBusDialog._PROVIDER_LABELS.get(candidate.get("provider"))
+
+    @staticmethod
+    def _candidate_item_label(candidate):
+        """Texto de um candidato na lista do `QInputDialog` de múltiplos
+        candidatos, com a procedência anexada (decisão 70)."""
+        display = candidate.get("display_name", str(candidate))
+        origem = SigBusDialog._candidate_provider_label(candidate)
+        return "{} ({})".format(display, origem) if origem else display
+
     def _set_stop_row_localizado(self, row_data, address, candidate):
         """Marca a parada como localizada, avisando quando a grafia aceita
-        difere da digitada (decisão 59) em vez de corrigir o cadastro do
-        usuário pelas costas dele."""
+        difere da digitada (decisão 59) e mostrando a procedência do ponto
+        (decisão 70) em vez de corrigir o cadastro do usuário pelas costas
+        dele."""
         digitado = parse_address(address).get("logradouro") or ""
         via = self._candidate_road_name(candidate)
+        origem = self._candidate_provider_label(candidate)
         if via and normalizar_logradouro(via) != normalizar_logradouro(digitado):
-            self._set_stop_row_status(row_data, "✓ localizado (via: {})".format(via), True)
+            texto = "✓ localizado (via: {} — {})".format(via, origem) if origem \
+                else "✓ localizado (via: {})".format(via)
+            self._set_stop_row_status(row_data, texto, True)
             QgsMessageLog.logMessage(
                 "Geocodificação: grafia corrigida — digitado={!r} aceito={!r}".format(digitado, via),
                 "SIG-Bus", Qgis.MessageLevel.Info)
         else:
-            self._set_stop_row_status(row_data, "✓ localizado", True)
+            texto = "✓ localizado ({})".format(origem) if origem else "✓ localizado"
+            self._set_stop_row_status(row_data, texto, True)
 
     def _stop_row_name(self, row_data):
         """Nome da parada da linha: o endereço digitado ou, quando ela foi
@@ -3534,7 +3584,103 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if row_data in self.stop_rows:
             self.stop_rows.remove(row_data)
 
+    def _open_geocoding_config(self):
+        from sig_bus.geocoding_config import (
+            get_provider_mode,
+            set_provider_mode,
+            get_google_api_key,
+            set_google_api_key,
+        )
+
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Configuração de Geocodificação")
+        dialog.setMinimumWidth(400)
+
+        layout = QtWidgets.QVBoxLayout(dialog)
+
+        lbl_provider = QtWidgets.QLabel("Modo de Provedor:")
+        combo_provider = QtWidgets.QComboBox()
+        combo_provider.addItem("Automático (usa Google se houver chave)", "auto")
+        combo_provider.addItem("Somente OSM (Nominatim + Photon)", "osm")
+
+        current_mode = get_provider_mode()
+        idx = combo_provider.findData(current_mode)
+        if idx >= 0:
+            combo_provider.setCurrentIndex(idx)
+
+        lbl_key = QtWidgets.QLabel("Chave da API do Google Maps:")
+        input_key = QtWidgets.QLineEdit()
+        input_key.setPlaceholderText("Cole sua API Key do Google (opcional)")
+        # A chave é secreta: não fica legível na tela nem em captura de tela
+        # (enum qualificado, decisão 35).
+        input_key.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        input_key.setText(get_google_api_key())
+
+        lbl_aviso = QtWidgets.QLabel(
+            "A chave é <b>opcional</b>, é sua e é cobrada pelo Google. Sem ela o "
+            "plugin usa só as fontes gratuitas do OpenStreetMap. Crie a chave e "
+            "habilite a <i>Geocoding API</i> em "
+            "<a href=\"https://console.cloud.google.com/\">console.cloud.google.com</a>."
+        )
+        lbl_aviso.setWordWrap(True)
+        lbl_aviso.setOpenExternalLinks(True)
+
+        lbl_teste = QtWidgets.QLabel("")
+        lbl_teste.setWordWrap(True)
+
+        btn_testar = QtWidgets.QPushButton("Testar chave")
+        btn_testar.clicked.connect(
+            lambda: lbl_teste.setText(self._testar_chave_google(input_key.text().strip()))
+        )
+
+        layout.addWidget(lbl_provider)
+        layout.addWidget(combo_provider)
+        layout.addSpacing(10)
+        layout.addWidget(lbl_key)
+        layout.addWidget(input_key)
+        layout.addWidget(lbl_aviso)
+        layout.addWidget(btn_testar)
+        layout.addWidget(lbl_teste)
+        layout.addSpacing(15)
+
+        layout_botoes = QtWidgets.QHBoxLayout()
+        btn_ok = QtWidgets.QPushButton("OK")
+        btn_cancel = QtWidgets.QPushButton("Cancelar")
+        btn_ok.clicked.connect(dialog.accept)
+        btn_cancel.clicked.connect(dialog.reject)
+        layout_botoes.addWidget(btn_ok)
+        layout_botoes.addWidget(btn_cancel)
+        layout.addLayout(layout_botoes)
+
+        if dialog.exec():
+            selected_mode = combo_provider.currentData()
+            entered_key = input_key.text().strip()
+            set_provider_mode(selected_mode)
+            set_google_api_key(entered_key)
+
+    @staticmethod
+    def _testar_chave_google(chave):
+        """Geocodifica um endereço fixo e conhecido com a chave digitada e
+        devolve o texto do resultado — sucesso, ou o `status`/`error_message`
+        que o Google devolveu (passo 111). Não grava a chave: o teste roda com
+        o valor digitado, antes do OK."""
+        from sig_bus.geocoding import GoogleGeocoder
+
+        if not chave:
+            return "Digite uma chave antes de testar."
+
+        GoogleGeocoder.ultimo_erro = None
+        resultados = GoogleGeocoder.geocode(
+            "Praça da Sé", {"city": "São Paulo", "state": "SP"}, chave=chave)
+        if resultados:
+            return "Chave OK — {}".format(resultados[0].get("display_name", ""))
+        if GoogleGeocoder.ultimo_erro:
+            return "Falhou: {}".format(GoogleGeocoder.ultimo_erro)
+        return ("A chave respondeu sem erro, mas o endereço de teste não voltou "
+                "nenhum resultado. Veja o log SIG-Bus para o detalhe.")
+
     def _geocode_stops(self):
+        from sig_bus import geocoding
         from sig_bus.geocoding import NominatimGeocoder
         from sig_bus.gtfs_builder_core import find_existing_stop, get_config, set_config
 
@@ -3598,7 +3744,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 localizadas += 1
                 continue
 
-            results = NominatimGeocoder.geocode(address, contexto)
+            results = geocoding.geocode(address, contexto)
             if not results:
                 row_data["lat"] = None
                 row_data["lon"] = None
@@ -3622,7 +3768,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     self._set_stop_row_localizado(row_data, address, candidate)
                     localizadas += 1
             else:
-                items = [c.get("display_name", str(c)) for c in results]
+                items = [self._candidate_item_label(c) for c in results]
                 item, ok = QInputDialog.getItem(
                     self,
                     "Selecionar Endereço",
@@ -3683,13 +3829,45 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     f"(painel \"Log Messages\")."
                 )
                 nivel = Qgis.MessageLevel.Warning
+            elif nao_localizadas > 0:
+                exemplos = "; ".join(f'"{e}"' for e in falharam[:3])
+                resto = f" (e mais {len(falharam) - 3})" if len(falharam) > 3 else ""
+                msg = (
+                    f"Geocodificação concluída ({city}/{state}): "
+                    f"{localizadas} parada(s) localizada(s), {nao_localizadas} não localizada(s) ({exemplos}{resto})."
+                )
+                nivel = Qgis.MessageLevel.Warning
             else:
                 msg = (
                     f"Geocodificação concluída ({city}/{state}): "
                     f"{localizadas} parada(s) localizada(s), {nao_localizadas} não localizada(s)."
                 )
                 nivel = Qgis.MessageLevel.Info
+
+            if nao_localizadas > 0:
+                msg += self._pista_de_geocodificacao()
+
             iface.messageBar().pushMessage("Geocodificação", msg, level=nivel, duration=8)
+
+    @staticmethod
+    def _pista_de_geocodificacao():
+        """Complemento da mensagem de fim de lote quando sobrou endereço não
+        localizado (passo 115, decisões 60 e 64).
+
+        Sem chave configurada, oferece a saída paga. Com chave e um erro do
+        Google no lote, mostra o `status`/`error_message` como causa provável —
+        uma chave quebrada não pode ficar indistinguível de erro de grafia."""
+        from sig_bus.geocoding import GoogleGeocoder
+        from sig_bus.geocoding_config import get_google_api_key
+
+        if not get_google_api_key():
+            return (" Uma chave do Google (botão \"Configurar geocodificação…\") costuma "
+                    "resolver endereço que o OpenStreetMap não indexa.")
+        if GoogleGeocoder.ultimo_erro:
+            return (f" O Google respondeu \"{GoogleGeocoder.ultimo_erro}\" — a causa "
+                    f"provável é a chave, não a grafia do endereço; confira em "
+                    f"\"Configurar geocodificação…\".")
+        return ""
 
     def _check_existing_stop_for_row(self, row_data):
         address = row_data["input_address"].text().strip()

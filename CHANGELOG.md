@@ -12,6 +12,19 @@ o **Diagrama de Blocos** (alocação de frota). Feed de referência nos testes: 
 
 ---
 
+## Não lançado — Google Maps opcional + Overpass como último degrau grátis (Fase 11)
+
+Esta fase adiciona o suporte opcional à **Google Geocoding API** como primeiro provedor de geocodificação e introduz o corretor de grafia via **Overpass (OSM)** como último recurso para resolver nomes de vias digitados incorretamente.
+
+Do ponto de vista de **transporte público**, a integração com o Google resolve casos de endereços recém-criados, estabelecimentos ou locais comerciais que ainda não figuram nas bases públicas do OpenStreetMap, garantindo que o assistente de construção de GTFS encontre o ponto com alta precisão sem depender exclusivamente de coordenadas manuais.
+
+- **Google Geocoding API opcional (Decisões 62, 63, 66)**: Quando uma chave de API é fornecida e o modo está em `auto`, o `GoogleGeocoder` é acionado primeiro na cascata `Google → Nominatim → Photon`. A chave é armazenada com segurança no `QSettings` do usuário e não é salva no GeoPackage do projeto (Decisão 62). Candidatos em nível genérico de localidade/município são automaticamente filtrados para evitar posicionamento incorreto no centro da cidade (Decisão 66).
+- **Corretor de vias Overpass (`street_index.py`, Decisão 68)**: Se todos os provedores retornarem vazio e houver contexto de município, o módulo realiza o levantamento das vias reais da região via Overpass e utiliza busca por similaridade textual (`difflib`, `cutoff=0.80`) para corrigir o logradouro e refazer **uma** consulta ao Nominatim com o nome corrigido — que resolve o número da casa; se ela também falhar, o ponto sai do `center` da via, sempre com o `(via: <nome real>)` da decisão 59 declarando o palpite.
+- **Redação de credenciais em logs (`_redigir_credenciais`, Decisão 65)**: Parâmetros sensíveis (`key=`, `api_key=`, `token=` e afins) são ocultados com `***` nas mensagens gravadas no log do QGIS, prevenindo o vazamento de chaves privadas em relatórios de suporte.
+- **Identificação da procedência do ponto (Decisão 70)**: Rótulos de status na UI informam a origem exata do resultado (`✓ localizado (Google)`, `✓ localizado (Nominatim)`, `✓ localizado (Photon)` ou `✓ localizado (via: ... — OSM)`).
+
+---
+
 ## Não lançado — O Nominatim não perdoa erro de digitação (Fase 10)
 
 Depois das correções da Fase 9 a requisição saía e o log provava isso — e mesmo

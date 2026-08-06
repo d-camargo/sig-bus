@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import unittest
 from unittest.mock import patch, MagicMock
+import os
 import sys
 import time
 from urllib.parse import unquote
@@ -9,13 +10,23 @@ from urllib.parse import unquote
 sys.path.insert(0, '/home/diego/projects/sig-bus')
 
 from qgis.PyQt.QtNetwork import QNetworkReply
-from sig_bus.geocoding import NominatimGeocoder, PhotonGeocoder
+from sig_bus.geocoding import NominatimGeocoder, PhotonGeocoder, GoogleGeocoder, geocode
+
+# `SigBus_dialog` importa a stack gráfica inteira do QGIS, que os mocks do
+# conftest não cobrem — os testes de UI abaixo só rodam com QGIS real.
+_QGIS_REAL = not os.environ.get('FORCE_MOCK_QGIS')
+if _QGIS_REAL:
+    try:
+        import qgis.gui  # noqa: F401
+    except ImportError:
+        _QGIS_REAL = False
+_SEM_QGIS = "exige QGIS real (rodando com os mocks do conftest)"
 
 class TestGeocoding(unittest.TestCase):
 
     def setUp(self):
         # Reinicia o tempo da última requisição para evitar delays reais nos testes
-        NominatimGeocoder._last_request_time = 0.0
+        NominatimGeocoder._last_request_time = {}
         NominatimGeocoder.clear_cache()
 
     def test_geocode_empty_or_none(self):
@@ -37,6 +48,7 @@ class TestGeocoding(unittest.TestCase):
         self.assertEqual(results[0]["lat"], "-23.55")
         self.assertEqual(results[0]["lon"], "-46.63")
         self.assertEqual(results[0]["display_name"], "Sao Paulo")
+        self.assertEqual(results[0]["provider"], "nominatim")
 
     @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
     def test_geocode_network_error(self, mock_instance):
@@ -145,6 +157,95 @@ class TestGeocoding(unittest.TestCase):
         # O blockingGet deve ter sido chamado apenas UMA vez graças ao cache de sessão
         self.assertEqual(mock_manager.blockingGet.call_count, 1)
 
+    @patch('sig_bus.geocoding.QgsMessageLog')
+    def test_log_redige_credenciais_na_url(self, mock_log):
+        """Decisão 65: credenciais em URLs nunca devem aparecer no log."""
+        from sig_bus.geocoding import _log, _redigir_credenciais
+
+        url_com_chave = "https://maps.googleapis.com/maps/api/geocode/json?address=Test&key=AIzaSySecretKey123&api_key=secret456"
+        _log("consultando {}".format(url_com_chave), 0)
+
+        self.assertTrue(mock_log.logMessage.called)
+        msg_logged = mock_log.logMessage.call_args[0][0]
+        self.assertNotIn("AIzaSySecretKey123", msg_logged)
+        self.assertNotIn("secret456", msg_logged)
+        self.assertIn("key=***", msg_logged)
+        self.assertIn("api_key=***", msg_logged)
+
+        url_com_auth = "https://user:password123@example.com/api?token=secret789"
+        redigido = _redigir_credenciais(url_com_auth)
+        self.assertNotIn("password123", redigido)
+        self.assertNotIn("secret789", redigido)
+        self.assertIn("user:***@", redigido)
+        self.assertIn("token=***", redigido)
+
+    @patch('sig_bus.geocoding.time.sleep')
+    @patch('sig_bus.geocoding.time.time')
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_rate_limit_mesmo_host_limitado_espera(self, mock_instance, mock_time, mock_sleep):
+        """Decisão 67: duas requisições seguidas ao mesmo host limitado esperam 1 s."""
+        mock_manager = MagicMock()
+        mock_instance.return_value = mock_manager
+        mock_reply = MagicMock()
+        mock_reply.error.return_value = QNetworkReply.NetworkError.NoError
+        mock_reply.content.return_value = b'[]'
+        mock_manager.blockingGet.return_value = mock_reply
+
+        NominatimGeocoder._last_request_time = {}
+
+        mock_time.return_value = 10.0
+        NominatimGeocoder._get_json("https://nominatim.openstreetmap.org/search?q=1")
+        mock_sleep.assert_not_called()
+
+        mock_time.return_value = 10.2
+        NominatimGeocoder._get_json("https://nominatim.openstreetmap.org/search?q=2")
+        mock_sleep.assert_called_once()
+        self.assertAlmostEqual(mock_sleep.call_args[0][0], 0.8, places=2)
+
+    @patch('sig_bus.geocoding.time.sleep')
+    @patch('sig_bus.geocoding.time.time')
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_rate_limit_hosts_limitados_diferentes_nao_compartilham_espera(self, mock_instance, mock_time, mock_sleep):
+        """Decisão 67: hosts limitados diferentes não compartilham a espera de 1 s."""
+        mock_manager = MagicMock()
+        mock_instance.return_value = mock_manager
+        mock_reply = MagicMock()
+        mock_reply.error.return_value = QNetworkReply.NetworkError.NoError
+        mock_reply.content.return_value = b'[]'
+        mock_manager.blockingGet.return_value = mock_reply
+
+        NominatimGeocoder._last_request_time = {}
+
+        mock_time.return_value = 10.0
+        NominatimGeocoder._get_json("https://nominatim.openstreetmap.org/search?q=1")
+
+        mock_time.return_value = 10.2
+        NominatimGeocoder._get_json("https://photon.komoot.io/api?q=2")
+
+        mock_sleep.assert_not_called()
+
+    @patch('sig_bus.geocoding.time.sleep')
+    @patch('sig_bus.geocoding.time.time')
+    @patch('sig_bus.geocoding.QgsNetworkAccessManager.instance')
+    def test_rate_limit_host_sem_limite_nao_espera(self, mock_instance, mock_time, mock_sleep):
+        """Decisão 67: hosts fora de HOSTS_COM_LIMITE não esperam."""
+        mock_manager = MagicMock()
+        mock_instance.return_value = mock_manager
+        mock_reply = MagicMock()
+        mock_reply.error.return_value = QNetworkReply.NetworkError.NoError
+        mock_reply.content.return_value = b'[]'
+        mock_manager.blockingGet.return_value = mock_reply
+
+        NominatimGeocoder._last_request_time = {}
+
+        mock_time.return_value = 10.0
+        NominatimGeocoder._get_json("https://maps.googleapis.com/maps/api/geocode/json?q=1")
+
+        mock_time.return_value = 10.2
+        NominatimGeocoder._get_json("https://maps.googleapis.com/maps/api/geocode/json?q=2")
+
+        mock_sleep.assert_not_called()
+
 def _url_da_requisicao(req):
     """Extrai a URL de um QNetworkRequest (Qt real ou o mock do conftest)."""
     url = getattr(req, "url", None)
@@ -164,7 +265,7 @@ class TestGeocodingContexto(unittest.TestCase):
     ENDERECO = "Rua Giusepe Fórmolo, 210 - Caxias do Sul"
 
     def setUp(self):
-        NominatimGeocoder._last_request_time = 0.0
+        NominatimGeocoder._last_request_time = {}
         NominatimGeocoder.clear_cache()
 
     def _mock_manager(self, mock_instance, respostas):
@@ -311,7 +412,7 @@ class TestGeocodingContexto(unittest.TestCase):
     def test_nominatim_acerto_nao_consulta_photon(self, mock_instance, mock_sleep):
         self._mock_manager(mock_instance, [b'[{"lat": "-29.16", "lon": "-51.17"}]'])
 
-        results = NominatimGeocoder.geocode(self.ENDERECO, self.CONTEXTO)
+        results = geocode(self.ENDERECO, self.CONTEXTO)
 
         self.assertEqual(len(results), 1)
         self.assertEqual(len(self.urls), 1)
@@ -328,7 +429,7 @@ class TestGeocodingContexto(unittest.TestCase):
         )
         self._mock_manager(mock_instance, [b'[]', b'[]', b'[]', photon_geojson])
 
-        results = NominatimGeocoder.geocode(self.ENDERECO, self.CONTEXTO)
+        results = geocode(self.ENDERECO, self.CONTEXTO)
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["lat"], "-29.16")
@@ -348,7 +449,7 @@ class TestGeocodingContexto(unittest.TestCase):
         )
         self._mock_manager(mock_instance, [b'[]', b'[]', b'[]', photon_geojson])
 
-        results = NominatimGeocoder.geocode(self.ENDERECO, self.CONTEXTO)
+        results = geocode(self.ENDERECO, self.CONTEXTO)
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["lat"], "-29.16")
@@ -358,7 +459,7 @@ class TestGeocodingContexto(unittest.TestCase):
     def test_photon_vazio_ou_erro_devolve_lista_vazia(self, mock_instance, mock_sleep):
         self._mock_manager(mock_instance, [b'[]', b'[]', b'[]', b'[]'])
 
-        results = NominatimGeocoder.geocode(self.ENDERECO, self.CONTEXTO)
+        results = geocode(self.ENDERECO, self.CONTEXTO)
 
         self.assertEqual(results, [])
 
@@ -369,7 +470,7 @@ class TestGeocodingContexto(unittest.TestCase):
         self._mock_manager(mock_instance,
                            [b'[]', b'[]', b'[]', b'{"type": "FeatureCollection", "features": []}'])
 
-        NominatimGeocoder.geocode(self.ENDERECO, self.CONTEXTO)
+        geocode(self.ENDERECO, self.CONTEXTO)
 
         msgs = [chamada.args[0] for chamada in mock_log.logMessage.call_args_list]
         etiquetas = [m.split("]")[0].split("[")[1] for m in msgs if "[" in m]
@@ -380,7 +481,7 @@ class TestGeocodingContexto(unittest.TestCase):
 class TestCityBbox(unittest.TestCase):
 
     def setUp(self):
-        NominatimGeocoder._last_request_time = 0.0
+        NominatimGeocoder._last_request_time = {}
         NominatimGeocoder.clear_cache()
 
     def test_city_bbox_empty_or_none(self):
@@ -449,7 +550,7 @@ class TestCityBbox(unittest.TestCase):
 class TestPhotonGeocoder(unittest.TestCase):
 
     def setUp(self):
-        NominatimGeocoder._last_request_time = 0.0
+        NominatimGeocoder._last_request_time = {}
         NominatimGeocoder.clear_cache()
 
     def test_geocode_empty_or_none(self):
@@ -479,8 +580,442 @@ class TestPhotonGeocoder(unittest.TestCase):
         self.assertEqual(results[0]["lat"], "-29.16")
         self.assertEqual(results[0]["lon"], "-51.17")
         self.assertIn("Rua Giuseppe Formolo", results[0]["display_name"])
+        self.assertEqual(results[0]["provider"], "photon")
+
+
+class TestGoogleGeocoder(unittest.TestCase):
+
+    def setUp(self):
+        NominatimGeocoder._last_request_time = {}
+        NominatimGeocoder.clear_cache()
+
+    def test_geocode_empty_or_none(self):
+        self.assertEqual(GoogleGeocoder.geocode(""), [])
+        self.assertEqual(GoogleGeocoder.geocode(None), [])
+
+    def test_google_url_com_viewbox_e_chave(self):
+        """Verifica a ordem da bounds (lat_min,lon_min|lat_max,lon_max) e parâmetros."""
+        contexto = {
+            "city": "Caxias do Sul",
+            "state": "RS",
+            "country": "Brasil",
+            # lon_min, lat_max, lon_max, lat_min (ordem Nominatim)
+            "viewbox": "-51.2,-29.1,-51.1,-29.2",
+        }
+        url = GoogleGeocoder._google_url("Rua Giusepe Fórmolo, 210", contexto, chave="MINHA_CHAVE")
+        self.assertIn("key=MINHA_CHAVE", url)
+        self.assertIn("components=country:BR", url)
+        self.assertIn("language=pt-BR", url)
+        self.assertIn("region=br", url)
+        # lon_min=-51.2, lat_max=-29.1, lon_max=-51.1, lat_min=-29.2
+        # Ordem do Google: lat_min,lon_min|lat_max,lon_max -> -29.2,-51.2|-29.1,-51.1
+        self.assertIn("bounds=-29.2,-51.2|-29.1,-51.1", url)
+
+    def test_google_url_sem_viewbox(self):
+        """Sem viewbox a URL não leva o parâmetro bounds."""
+        contexto = {"city": "Caxias do Sul", "state": "RS"}
+        url = GoogleGeocoder._google_url("Rua Giusepe Fórmolo, 210", contexto, chave="MINHA_CHAVE")
+        self.assertNotIn("bounds=", url)
+
+    @patch('sig_bus.geocoding.NominatimGeocoder._get_json')
+    def test_google_geocode_normalizacao(self, mock_get_json):
+        """Verifica normalização: lat/lon não trocados, lng vira lon, types/partial_match/location_type guardados."""
+        payload_real_reduzido = {
+            "status": "OK",
+            "results": [
+                {
+                    "formatted_address": "Rua Giuseppe Fórmolo, 210 - Panazzolo, Caxias do Sul - RS, 95080-000, Brasil",
+                    "geometry": {
+                        "location": {
+                            "lat": -29.1834,
+                            "lng": -51.1892
+                        },
+                        "location_type": "ROOFTOP"
+                    },
+                    "partial_match": False,
+                    "types": ["street_address"]
+                }
+            ]
+        }
+        mock_get_json.return_value = payload_real_reduzido
+
+        results = GoogleGeocoder.geocode(
+            "Rua Giusepe Fórmolo, 210",
+            contexto={"viewbox": "-51.2,-29.1,-51.1,-29.2"},
+            chave="MINHA_CHAVE"
+        )
+
+        self.assertEqual(len(results), 1)
+        res = results[0]
+        self.assertEqual(res["lat"], "-29.1834")
+        self.assertEqual(res["lon"], "-51.1892")
+        self.assertEqual(res["display_name"], "Rua Giuseppe Fórmolo, 210 - Panazzolo, Caxias do Sul - RS, 95080-000, Brasil")
+        self.assertEqual(res["types"], ["street_address"])
+        self.assertIs(res["partial_match"], False)
+        self.assertEqual(res["location_type"], "ROOFTOP")
+        self.assertEqual(res["provider"], "google")
+
+    @patch('sig_bus.geocoding.NominatimGeocoder._get_json')
+    def test_google_status_zero_results_nao_loga_aviso(self, mock_get_json):
+        mock_get_json.return_value = {"status": "ZERO_RESULTS", "results": []}
+        self.assertEqual(GoogleGeocoder._buscar("http://x"), [])
+
+    @patch('sig_bus.geocoding.NominatimGeocoder._get_json')
+    def test_google_status_erro_devolve_vazio(self, mock_get_json):
+        mock_get_json.return_value = {"status": "REQUEST_DENIED", "results": []}
+        self.assertEqual(GoogleGeocoder._buscar("http://x"), [])
+
+    @patch('sig_bus.geocoding.QgsMessageLog')
+    @patch('sig_bus.geocoding.NominatimGeocoder._get_json')
+    def test_google_request_denied_loga_error_message_e_guarda_ultimo_erro(self, mock_get_json, mock_log):
+        """Decisão 64: chave quebrada não pode ficar indistinguível de endereço
+        inexistente — o `error_message` do Google vai para o log e para a UI."""
+        GoogleGeocoder.ultimo_erro = None
+        mock_get_json.return_value = {
+            "status": "REQUEST_DENIED",
+            "error_message": "The provided API key is invalid.",
+            "results": [],
+        }
+
+        self.assertEqual(GoogleGeocoder._buscar("http://x", etiqueta="google"), [])
+
+        self.assertIn("REQUEST_DENIED", GoogleGeocoder.ultimo_erro)
+        self.assertIn("The provided API key is invalid.", GoogleGeocoder.ultimo_erro)
+        msgs = [c.args[0] for c in mock_log.logMessage.call_args_list]
+        self.assertTrue(any("REQUEST_DENIED" in m and "invalid" in m for m in msgs), msgs)
+
+    @patch('sig_bus.geocoding.NominatimGeocoder._get_json')
+    def test_google_over_query_limit_preenche_ultimo_erro(self, mock_get_json):
+        GoogleGeocoder.ultimo_erro = None
+        mock_get_json.return_value = {"status": "OVER_QUERY_LIMIT", "results": []}
+
+        self.assertEqual(GoogleGeocoder._buscar("http://x"), [])
+        self.assertEqual(GoogleGeocoder.ultimo_erro, "OVER_QUERY_LIMIT")
+
+    @patch('sig_bus.geocoding.NominatimGeocoder._get_json')
+    def test_google_acerto_limpa_ultimo_erro(self, mock_get_json):
+        GoogleGeocoder.ultimo_erro = "REQUEST_DENIED"
+        mock_get_json.return_value = {
+            "status": "OK",
+            "results": [{
+                "formatted_address": "Rua Teste, 1",
+                "geometry": {"location": {"lat": -29.1, "lng": -51.1}},
+                "types": ["street_address"],
+            }],
+        }
+
+        self.assertEqual(len(GoogleGeocoder._buscar("http://x")), 1)
+        self.assertIsNone(GoogleGeocoder.ultimo_erro)
+
+    @patch('sig_bus.geocoding.NominatimGeocoder._get_json')
+    def test_google_descarta_acerto_nivel_cidade(self, mock_get_json):
+        """Candidato tipo `locality` (a cidade inteira) não serve para localizar uma parada."""
+        mock_get_json.return_value = {
+            "status": "OK",
+            "results": [
+                {
+                    "formatted_address": "Caxias do Sul - RS, Brasil",
+                    "geometry": {"location": {"lat": -29.16, "lng": -51.17}},
+                    "types": ["locality", "political"],
+                },
+                {
+                    "formatted_address": "Rua Giuseppe Fórmolo, 210 - Caxias do Sul - RS, Brasil",
+                    "geometry": {"location": {"lat": -29.1834, "lng": -51.1892}},
+                    "types": ["street_address"],
+                },
+            ],
+        }
+        results = GoogleGeocoder._buscar("http://x")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["display_name"], "Rua Giuseppe Fórmolo, 210 - Caxias do Sul - RS, Brasil")
+
+    @patch('sig_bus.geocoding.NominatimGeocoder._get_json')
+    def test_google_so_aceita_types_de_nivel_rua(self, mock_get_json):
+        """Decisão 66: a regra é lista de aceitação, não de recusa — `postal_code`
+        e `neighborhood` também são centro de área, não endereço."""
+        mock_get_json.return_value = {
+            "status": "OK",
+            "results": [
+                {"formatted_address": "95080-000, Caxias do Sul - RS",
+                 "geometry": {"location": {"lat": -29.16, "lng": -51.17}},
+                 "types": ["postal_code"]},
+                {"formatted_address": "Panazzolo, Caxias do Sul - RS",
+                 "geometry": {"location": {"lat": -29.17, "lng": -51.18}},
+                 "types": ["neighborhood", "political"]},
+                {"formatted_address": "Terminal Central, Caxias do Sul - RS",
+                 "geometry": {"location": {"lat": -29.18, "lng": -51.19}},
+                 "types": ["establishment", "point_of_interest"]},
+            ],
+        }
+        results = GoogleGeocoder._buscar("http://x")
+        self.assertEqual([r["display_name"] for r in results],
+                         ["Terminal Central, Caxias do Sul - RS"])
+
+    @patch('sig_bus.geocoding.QgsMessageLog')
+    @patch('sig_bus.geocoding.NominatimGeocoder._get_json')
+    def test_google_descarte_diz_no_log_qual_types_motivou(self, mock_get_json, mock_log):
+        mock_get_json.return_value = {
+            "status": "OK",
+            "results": [{
+                "formatted_address": "Caxias do Sul - RS, Brasil",
+                "geometry": {"location": {"lat": -29.16, "lng": -51.17}},
+                "types": ["locality", "political"],
+                "partial_match": True,
+            }],
+        }
+
+        self.assertEqual(GoogleGeocoder._buscar("http://x", etiqueta="google"), [])
+
+        msgs = [c.args[0] for c in mock_log.logMessage.call_args_list]
+        self.assertTrue(any("nível-rua" in m and "locality" in m for m in msgs), msgs)
+
+
+class TestGeocodeCascataGoogle(unittest.TestCase):
+
+    def setUp(self):
+        NominatimGeocoder._last_request_time = {}
+        NominatimGeocoder.clear_cache()
+
+    @patch('sig_bus.geocoding.get_google_api_key')
+    @patch('sig_bus.geocoding.get_provider_mode')
+    @patch('sig_bus.geocoding.NominatimGeocoder._get_json')
+    def test_com_chave_e_acerto_google_nominatim_nao_consultado(self, mock_get_json, mock_mode, mock_key):
+        mock_mode.return_value = "auto"
+        mock_key.return_value = "MINHA_CHAVE_GOOGLE"
+
+        google_ok = {
+            "status": "OK",
+            "results": [
+                {
+                    "formatted_address": "Rua Giuseppe Fórmolo, 210 - Caxias do Sul - RS, Brasil",
+                    "geometry": {"location": {"lat": -29.1834, "lng": -51.1892}},
+                    "types": ["street_address"],
+                }
+            ]
+        }
+        mock_get_json.return_value = google_ok
+
+        results = geocode("Rua Giusepe Fórmolo, 210", contexto={"city": "Caxias do Sul"})
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["lat"], "-29.1834")
+        self.assertEqual(mock_get_json.call_count, 1)
+        url_chamada = mock_get_json.call_args[0][0]
+        self.assertIn("maps.googleapis.com", url_chamada)
+        self.assertIn("key=MINHA_CHAVE_GOOGLE", url_chamada)
+
+    @patch('sig_bus.geocoding.get_google_api_key')
+    @patch('sig_bus.geocoding.get_provider_mode')
+    @patch('sig_bus.geocoding.NominatimGeocoder._get_json')
+    def test_com_chave_e_request_denied_cascata_gratis_roda_inteira(self, mock_get_json, mock_mode, mock_key):
+        mock_mode.return_value = "auto"
+        mock_key.return_value = "CHAVE_INVALIDA"
+
+        google_denied = {"status": "REQUEST_DENIED", "results": []}
+        nominatim_ok = [{"lat": "-29.16", "lon": "-51.17", "display_name": "Rua Teste"}]
+
+        mock_get_json.side_effect = [google_denied, nominatim_ok]
+
+        results = geocode("Rua Giusepe Fórmolo, 210", contexto={"city": "Caxias do Sul", "state": "RS"})
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["lat"], "-29.16")
+        self.assertEqual(mock_get_json.call_count, 2)
+        urls = [c[0][0] for c in mock_get_json.call_args_list]
+        self.assertIn("maps.googleapis.com", urls[0])
+        self.assertIn("nominatim.openstreetmap.org", urls[1])
+
+    @patch('sig_bus.geocoding.get_google_api_key')
+    @patch('sig_bus.geocoding.get_provider_mode')
+    @patch('sig_bus.geocoding.NominatimGeocoder._get_json')
+    def test_sem_chave_mesma_sequencia_sem_google(self, mock_get_json, mock_mode, mock_key):
+        mock_mode.return_value = "auto"
+        mock_key.return_value = ""
+
+        nominatim_ok = [{"lat": "-29.16", "lon": "-51.17", "display_name": "Rua Teste"}]
+        mock_get_json.return_value = nominatim_ok
+
+        results = geocode("Rua Giusepe Fórmolo, 210", contexto={"city": "Caxias do Sul", "state": "RS"})
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(mock_get_json.call_count, 1)
+        url_chamada = mock_get_json.call_args[0][0]
+        self.assertIn("nominatim.openstreetmap.org", url_chamada)
+        self.assertNotIn("maps.googleapis.com", url_chamada)
+
+    @patch('sig_bus.geocoding.corrigir')
+    @patch('sig_bus.geocoding.NominatimGeocoder._get_json')
+    def test_todos_provedores_falham_aciona_corretor_como_ultimo_degrau(self, mock_get_json, mock_corrigir):
+        mock_get_json.return_value = []
+        mock_corrigir.return_value = ("Rua Giuseppe Fôrmolo", -29.20, -51.20)
+
+        contexto = {"viewbox": "-51.30,-29.10,-51.10,-29.25"}
+        results = geocode("Rua Giusepe Fórmolo, 210", contexto=contexto)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["lat"], "-29.2")
+        self.assertEqual(results[0]["lon"], "-51.2")
+        self.assertEqual(results[0]["display_name"], "Rua Giuseppe Fôrmolo")
+        self.assertEqual(results[0]["provider"], "osm-overpass")
+        mock_corrigir.assert_called_once_with("Rua Giusepe Fórmolo", "-51.30,-29.10,-51.10,-29.25")
+
+    @patch('sig_bus.geocoding.corrigir')
+    @patch('sig_bus.geocoding.NominatimGeocoder.geocode')
+    def test_nome_corrigido_refaz_uma_busca_no_nominatim(self, mock_nominatim, mock_corrigir):
+        """Passo 113: o `center` da via do Overpass não resolve número de casa —
+        com o nome corrigido, o Nominatim é consultado mais uma vez, e é o
+        resultado dele (com o número) que vale."""
+        mock_corrigir.return_value = ("Rua Giuseppe Fôrmolo", -29.20, -51.20)
+        # 1ª chamada: cascata normal, vazia. 2ª: reteste com o nome corrigido.
+        mock_nominatim.side_effect = [
+            [],
+            [{"lat": "-29.1834", "lon": "-51.1892",
+              "display_name": "Rua Giuseppe Fôrmolo, 210", "provider": "nominatim"}],
+        ]
+
+        contexto = {"viewbox": "-51.30,-29.10,-51.10,-29.25"}
+        with patch('sig_bus.geocoding.PhotonGeocoder.geocode', return_value=[]):
+            results = geocode("Rua Giusepe Fórmolo, 210", contexto=contexto)
+
+        self.assertEqual(mock_nominatim.call_count, 2)
+        self.assertEqual(mock_nominatim.call_args_list[1].args[0], "Rua Giuseppe Fôrmolo, 210")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["lat"], "-29.1834")
+        # Grafia corrigida se declara (decisão 59): o nome real vai no candidato.
+        self.assertEqual(results[0]["properties"]["street"], "Rua Giuseppe Fôrmolo")
+
+    @patch('sig_bus.geocoding.corrigir')
+    @patch('sig_bus.geocoding.NominatimGeocoder.geocode')
+    def test_corretor_nao_roda_quando_algum_provedor_acertou(self, mock_nominatim, mock_corrigir):
+        mock_nominatim.return_value = [{"lat": "-29.16", "lon": "-51.17"}]
+
+        geocode("Rua Giusepe Fórmolo, 210", contexto={"viewbox": "-51.30,-29.10,-51.10,-29.25"})
+
+        mock_corrigir.assert_not_called()
+
+    @patch('sig_bus.geocoding.corrigir')
+    @patch('sig_bus.geocoding.NominatimGeocoder.geocode')
+    def test_nada_encontrado_ainda_devolve_vazio(self, mock_nominatim, mock_corrigir):
+        mock_nominatim.return_value = []
+        mock_corrigir.return_value = None
+
+        with patch('sig_bus.geocoding.PhotonGeocoder.geocode', return_value=[]):
+            results = geocode("Rua Inexistente ZZZ, 999",
+                              contexto={"viewbox": "-51.30,-29.10,-51.10,-29.25"})
+
+        self.assertEqual(results, [])
+
+
+@unittest.skipUnless(_QGIS_REAL, _SEM_QGIS)
+class TestGeocodingConfigUI(unittest.TestCase):
+
+    def test_botao_configurar_metodo_existem(self):
+        from sig_bus.SigBus_dialog import SigBusDialog
+        self.assertTrue(hasattr(SigBusDialog, '_open_geocoding_config'))
+
+
+@unittest.skipUnless(_QGIS_REAL, _SEM_QGIS)
+class TestProviderOrigin(unittest.TestCase):
+    """Passo 114 (decisão 70): a procedência do ponto precisa aparecer na UI
+    sem exigir instanciar o diálogo — os helpers usados são `@staticmethod`."""
+
+    def test_rotulo_por_provider(self):
+        from sig_bus.SigBus_dialog import SigBusDialog
+        self.assertEqual(SigBusDialog._candidate_provider_label({"provider": "google"}), "Google")
+        self.assertEqual(SigBusDialog._candidate_provider_label({"provider": "osm-overpass"}), "OSM")
+        self.assertEqual(SigBusDialog._candidate_provider_label({"provider": "nominatim"}), "Nominatim")
+        self.assertEqual(SigBusDialog._candidate_provider_label({"provider": "photon"}), "Photon")
+
+    def test_candidato_antigo_sem_provider_nao_quebra(self):
+        from sig_bus.SigBus_dialog import SigBusDialog
+        candidato = {"lat": "-29.16", "lon": "-51.17", "display_name": "Rua Teste"}
+        self.assertIsNone(SigBusDialog._candidate_provider_label(candidato))
+        self.assertEqual(SigBusDialog._candidate_item_label(candidato), "Rua Teste")
+
+    def test_mensagem_fim_de_lote_com_falhas_parciais(self):
+        """Passo 115: a mensagem de fim de lote (passo 102) cita endereços com falhas parciais."""
+        from sig_bus.SigBus_dialog import SigBusDialog, Qgis
+
+        dialog = SigBusDialog.__new__(SigBusDialog)
+        dialog.input_city = MagicMock()
+        dialog.input_city.text.return_value = "Caxias do Sul"
+        dialog.input_state = MagicMock()
+        dialog.input_state.text.return_value = "RS"
+        dialog.input_country = MagicMock()
+        dialog.input_country.text.return_value = "Brasil"
+        dialog._working_copy = None
+
+        row1 = {"input_address": MagicMock(), "lat": None, "lon": None}
+        row1["input_address"].text.return_value = "Rua Giuseppe Fôrmolo, 210"
+        row2 = {"input_address": MagicMock(), "lat": None, "lon": None}
+        row2["input_address"].text.return_value = "Rua Inexistente ZZZ, 999"
+        dialog.stop_rows = [row1, row2]
+
+        def mock_set_status(r, status, ok):
+            pass
+        def mock_set_localizado(r, addr, cand):
+            r["lat"] = -29.16
+            r["lon"] = -51.17
+        dialog._set_stop_row_status = mock_set_status
+        dialog._set_stop_row_localizado = mock_set_localizado
+
+        mock_bar = MagicMock()
+        mock_iface = MagicMock()
+        mock_iface.messageBar.return_value = mock_bar
+
+        with patch('sig_bus.SigBus_dialog.iface', mock_iface), \
+             patch('sig_bus.geocoding.geocode') as mock_geo, \
+             patch('sig_bus.geocoding.NominatimGeocoder.city_bbox', return_value="-51.3,-29.0,-51.0,-29.3"):
+            
+            mock_geo.side_effect = [
+                [{"lat": -29.16, "lon": -51.17}],
+                []
+            ]
+            dialog._geocode_stops()
+
+            mock_bar.pushMessage.assert_called_once()
+            args, kwargs = mock_bar.pushMessage.call_args
+            self.assertIn("1 parada(s) localizada(s), 1 não localizada(s)", args[1])
+            self.assertIn('"Rua Inexistente ZZZ, 999"', args[1])
+            self.assertEqual(kwargs.get("level"), Qgis.MessageLevel.Warning)
+
+    def test_pista_sem_chave_oferece_configurar(self):
+        """Passo 115: sem chave, a mensagem de fim de lote oferece a saída paga."""
+        from sig_bus.SigBus_dialog import SigBusDialog
+
+        with patch('sig_bus.geocoding_config.get_google_api_key', return_value=""):
+            pista = SigBusDialog._pista_de_geocodificacao()
+
+        self.assertIn("Configurar geocodificação…", pista)
+        self.assertIn("Google", pista)
+
+    def test_pista_com_chave_quebrada_mostra_o_erro_do_google(self):
+        """Passo 115 (decisão 64): chave quebrada não pode ser confundida com
+        erro de grafia — a causa provável vai na mensagem."""
+        from sig_bus.SigBus_dialog import SigBusDialog
+        from sig_bus.geocoding import GoogleGeocoder
+
+        GoogleGeocoder.ultimo_erro = "REQUEST_DENIED: The provided API key is invalid."
+        try:
+            with patch('sig_bus.geocoding_config.get_google_api_key', return_value="CHAVE"):
+                pista = SigBusDialog._pista_de_geocodificacao()
+        finally:
+            GoogleGeocoder.ultimo_erro = None
+
+        self.assertIn("REQUEST_DENIED", pista)
+        self.assertIn("não a grafia", pista)
+
+    def test_pista_com_chave_boa_nao_acrescenta_nada(self):
+        from sig_bus.SigBus_dialog import SigBusDialog
+        from sig_bus.geocoding import GoogleGeocoder
+
+        GoogleGeocoder.ultimo_erro = None
+        with patch('sig_bus.geocoding_config.get_google_api_key', return_value="CHAVE"):
+            self.assertEqual(SigBusDialog._pista_de_geocodificacao(), "")
 
 
 if __name__ == '__main__':
     unittest.main()
+
+
 

@@ -6,18 +6,22 @@
  ***************************************************************************/
 """
 
+import re
 import time
 import json
 import traceback
+from urllib.parse import urlsplit
 from qgis.core import Qgis, QgsMessageLog, QgsNetworkAccessManager
 from qgis.PyQt.QtCore import QUrl
 from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
 from .address_format import parse_address
-
-NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
-PHOTON_SEARCH_URL = "https://photon.komoot.io/api"
-LOG_TAG = "SIG-Bus"
+from .street_index import corrigir
+from .geocoding_config import (
+    NOMINATIM_SEARCH_URL, PHOTON_SEARCH_URL, GOOGLE_SEARCH_URL, HOSTS_COM_LIMITE,
+    USER_AGENT, INTERVALO_MINIMO_SEGUNDOS, LOG_TAG,
+    get_provider_mode, get_google_api_key,
+)
 
 
 def _pct(valor):
@@ -25,10 +29,20 @@ def _pct(valor):
     return QUrl.toPercentEncoding(str(valor)).data().decode('utf-8')
 
 
+def _redigir_credenciais(texto):
+    """Substitui valores de credenciais/chaves por *** antes de logar (decisão 65)."""
+    if not texto:
+        return texto
+    res = re.sub(r'(?i)(\b(?:key|api_key|token|secret|password|passwd|pwd|auth)=)[^&]*', r'\1***', str(texto))
+    res = re.sub(r'//([^:@]+):([^@]+)@', r'//\1:***@', res)
+    return res
+
+
 def _log(mensagem, nivel):
-    """Registra uma linha no painel "Log Messages", aba SIG-Bus (decisão 52)."""
+    """Registra uma linha no painel "Log Messages", aba SIG-Bus (decisão 52). Redige credenciais (decisão 65)."""
+    msg_redigida = _redigir_credenciais(mensagem)
     QgsMessageLog.logMessage(
-        "Geocodificação: {}".format(mensagem), LOG_TAG, nivel)
+        "Geocodificação: {}".format(msg_redigida), LOG_TAG, nivel)
 
 
 def _mesmo_texto(a, b):
@@ -41,7 +55,7 @@ class NominatimGeocoder(object):
     Classe para geocodificação de endereços usando o serviço público do Nominatim.
     Respeita a política de uso do Nominatim (limite de requisições, User-Agent).
     """
-    _last_request_time = 0.0
+    _last_request_time = {}
     _session_cache = {}
 
     @classmethod
@@ -95,10 +109,7 @@ class NominatimGeocoder(object):
                 if resultados:
                     return resultados
 
-        try:
-            return PhotonGeocoder.geocode(endereco, contexto)
-        except Exception:
-            return []
+        return []
 
     @classmethod
     def city_bbox(cls, municipio, uf=None):
@@ -212,11 +223,12 @@ class NominatimGeocoder(object):
         """
         Transporte: faz a requisição e devolve o JSON já decodificado.
 
-        Respeita o intervalo de 1 segundo (uma espera por requisição real) e
-        registra a causa de cada falha no QgsMessageLog em vez de falhar em
-        silêncio (decisão 52). Devolve o objeto decodificado — `list` ou `dict`,
-        conforme o serviço — ou None em qualquer falha. Não interpreta o
-        conteúdo: quem chama decide o que é uma resposta válida.
+        Respeita o intervalo de 1 segundo por host, para os hosts em
+        `HOSTS_COM_LIMITE` (decisão 67), e registra a causa de cada falha no
+        QgsMessageLog em vez de falhar em silêncio (decisão 52). Devolve o
+        objeto decodificado — `list` ou `dict`, conforme o serviço — ou None
+        em qualquer falha. Não interpreta o conteúdo: quem chama decide o que
+        é uma resposta válida.
         """
         tag_str = "[{}] ".format(etiqueta) if etiqueta else ""
 
@@ -224,16 +236,21 @@ class NominatimGeocoder(object):
             _log("{}cache de sessão — {}".format(tag_str, url), Qgis.MessageLevel.Info)
             return cls._session_cache[url]
 
-        # Garante no mínimo 1 segundo de intervalo entre requisições
-        now = time.time()
-        elapsed = now - cls._last_request_time
-        if elapsed < 1.0:
-            time.sleep(1.0 - elapsed)
-        cls._last_request_time = time.time()
+        # Garante no mínimo 1 segundo de intervalo por host para hosts com limite (decisão 67).
+        # O host sai do `urlsplit` da stdlib, não do `QUrl`: é a mesma resposta sem
+        # depender do Qt para uma conta de string.
+        host = urlsplit(url).hostname or ""
+        if host in HOSTS_COM_LIMITE:
+            now = time.time()
+            last_time = cls._last_request_time.get(host, 0.0)
+            elapsed = now - last_time
+            if elapsed < INTERVALO_MINIMO_SEGUNDOS:
+                time.sleep(INTERVALO_MINIMO_SEGUNDOS - elapsed)
+            cls._last_request_time[host] = time.time()
 
         try:
             req = QNetworkRequest(QUrl(url))
-            req.setRawHeader(b"User-Agent", b"SIG-Bus-QGIS/0.4 (Geocoding)")
+            req.setRawHeader(b"User-Agent", USER_AGENT)
 
             manager = QgsNetworkAccessManager.instance()
             if not manager:
@@ -295,6 +312,9 @@ class NominatimGeocoder(object):
                 _log("{}resposta em formato inesperado — {}".format(tag_str, url),
                      Qgis.MessageLevel.Warning)
             return []
+        for item in data:
+            if isinstance(item, dict):
+                item["provider"] = "nominatim"
         return data
 
 
@@ -439,6 +459,267 @@ class PhotonGeocoder(object):
                 "lat": str(lat),
                 "lon": str(lon),
                 "display_name": display_name,
-                "properties": props
+                "properties": props,
+                "provider": "photon"
             })
         return resultados
+
+
+class GoogleGeocoder(object):
+    """
+    Geocodificador usando a API do Google Maps Geocoding (decisões 63 e 69).
+    Devolve candidatos no mesmo formato estandardizado ({'lat', 'lon', 'display_name', ...}).
+    """
+
+    #: Último `status`/`error_message` diferente de OK/ZERO_RESULTS devolvido pelo
+    #: Google, para a mensagem de fim de lote apontar a causa provável em vez de
+    #: culpar a grafia do endereço (decisão 64). None quando não houve erro.
+    ultimo_erro = None
+
+    @classmethod
+    def geocode(cls, endereco, contexto=None, chave=""):
+        """
+        Geocodifica um endereço usando a API do Google.
+
+        :param endereco: String contendo o endereço.
+        :param contexto: Dicionário opcional com 'city', 'state', 'country', 'viewbox'.
+        :param chave: String contendo a chave da API do Google.
+        :return: Lista de candidatos estandardizados ou [].
+        """
+        if not endereco:
+            return []
+        if not chave:
+            chave = get_google_api_key()
+        if not chave:
+            return []
+
+        try:
+            url = cls._google_url(endereco, contexto, chave)
+        except Exception:
+            return []
+
+        return cls._buscar(url, etiqueta="google")
+
+    @classmethod
+    def _google_url(cls, endereco, contexto=None, chave=""):
+        """
+        Monta a URL de consulta ao Google Geocoding API.
+
+        Converte a bbox do Nominatim ('lon_min,lat_max,lon_max,lat_min') para
+        a ordem do Google ('lat_min,lon_min|lat_max,lon_max') no parâmetro `bounds=`.
+        Sem `viewbox` no contexto, a URL não leva `bounds`.
+        """
+        query = str(endereco).strip()
+        extras = []
+        if contexto:
+            city = (contexto.get("city") or "").strip()
+            state = (contexto.get("state") or "").strip()
+            country = (contexto.get("country") or "").strip() or "Brasil"
+            if city:
+                if state:
+                    extras.append("{} - {}".format(city, state))
+                else:
+                    extras.append(city)
+            if country:
+                extras.append(country)
+
+        partes_end = [query] + [e for e in extras if e]
+        full_address = ", ".join(partes_end)
+
+        params = [
+            "address={}".format(_pct(full_address)),
+            "components=country:BR",
+            "language=pt-BR",
+            "region=br",
+        ]
+        if chave:
+            params.append("key={}".format(_pct(chave)))
+
+        if contexto and contexto.get("viewbox"):
+            partes_box = str(contexto["viewbox"]).split(",")
+            if len(partes_box) == 4:
+                lon_min, lat_max, lon_max, lat_min = [p.strip() for p in partes_box]
+                bounds = "{},{}|{},{}".format(lat_min, lon_min, lat_max, lon_max)
+                params.append("bounds={}".format(bounds))
+
+        return "{}?{}".format(GOOGLE_SEARCH_URL, "&".join(params))
+
+    #: `types` do Google que caracterizam um acerto de nível-rua — a lista de
+    #: aceitação da decisão 66. Tudo que não cruza com ela (`locality`,
+    #: `administrative_area_level_*`, `postal_code`, `neighborhood`, …) é o
+    #: centro de uma área, não um endereço, e vira parada num ponto errado que
+    #: ninguém confere. `establishment`/`point_of_interest` ficam porque parada
+    #: de ônibus é descrita por referência com frequência.
+    _TYPES_NIVEL_RUA = frozenset((
+        "street_address",
+        "route",
+        "premise",
+        "subpremise",
+        "intersection",
+        "establishment",
+        "point_of_interest",
+    ))
+
+    @classmethod
+    def _buscar(cls, url, etiqueta=None):
+        """
+        Interpretação: casca fina sobre `_get_json` para o formato do Google Geocoding.
+
+        Trata `status` (decisão 64): `ZERO_RESULTS` é resposta vazia normal;
+        qualquer outro status diferente de `OK` vira `Warning` no log com o
+        `error_message` do corpo e fica em `ultimo_erro`, para a cascata grátis
+        continuar sem que o usuário perca a causa. Descarta candidatos que não
+        são de nível-rua (decisão 66), dizendo no log qual `types` motivou o
+        descarte. Devolve a lista de candidatos estandardizados ou [] em
+        qualquer falha.
+        """
+        data = NominatimGeocoder._get_json(url, etiqueta=etiqueta)
+        if not isinstance(data, dict):
+            if data is not None:
+                tag_str = "[{}] ".format(etiqueta) if etiqueta else ""
+                _log("{}resposta em formato inesperado — {}".format(tag_str, url),
+                     Qgis.MessageLevel.Warning)
+            return []
+
+        tag_str = "[{}] ".format(etiqueta) if etiqueta else ""
+        status = data.get("status")
+        if status != "OK":
+            if status and status != "ZERO_RESULTS":
+                detalhe = data.get("error_message") or ""
+                cls.ultimo_erro = "{}{}".format(status, ": " + detalhe if detalhe else "")
+                _log("{}status={}{} — {}".format(
+                    tag_str, status, " (" + detalhe + ")" if detalhe else "", url),
+                     Qgis.MessageLevel.Warning)
+            return []
+
+        cls.ultimo_erro = None
+
+        results = data.get("results")
+        if not isinstance(results, list):
+            return []
+
+        candidatos = []
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+
+            item_types = item.get("types") or []
+            if not any(t in cls._TYPES_NIVEL_RUA for t in item_types):
+                _log("{}candidato descartado por não ser de nível-rua: types={} — {}".format(
+                    tag_str, item_types, item.get("formatted_address") or "?"),
+                     Qgis.MessageLevel.Info)
+                continue
+
+            geom = item.get("geometry") or {}
+            loc = geom.get("location") or {}
+            lat = loc.get("lat")
+            lng = loc.get("lng")
+            if lat is None or lng is None:
+                continue
+
+            candidatos.append({
+                "lat": str(lat),
+                "lon": str(lng),
+                "display_name": item.get("formatted_address") or "Desconhecido",
+                "types": item_types,
+                "partial_match": item.get("partial_match", False),
+                "location_type": geom.get("location_type"),
+                "provider": "google",
+            })
+        return candidatos
+
+
+def _degrau_corretor(endereco, contexto):
+    """
+    Último degrau da cascata (decisão 68): todos os provedores voltaram vazios,
+    então o nome da via passa pelo corretor de grafia sobre o banco vivo do OSM.
+
+    Com o nome corrigido, tenta **uma** vez o Nominatim de novo — é ele que
+    resolve número de casa, coisa que o `center` da via do Overpass não faz. Se
+    esse reteste também voltar vazio, o candidato é montado direto do `center`.
+    Nos dois ramos o candidato sai com o nome real em `properties.street`, para
+    o `(via: <nome real>)` da decisão 59 disparar: aqui o acerto é palpite de
+    similaridade, e palpite se declara.
+    """
+    partes = parse_address(endereco)
+    logradouro = (partes.get("logradouro") or "").strip() or str(endereco).strip()
+    numero = (partes.get("numero") or "").strip()
+    viewbox = contexto.get("viewbox")
+
+    corr = corrigir(logradouro, viewbox)
+    if not corr:
+        return []
+
+    nome_real, lat, lon = corr
+
+    endereco_corrigido = "{}, {}".format(nome_real, numero) if numero else nome_real
+    try:
+        resultados = NominatimGeocoder.geocode(endereco_corrigido, contexto)
+    except Exception:
+        resultados = []
+    if resultados:
+        for item in resultados:
+            if isinstance(item, dict):
+                item.setdefault("properties", {})["street"] = nome_real
+        return resultados
+
+    return [{
+        "lat": str(lat),
+        "lon": str(lon),
+        "display_name": nome_real,
+        "properties": {"street": nome_real},
+        "provider": "osm-overpass",
+    }]
+
+
+def geocode(endereco, contexto=None):
+    """
+    Ponto de entrada da geocodificação: percorre os provedores em ordem e
+    devolve os candidatos do primeiro que responder não-vazio (decisão 61, 63).
+
+    Quando `get_provider_mode()` for `"auto"` e houver chave do Google, a ordem
+    passa a ser Google → Nominatim → Photon (decisão 63).
+    Sem chave, ou com o modo `"osm"`, a lista fica (Nominatim → Photon) e nenhuma
+    requisição sai para `maps.googleapis.com`.
+
+    Com todos os provedores vazios e `viewbox` no contexto, ainda roda o
+    corretor de grafia sobre o banco vivo do OSM (`_degrau_corretor`, decisão 68).
+
+    Nunca levanta exceção — provedor que falha conta como resposta vazia e a
+    cascata segue para o próximo.
+
+    :param endereco: String contendo o endereço a ser geocodificado.
+    :param contexto: Dicionário opcional com 'city', 'state', 'country' e
+                     'viewbox' (bbox do município no formato
+                     'lon_min,lat_max,lon_max,lat_min').
+    :return: Lista de candidatos ({'lat', 'lon', ...}) ou lista vazia.
+    """
+    if not endereco:
+        return []
+
+    modo = get_provider_mode()
+    chave = get_google_api_key()
+
+    provedores = []
+    if modo == "auto" and chave:
+        provedores.append(GoogleGeocoder)
+    provedores.extend([NominatimGeocoder, PhotonGeocoder])
+
+    for provedor in provedores:
+        try:
+            if provedor is GoogleGeocoder:
+                resultados = provedor.geocode(endereco, contexto, chave=chave)
+            else:
+                resultados = provedor.geocode(endereco, contexto)
+        except Exception:
+            resultados = []
+        if resultados:
+            return resultados
+
+    if contexto and contexto.get("viewbox"):
+        try:
+            return _degrau_corretor(endereco, contexto)
+        except Exception:
+            return []
+
+    return []

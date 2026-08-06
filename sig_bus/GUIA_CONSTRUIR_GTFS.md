@@ -76,6 +76,31 @@ O assistente guia o usuário página por página (uma linha de cada vez) atravé
 
 ---
 
+## Geocodificação: quando o OSM não basta
+
+Embora o geocodificador gratuito baseado em OpenStreetMap (Nominatim + Photon) atenda à maioria dos casos urbanos, certos endereços comerciais ou recém-criados podem não estar indexados na base livre do OSM. Para essas situações, o SIG-Bus permite integrar opcionalmente a **Google Geocoding API**.
+
+### Chave de API do Google (Opcional)
+* **Caráter Opcional:** O uso de uma chave do Google é totalmente **opcional** e de responsabilidade/custo do próprio usuário. O plugin funciona perfeitamente sem chave (utilizando a cascata pública e gratuita Nominatim → Photon → corretor de vias Overpass).
+* **Como obter e habilitar:**
+  1. Acesse o [Google Cloud Console](https://console.cloud.google.com/).
+  2. Crie um projeto e ative a **Geocoding API**.
+  3. Em *Credenciais*, crie uma **API Key** (chave de API) e configure restrições de uso recomendadas.
+* **Onde configurar no plugin:** Na página de **Paradas** do assistente, clique no botão **"Configurar geocodificação…"** (ao lado do botão *Geocodificar*). Na janela que se abre:
+  * Escolha o modo de operação: `Automático (usa Google se houver chave)` ou `Somente OSM (Nominatim + Photon)`.
+  * Cole sua chave de API no campo `Chave da API do Google Maps`.
+  * Clique em **Testar chave** para verificar a validade das credenciais.
+* **Persistência segura:** A chave é salva localmente nas configurações do seu usuário no QGIS (`QSettings`), e **nunca** é gravada no arquivo `.gpkg` do projeto nem exportada no feed GTFS, garantindo que suas credenciais não vazem ao compartilhar arquivos de projeto.
+
+### Leitura dos Novos Status de Procedência
+Quando a busca por paradas é realizada, o plugin exibe a procedência do ponto localizado nos rótulos de status:
+* **`✓ localizado (Google)`**: A parada foi localizada via Google Geocoding API (primeiro provedor acionado quando a chave está configurada).
+* **`✓ localizado (Nominatim)`**: A parada foi localizada pela busca direta no Nominatim.
+* **`✓ localizado (Photon)`**: A parada foi localizada através do fallback do Photon.
+* **`✓ localizado (via: <nome real> — OSM)`**: A parada foi localizada após correção de grafia feita pelo corretor de vias do Overpass/OSM.
+
+---
+
 ## Roteamento e Traçado OSM (OpenStreetMap)
 
 Um dos grandes diferenciais do SIG-Bus na criação do GTFS é a geração do traçado das rotas (`shapes.txt`):
