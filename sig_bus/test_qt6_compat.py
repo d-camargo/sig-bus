@@ -8,7 +8,7 @@ import os
 import re
 
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
-EXCLUDED_FILES = {'conftest.py', 'resources.py', 'test_qt6_compat.py'}
+EXCLUDED_FILES = {'conftest.py', 'test_qt6_compat.py'}
 
 # Qt.<Membro> fora da forma qualificada Qt.<Enum>.<Membro>.
 QT_MEMBER_RE = re.compile(r'\bQt\.\w+(?:\.\w+)?\b')

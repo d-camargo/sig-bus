@@ -94,6 +94,18 @@ demand allocation method, see `sig_bus/METHODS.md`.
 Expected demand data follows the SIU-BHTrans format
 (`;`-delimited CSV, columns `0`–`23` with hourly boardings).
 
+## Release Process
+
+To package and release a new version of the SIG-Bus plugin:
+
+1. **Update version:** Edit `sig_bus/metadata.txt` to increment `version=X.Y` (ensuring `qgisMinimumVersion=3.40` and `supportsQt6=True`).
+2. **Update Changelog:** Add release notes under a new version heading in `CHANGELOG.md`.
+3. **Run Test Suite:** Execute `pytest` to verify all tests and guards pass.
+4. **Package Plugin:** Create the distribution `.zip` archive using `qgis-plugin-ci` or `make package`:
+   - Via `qgis-plugin-ci`: `qgis-plugin-ci package <version>`
+   - Via `make`: `cd sig_bus && make package VERSION=v<version>`
+5. **Tag and Publish:** Create and push a Git tag (e.g. `git tag -a v0.5 -m "Release 0.5" && git push origin v0.5`) and upload the generated `.zip` to QGIS Plugin Repository or GitHub Releases.
+
 ## Author
 
 Diego Camargo — <diegocamargo.bft@gmail.com>  
@@ -197,6 +209,18 @@ teórico do método de alocação de demanda, veja `sig_bus/METHODS.md`.
 `docs/gtfsfiles.zip` contém um feed GTFS para testes.
 Os dados de demanda esperados seguem o formato do SIU-BHTrans
 (CSV separado por `;`, colunas `0`–`23` com embarques por hora).
+
+## Ritual de Release
+
+Para empacotar e publicar uma nova versão do plugin SIG-Bus:
+
+1. **Atualizar versão:** Edite `sig_bus/metadata.txt` para incrementar `version=X.Y` (mantendo `qgisMinimumVersion=3.40` e `supportsQt6=True`).
+2. **Atualizar Changelog:** Registre as novidades em `CHANGELOG.md` sob o cabeçalho da nova versão.
+3. **Executar Testes:** Rode `pytest` no repositório para garantir que todos os testes e guardas passem.
+4. **Empacotar o Plugin:** Gere o arquivo `.zip` para distribuição usando `qgis-plugin-ci` ou `make package`:
+   - Via `qgis-plugin-ci`: `qgis-plugin-ci package <versao>`
+   - Via `make`: `cd sig_bus && make package VERSION=v<versao>`
+5. **Publicar e Taggear:** Crie e envie a tag Git (ex.: `git tag -a v0.5 -m "Release 0.5" && git push origin v0.5`) e faça o upload do `.zip` gerado para o repositório de plugins do QGIS ou GitHub Releases.
 
 ## Autor
 
