@@ -230,7 +230,8 @@ A navegação pelo assistente de construção de GTFS ocorre da seguinte forma a
 4.  **Página 3: Sequência (`page_sequencia`)**
     *   Reordenação visual das paradas inseridas (subir/descer na lista) e deduplicação opcional de nomes e endereços.
 5.  **Página 4: Horários (`page_horarios`)**
-    *   Configuração da operação horária da linha baseada em frequências (início, fim e intervalo).
+    *   Configuração da operação horária da linha baseada em frequências (início, fim, intervalo e **duração da viagem**).
+    *   **Ajuste fino no diagrama** (Fase 12): a mesma página traz uma `BlockView`/`BlockScene` em Modo Viagens sobre a grade em memória (`self.build_stop_times`), com passo configurável, legenda dos atalhos, rótulo dos dias do calendário e botão "Restaurar frequência regular".
 6.  **Página 5: Revisão (`page_revisao`)**
     *   Resumo de todas as informações inseridas para a linha.
     *   Permite salvar a linha (persiste no banco de dados e calcula o traçado viário via OSM/Dijkstra).
@@ -248,3 +249,76 @@ A implementação seguiu passos incrementais para assegurar a testabilidade das 
 4.  **Pipeline de Roteamento viário com OSM**: Integração com a API do Overpass e processamento do grafo pelo `qgis.analysis`.
 5.  **Interface gráfica**: Desenvolvimento dinâmico do assistente, `QStackedWidget`, lógica de navegação dos botões e ligação com o canvas nativo.
 6.  **Integração e Validação**: Ligação de "Construir GTFS" à aba "Edição GTFS" compartilhando o mesmo GeoPackage de trabalho.
+
+
+---
+
+## 9. AJUSTE FINO DE HORÁRIOS (Fase 12 — decisões 71-81)
+
+Na operação real o intervalo encurta no pico e alarga fora dele, então a
+frequência única propagada para o dia inteiro não basta. O ajuste acontece
+**antes de gravar**, sobre a grade que o assistente já monta em memória.
+
+### 9.1 Decisões
+
+*   **71 — O ajuste é etapa do assistente, não uma segunda tela de edição do
+    `feed_edit.gpkg`.** Opera sobre `self.build_stop_times`/`self.build_trips`,
+    antes de qualquer gravação. Ajustar depois, na aba "Edição GTFS", continua
+    possível (decisão 23) — só deixa de ser o único caminho.
+*   **72 — Um conjunto de viagens por `service_id`; o `calendar` é quem
+    multiplica pelos dias.** Não existe cópia de viagem por dia da semana: um
+    `>` ali mexe nos cinco dias de uma vez. O que a Fase 12 acrescenta é a tela
+    **dizer isso** (rótulo "Estas N viagens valem para: seg, ter, ...").
+*   **73 — Reaproveitar `BlockScene`/`BlockView`/`block_core.Trip`.** A geometria,
+    o eixo de tempo, as faixas, as cores e a exportação PNG/SVG continuam sendo o
+    código do Diagrama de Blocos; a Fase 12 só acrescenta edição.
+*   **74 — Núcleo de edição puro em `schedule_edit_core.py`, sem Qt.** Extensão da
+    decisão 31: deslocar viagem, deslocar extremo, resumir a grade, calcular
+    headway e validar são funções sobre listas de dicionários de `stop_times`,
+    verificáveis por `pytest` fora do QGIS (`test_schedule_edit_core.py`).
+*   **75 — O headway vira cota e vale nos dois modos.** `_show_headway` não sai
+    mais cedo em Modo Viagens; a diagonal entre centros de barra deu lugar a uma
+    cota horizontal com linhas de chamada verticais.
+*   **76 — Os atalhos são lidos por `event.text()`, não por keycode**, porque `>`
+    e `<` ficam em teclas diferentes em ABNT2 e US-International.
+    `Key_Plus`/`Key_Minus` do teclado numérico são aceitos em adição.
+*   **77 — O passo do deslocamento é configurável, com 15 min de padrão.**
+*   **78 — `>`/`<` movem só o extremo selecionado e re-interpolam o miolo;
+    `+`/`-` movem a viagem inteira.** O clique escolhe a viagem **e** o extremo
+    mais próximo do X clicado. A sequência de horários nunca decresce, e um
+    deslocamento que inverteria saída e chegada é recusado (a função devolve a
+    grade original).
+*   **79 — Cada tecla redesenha a cena inteira via `set_schedule`.** Uma linha tem
+    dezenas de viagens, não milhares: reconstruir o `Schedule` é mais simples e
+    menos sujeito a estado inconsistente que mutar item a item. A seleção
+    (viagem + extremo) é restaurada logo depois do redesenho.
+*   **80 — `save_route` ganha `stop_times=None`: sem o parâmetro, nada muda.**
+*   **81 — Viagem precisa ter duração > 0 e `trip_id` único.**
+
+### 9.2 Módulo `schedule_edit_core.py`
+
+Funções puras (sem Qt no nível do módulo; `block_core` só é importado sob demanda
+dentro de `schedule_from_draft`):
+
+| Função | Papel |
+|---|---|
+| `expand_frequency_to_stop_times(stop_ids, hora_inicio, hora_fim, intervalo_min, duracao_min=None, prefix=None)` | Gera a grade regular. `duracao_min` distribui os horários linearmente entre as paradas (antes toda parada recebia o mesmo horário — barra de largura zero); `prefix` compõe `trip_<prefix>_<HHMMSS>`, evitando a colisão de `trip_id` entre linhas que saem no mesmo horário. Sem os dois, o comportamento anterior é preservado. |
+| `trips_from_stop_times(stop_times)` | Resume a grade em `{trip_id, start_s, end_s, n_stops}`, em ordem de saída. |
+| `headways(stop_times)` | `{trip_id: headway_s}` em relação à viagem anterior **na ordem da grade** — headway negativo denuncia ordem trocada por um ajuste. |
+| `shift_trip(stop_times, trip_id, delta_s)` | `+`/`-`: move a viagem inteira, preservando a duração. Recusa o que iria para antes de `00:00:00`; horários acima de 24 h são mantidos (o GTFS permite). |
+| `shift_trip_endpoint(stop_times, trip_id, endpoint, delta_s)` | `>`/`<`: move só `'first'` (saída) ou `'last'` (chegada) e redistribui linearmente as paradas intermediárias. Recusa o cruzamento dos extremos. |
+| `validate_draft_times(stop_times)` | Devolve `(erros, avisos)`. Erro bloqueia o avanço; aviso só pede confirmação. |
+| `schedule_from_draft(stop_times, route_short_name, direction_id, service_id, trip_headsign)` | Converte a grade num `block_core.Schedule` (`mode='trips'`) para a cena desenhar — sem tocar em `sqlite3`. O `ScheduleReader` continua sendo o único caminho para o diagrama que lê do GeoPackage. |
+
+Todas devolvem listas novas: a grade de entrada nunca é mutada.
+
+### 9.3 Contrato novo de `save_route`
+
+`save_route(gpkg_path, agency, linha, paradas, service, frequencia, stop_times=None)`.
+
+Sem `stop_times`, nada muda: a função expande `frequencia` como antes (agora
+repassando `duracao_min` e o prefixo de `trip_id`). Com `stop_times`, grava
+**exatamente** aquelas linhas, derivando a lista de viagens dos `trip_id`
+distintos na ordem de saída — é o que impede o `DELETE` + reexpansão de apagar o
+ajuste manual no "Salvar Linha". O `DELETE` prévio das viagens da rota continua
+igual.

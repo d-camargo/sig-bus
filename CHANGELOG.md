@@ -12,6 +12,22 @@ o **Diagrama de Blocos** (alocação de frota). Feed de referência nos testes: 
 
 ---
 
+## Não lançado — Ajuste fino dos horários no Diagrama de Blocos (Fase 12)
+
+A página "Horários" do assistente "Construir GTFS" pedia um único intervalo e o propagava igual para o dia inteiro. Na operação real o intervalo encurta no pico e alarga fora dele — esta fase permite acertar **viagem a viagem** ainda no bloco de construção, antes de a linha virar dado gravado, reaproveitando o Diagrama de Blocos que o plugin já tem.
+
+Do ponto de vista de **transporte público**, é a diferença entre um quadro de horários teórico (frequência constante das 5h às 23h) e o quadro que a operação realmente pratica. E o ajuste é feito onde ele custa menos: antes da gravação, sem precisar abrir a tabela crua de `stop_times` depois.
+
+- **Duração da viagem (decisão 81a)**: `expand_frequency_to_stop_times` ganhou `duracao_min`. Antes, **todas** as paradas de uma viagem recebiam o mesmo horário — viagem de duração zero, sem chegada para deslocar e com `arrival_time == departure_time` na última parada. Agora os horários são distribuídos linearmente entre a primeira e a última parada. Sem o parâmetro, o comportamento antigo é preservado.
+- **`trip_id` único por linha e sentido (decisão 81b)**: o id gerado era `trip_<HHMMSS>`, sem linha nem sentido — duas linhas que saem 06:00 produziam o mesmo `trip_id`, e o editor indexa viagem por `trip_id`. O parâmetro `prefix` compõe `trip_<linha>_<sentido>_<HHMMSS>`.
+- **Núcleo puro `schedule_edit_core.py` (decisão 74)**: deslocar viagem (`shift_trip`), deslocar extremo com re-interpolação do miolo (`shift_trip_endpoint`), resumir a grade (`trips_from_stop_times`), calcular intervalos (`headways`), validar (`validate_draft_times` → `(erros, avisos)`) e montar o `Schedule` da cena (`schedule_from_draft`) — tudo sobre listas de dicionários, sem Qt, coberto por `test_schedule_edit_core.py`.
+- **Atalhos de teclado (decisões 76-78)**: `>`/`<` movem só a saída **ou** só a chegada (o clique na metade esquerda/direita da barra escolhe qual) e redistribuem as paradas intermediárias; `+`/`-` movem a viagem inteira preservando a duração. As teclas são lidas por `event.text()` — `>` e `<` ficam em teclas diferentes em ABNT2 e US-International. O passo é configurável (padrão 15 min).
+- **Headway vira cota de desenho técnico (decisão 75)**: era uma diagonal entre os centros de duas barras em sub-linhas diferentes; agora é uma linha horizontal com linhas de chamada verticais até os dois inícios e o valor no meio — e passa a valer também no Modo Viagens, que é o modo da página de ajuste.
+- **Gravar não apaga mais o ajuste (decisão 80)**: `save_route` ganhou `stop_times=None`. Com a grade ajustada, grava exatamente aquelas linhas em vez de reexpandir a frequência; sem o parâmetro, nada muda para quem já chamava a função.
+- **Um ajuste vale para todos os dias do calendário (decisão 72)**: no GTFS um único conjunto de viagens já atende os cinco dias úteis — quem diz "seg a sex" é o `calendar`. O comportamento já era esse; o que faltava era a tela dizer isso, e agora um rótulo acima do diagrama lista os dias.
+
+---
+
 ## Não lançado — Google Maps opcional + Overpass como último degrau grátis (Fase 11)
 
 Esta fase adiciona o suporte opcional à **Google Geocoding API** como primeiro provedor de geocodificação e introduz o corretor de grafia via **Overpass (OSM)** como último recurso para resolver nomes de vias digitados incorretamente.

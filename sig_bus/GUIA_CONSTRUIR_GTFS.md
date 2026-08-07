@@ -63,13 +63,33 @@ O assistente guia o usuário página por página (uma linha de cada vez) atravé
 * **Objetivo:** Gerar as viagens e os horários em cada parada de forma automática, evitando digitação tabela a tabela.
 * **Configuração:**
   * **Calendário:** Reutilizar um calendário existente (ex: dias úteis, sábados, domingos) ou criar um novo definindo o identificador (`service_id`), os dias de operação e o período de vigência (datas de início e término).
-  * **Frequência:** Informar a hora de início da operação, a hora de término e o intervalo entre as viagens (em minutos).
-* **Expansão Automática:** O plugin expande a frequência e distribui os horários de chegada (`arrival_time`) e partida (`departure_time`) linearmente entre as paradas na tabela `stop_times`.
+  * **Frequência:** Informar a hora de início da operação, a hora de término, o intervalo entre as viagens (em minutos) e a **duração da viagem (em minutos)**.
+* **Expansão Automática:** O plugin expande a frequência e distribui os horários de chegada (`arrival_time`) e partida (`departure_time`) linearmente entre as paradas na tabela `stop_times` com base na duração informada.
+
+### 5.1 Ajuste de horários (diagrama, na mesma página)
+* **Objetivo:** Visualizar e refinar viagem a viagem o quadro gerado pela frequência — ainda em memória, antes de qualquer gravação. Na operação real o intervalo encurta no pico e alarga fora dele.
+* **Diagrama:** o mesmo Diagrama de Blocos do plugin, em Modo Viagens: cada viagem é uma barra cuja largura é a duração informada acima.
+* **Seleção:** clique na barra da viagem. A **metade esquerda** seleciona a **saída**; a **metade direita**, a **chegada**.
+* **Passo:** o campo **Passo** define quantos minutos cada tecla desloca (padrão: 15 minutos).
+* **Atalhos de teclado** (clique no diagrama antes, para ele receber o teclado):
+
+  | Tecla | Efeito |
+  |---|---|
+  | `>` | adia o extremo selecionado (saída **ou** chegada) em um passo |
+  | `<` | antecipa o extremo selecionado em um passo |
+  | `+` | adia a viagem inteira (saída e chegada juntas), preservando a duração |
+  | `-` | antecipa a viagem inteira, preservando a duração |
+
+  Ao mover um extremo, as paradas intermediárias são redistribuídas linearmente entre a saída e a chegada resultantes. Um deslocamento que inverteria saída e chegada é recusado — a grade fica como estava.
+* **Indicador de headway (cota):** com uma viagem selecionada, uma cota de desenho técnico liga a saída da viagem anterior à da selecionada, com o valor `headway N min`.
+* **Restaurar frequência regular:** descarta os ajustes manuais e regera a grade a partir da hora de início/fim, intervalo e duração. Mudar qualquer um desses quatro campos também regera a grade.
+* **Um ajuste vale para todos os dias do calendário.** No GTFS um único conjunto de viagens já atende os cinco dias úteis — quem diz "seg a sex" é o calendário (`service_id`), não uma cópia por dia. O rótulo acima do diagrama mostra para quais dias aquele conjunto vale.
+* **Validação ao avançar:** erro (chegada antes da partida, sequência decrescente, saída ≥ chegada) **bloqueia** o avanço; aviso (duas viagens saindo no mesmo horário, ordem trocada, headway muito acima do típico) pede confirmação.
 
 ### 6. Revisão e Salvar
 * **Objetivo:** Revisar o resumo das configurações da linha e gravá-las definitivamente.
 * **Ações Disponíveis:**
-  * **Salvar Linha:** Grava a rota, viagens, calendários, paradas e horários no GeoPackage, além de calcular o traçado geométrico.
+  * **Salvar Linha:** Grava a rota, viagens, calendários, paradas e horários (incluindo os horários ajustados na etapa anterior) no GeoPackage, além de calcular o traçado geométrico.
   * **Adicionar segundo sentido desta linha:** Inverte a ordem das paradas para facilitar o cadastro do sentido de volta (sentido oposto).
   * **Nova linha:** Reinicia o assistente na etapa da identidade da rota para cadastrar uma nova linha de ônibus.
   * **Ir para Edição GTFS:** Redireciona o usuário para a aba de Edição GTFS, mantendo a mesma cópia de trabalho ativa.
@@ -119,9 +139,10 @@ Um dos grandes diferenciais do SIG-Bus na criação do GTFS é a geração do tr
 4. **Adicionar Paradas:** Digite os endereços no padrão (ou importe um lote via **Importar CSV** / `modelo_paradas.csv`), clique em **Geocodificar** para encontrar as coordenadas automaticamente. Para paradas rurais ou sem endereço, use o botão **Marcar no mapa** para indicar a posição diretamente no canvas.
 5. **Confirmar no Mapa:** Clique em **Confirmar e avançar**. As paradas temporárias serão carregadas no canvas do QGIS. Use a ferramenta de vértices para arrastar as paradas para a posição correta na via, se necessário.
 6. **Ordenar Paradas:** Avance para a página "Sequência" (as coordenadas editadas no canvas serão salvas automaticamente). Ordene os pontos de parada usando os botões de mover para cima/baixo.
-7. **Definir Horários:** Configure ou selecione o calendário de operação, defina a hora de início, hora de término e o intervalo (ex: a cada 20 minutos). Clique em **Avançar**.
-8. **Revisar e Salvar:** Verifique o resumo gerado e clique em **Salvar linha**. O plugin gravará as feições e calculará o traçado pelas ruas automaticamente.
-9. **Finalizar ou Cadastrar Mais:** Escolha entre criar o sentido de volta (segundo sentido), cadastrar outra linha ou clicar em **Ir para Edição GTFS** para validar e exportar o feed compactado `.zip` final.
+7. **Definir Horários e Duração:** Configure ou selecione o calendário de operação, defina a hora de início, hora de término, o intervalo (ex: a cada 20 minutos) e a duração estimada da viagem (em minutos).
+8. **Ajustar Horários no Diagrama (opcional):** Ainda na página "Horários", use o diagrama para acertar viagem a viagem: clique numa barra e use `>`/`<` (só a saída ou a chegada) ou `+`/`-` (a viagem inteira), com o passo definido no campo **Passo**. Clique em **Avançar**.
+9. **Revisar e Salvar:** Verifique o resumo gerado e clique em **Salvar linha**. O plugin gravará as feições e calculará o traçado pelas ruas automaticamente.
+10. **Finalizar ou Cadastrar Mais:** Escolha entre criar o sentido de volta (segundo sentido), cadastrar outra linha ou clicar em **Ir para Edição GTFS** para validar e exportar o feed compactado `.zip` final.
 
 ---
 
@@ -178,6 +199,14 @@ Abaixo estão listadas as mensagens de aviso e de erro emitidas pelo assistente:
 * **"O intervalo de frequência deve ser maior que 0."** (Aviso)
   * **Causa:** O intervalo entre viagens foi configurado com valor zero ou negativo.
   * **Solução:** Defina um intervalo de tempo maior que zero (ex: `15` minutos).
+
+* **"A grade de horários contém inconsistências e não pode avançar: ..."** (Aviso)
+  * **Causa:** O ajuste manual no diagrama deixou uma viagem inconsistente (chegada anterior à partida na mesma parada, sequência de paradas decrescente ou saída igual/posterior à chegada).
+  * **Solução:** Corrija a viagem citada com `>`/`<`/`+`/`-`, ou clique em **Restaurar frequência regular** para voltar à grade gerada automaticamente.
+
+* **"A grade de horários tem pontos a conferir: ... Avançar assim mesmo?"** (Pergunta)
+  * **Causa:** Duas viagens saem no mesmo horário, o ajuste inverteu a ordem de duas viagens ou algum headway ficou acima do triplo do intervalo típico.
+  * **Solução:** Nenhuma correção é obrigatória — confirme se o quadro é mesmo esse (pico/entrepico) ou volte e ajuste.
 
 * **"Dados de horários/calendário não foram configurados."** (Aviso)
   * **Causa:** O assistente tentou salvar a linha sem que a página de horários tivesse sido concluída com sucesso.

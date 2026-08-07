@@ -23,13 +23,16 @@ import sqlite3
 try:
     from . import gtfs_schema
     from . import gtfs_reader
+    from .schedule_edit_core import expand_frequency_to_stop_times
 except ImportError:
     try:
         import gtfs_schema
         import gtfs_reader
+        from schedule_edit_core import expand_frequency_to_stop_times
     except ImportError:
         from sig_bus import gtfs_schema
         from sig_bus import gtfs_reader
+        from sig_bus.schedule_edit_core import expand_frequency_to_stop_times
 
 
 def compute_progress(gpkg_path):
@@ -295,62 +298,23 @@ def list_reusable_calendars(gpkg_path):
             conn.close()
 
 
-def expand_frequency_to_stop_times(stop_ids, hora_inicio, hora_fim, intervalo_min):
-    """
-    Função pura (sem I/O) que gera as viagens e as linhas de stop_times
-    (trip_id, arrival_time, departure_time, stop_id, stop_sequence)
-    para uma frequência regular.
-    """
-    def to_seconds(time_str):
-        parts = time_str.split(':')
-        h = int(parts[0])
-        m = int(parts[1])
-        s = int(parts[2]) if len(parts) > 2 else 0
-        return h * 3600 + m * 60 + s
-
-    def from_seconds(seconds):
-        h = seconds // 3600
-        m = (seconds % 3600) // 60
-        s = seconds % 60
-        return f"{h:02d}:{m:02d}:{s:02d}"
-
-    start_sec = to_seconds(hora_inicio)
-    end_sec = to_seconds(hora_fim)
-    step_sec = int(intervalo_min) * 60
-
-    if step_sec <= 0:
-        return [], []
-
-    trips = []
-    stop_times = []
-
-    current_sec = start_sec
-    while current_sec <= end_sec:
-        time_str = from_seconds(current_sec)
-        trip_id = f"trip_{time_str.replace(':', '')}"
-
-        trips.append({
-            "trip_id": trip_id
-        })
-
-        for idx, stop_id in enumerate(stop_ids, start=1):
-            stop_times.append({
-                "trip_id": trip_id,
-                "arrival_time": time_str,
-                "departure_time": time_str,
-                "stop_id": stop_id,
-                "stop_sequence": idx
-            })
-
-        current_sec += step_sec
-
-    return trips, stop_times
+def _time_to_seconds(time_str):
+    """Converte 'HH:MM[:SS]' em segundos desde 00:00 (0 se ilegível)."""
+    try:
+        parts = str(time_str).split(':')
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + (int(parts[2]) if len(parts) > 2 else 0)
+    except (ValueError, IndexError, TypeError):
+        return 0
 
 
-def save_route(gpkg_path, agency, linha, paradas, service, frequencia):
+def save_route(gpkg_path, agency, linha, paradas, service, frequencia, stop_times=None):
     """
     Grava ou atualiza a agência (uma vez), insere a rota, viagens, paradas
     (reaproveitando existentes), calendário e horários de parada no GeoPackage.
+
+    Se ``stop_times`` for fornecido (grade já ajustada à mão), essas linhas são
+    gravadas exatamente como estão — as viagens saem dos ``trip_id`` distintos,
+    na ordem de saída — em vez de expandir ``frequencia``.
     """
     import uuid
     from osgeo import ogr
@@ -530,20 +494,37 @@ def save_route(gpkg_path, agency, linha, paradas, service, frequencia):
         """, (route_id,))
         cursor.execute("DELETE FROM trips WHERE route_id = ?", (route_id,))
 
-        # Expande frequência para viagens e tempos de parada
-        if isinstance(frequencia, dict):
-            hora_inicio = frequencia.get("hora_inicio")
-            hora_fim = frequencia.get("hora_fim")
-            intervalo_min = frequencia.get("intervalo_min")
-        else:
-            hora_inicio, hora_fim, intervalo_min = frequencia
-
-        trips_list, stop_times_list = expand_frequency_to_stop_times(
-            stop_ids, hora_inicio, hora_fim, intervalo_min
-        )
-
         direction_id = linha.get("direction_id")
         trip_headsign = linha.get("trip_headsign")
+        short_name = linha.get("route_short_name") or route_id
+
+        if stop_times:
+            # Grade já ajustada: grava exatamente essas linhas
+            stop_times_list = list(stop_times)
+            saidas = {}
+            for st in stop_times_list:
+                trip_id = st.get("trip_id")
+                sec = _time_to_seconds(st.get("departure_time") or st.get("arrival_time"))
+                if trip_id not in saidas or sec < saidas[trip_id]:
+                    saidas[trip_id] = sec
+            trips_list = [{"trip_id": trip_id}
+                          for trip_id in sorted(saidas, key=lambda t: saidas[t])]
+        else:
+            # Expande frequência para viagens e tempos de parada
+            if isinstance(frequencia, dict):
+                hora_inicio = frequencia.get("hora_inicio")
+                hora_fim = frequencia.get("hora_fim")
+                intervalo_min = frequencia.get("intervalo_min")
+                duracao_min = frequencia.get("duracao_min")
+            else:
+                duracao_min = frequencia[3] if len(frequencia) > 3 else None
+                hora_inicio, hora_fim, intervalo_min = frequencia[:3]
+
+            prefix = f"{short_name}_{direction_id}" if direction_id is not None else str(short_name)
+
+            trips_list, stop_times_list = expand_frequency_to_stop_times(
+                stop_ids, hora_inicio, hora_fim, intervalo_min, duracao_min=duracao_min, prefix=prefix
+            )
 
         # Insere viagens
         physical_cols = get_physical_cols("trips")

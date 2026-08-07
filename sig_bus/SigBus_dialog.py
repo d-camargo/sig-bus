@@ -1417,9 +1417,15 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.spin_interval.setValue(30)
         self.spin_interval.setSuffix(" minutos")
         
+        self.spin_duration = QtWidgets.QSpinBox()
+        self.spin_duration.setRange(1, 600)
+        self.spin_duration.setValue(30)
+        self.spin_duration.setSuffix(" minutos")
+        
         form_freq.addRow("Hora de Início *:", self.time_start)
         form_freq.addRow("Hora de Fim *:", self.time_end)
         form_freq.addRow("Intervalo *:", self.spin_interval)
+        form_freq.addRow("Duração da Viagem *:", self.spin_duration)
         
         layout_horarios.addWidget(group_freq)
         
@@ -1436,6 +1442,45 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
         """)
         layout_horarios.addWidget(self.label_trips_summary)
+
+        # Grupo Diagrama de Horários (Visualização e Ajuste Manual)
+        group_diagram = QtWidgets.QGroupBox("Diagrama de Horários (Visualização e Ajuste)")
+        layout_group_diag = QVBoxLayout(group_diagram)
+
+        from .block_scene import BlockScene
+        from .block_view import BlockView
+
+        self.schedule_scene = BlockScene()
+        self.schedule_view = BlockView()
+        self.schedule_view.setScene(self.schedule_scene)
+        self.schedule_view.setMinimumHeight(200)
+        self.schedule_view.nudgeKeyPressed.connect(self._on_schedule_nudge_key)
+
+        # Passo do deslocamento (decisão 77) + botão de restaurar a frequência
+        linha_ajuste = QtWidgets.QHBoxLayout()
+        self.spin_schedule_step = QtWidgets.QSpinBox()
+        self.spin_schedule_step.setRange(1, 30)
+        self.spin_schedule_step.setValue(15)
+        self.spin_schedule_step.setSuffix(" minutos")
+        self.btn_restaurar_frequencia = QtWidgets.QPushButton("Restaurar frequência regular")
+        self.btn_restaurar_frequencia.clicked.connect(self._recalculate_draft_schedule)
+        linha_ajuste.addWidget(QLabel("Passo:"))
+        linha_ajuste.addWidget(self.spin_schedule_step)
+        linha_ajuste.addStretch()
+        linha_ajuste.addWidget(self.btn_restaurar_frequencia)
+        layout_group_diag.addLayout(linha_ajuste)
+
+        layout_group_diag.addWidget(QLabel(
+            "Clique numa viagem (metade esquerda = saída, metade direita = chegada). "
+            "Atalhos: <b>&gt;</b>/<b>&lt;</b> movem só a saída ou a chegada; "
+            "<b>+</b>/<b>-</b> movem a viagem inteira."))
+        # Decisão 72: um conjunto de viagens vale para todos os dias do calendário.
+        self.label_schedule_dias = QLabel("")
+        layout_group_diag.addWidget(self.label_schedule_dias)
+        layout_group_diag.addWidget(self.schedule_view)
+        self.label_schedule_status = QLabel("")
+        layout_group_diag.addWidget(self.label_schedule_status)
+        layout_horarios.addWidget(group_diagram)
         
         layout_horarios.addStretch()
         self.stacked_build.addWidget(self.page_horarios)
@@ -1512,6 +1557,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.time_start.timeChanged.connect(self._update_estimated_trips)
         self.time_end.timeChanged.connect(self._update_estimated_trips)
         self.spin_interval.valueChanged.connect(self._update_estimated_trips)
+        self.spin_duration.valueChanged.connect(self._update_estimated_trips)
         
         self._update_estimated_trips()
 
@@ -2868,8 +2914,9 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 QMessageBox.warning(self, "Intervalo inválido", "O intervalo de frequência deve ser maior que 0.")
                 return
                 
-            # 3. Chama expand_frequency_to_stop_times
-            from sig_bus.gtfs_builder_core import expand_frequency_to_stop_times
+            duracao_min = self.spin_duration.value()
+
+            # 3. Grade de horários (gerada por _recalculate_draft_schedule)
             stop_ids = [stop.get("stop_id") for stop in self.sequenced_stops if stop.get("stop_id")]
             if not stop_ids:
                 QMessageBox.warning(self, "Paradas vazias", "A lista de paradas está vazia. Volte e adicione paradas.")
@@ -2878,31 +2925,58 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             hora_inicio = t_start.toString("HH:mm:ss")
             hora_fim = t_end.toString("HH:mm:ss")
             
-            trips_list, stop_times_list = expand_frequency_to_stop_times(
-                stop_ids=stop_ids,
-                hora_inicio=hora_inicio,
-                hora_fim=hora_fim,
-                intervalo_min=interval_min
-            )
-            
+            # A grade em memória só é regerada quando os parâmetros da página
+            # mudaram — senão o ajuste manual feito no diagrama seria descartado.
+            assinatura = self._draft_signature(stop_ids, hora_inicio, hora_fim,
+                                               interval_min, duracao_min)
+            if not getattr(self, 'build_stop_times', None) or \
+                    getattr(self, '_build_draft_signature', None) != assinatura:
+                self._recalculate_draft_schedule()
+
+            trips_list = getattr(self, 'build_trips', [])
+
+            from .schedule_edit_core import validate_draft_times
+            erros, avisos = validate_draft_times(getattr(self, 'build_stop_times', []))
+            if erros:
+                msg = "A grade de horários contém inconsistências e não pode avançar:\n\n- " + "\n- ".join(erros)
+                QMessageBox.warning(self, "Grade de horários inválida", msg)
+                return
+            if avisos:
+                msg = ("A grade de horários tem pontos a conferir:\n\n- "
+                       + "\n- ".join(avisos) + "\n\nAvançar assim mesmo?")
+                resposta = QMessageBox.question(
+                    self, "Confirmar grade de horários", msg,
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No)
+                if resposta != QMessageBox.StandardButton.Yes:
+                    return
+
             # Salva temporariamente na instância para uso pela próxima etapa (passo 51)
             self.build_service = calendar_data
-            self.build_frequencia = (hora_inicio, hora_fim, interval_min)
-            self.build_trips = trips_list
-            self.build_stop_times = stop_times_list
+            self.build_frequencia = {
+                "hora_inicio": hora_inicio,
+                "hora_fim": hora_fim,
+                "intervalo_min": interval_min,
+                "duracao_min": duracao_min,
+            }
             
             # Mostra o resumo na página de revisão (index 5)
             stops_summary = " -> ".join(stop.get("stop_name") for stop in self.sequenced_stops)
             cal_summary = "Calendário: {}".format(calendar_data if isinstance(calendar_data, str) else calendar_data['service_id'])
-            freq_summary = "Das {} às {} a cada {} min".format(t_start.toString('HH:mm'), t_end.toString('HH:mm'), interval_min)
+            freq_summary = "Das {} às {} a cada {} min (duração: {} min)".format(
+                t_start.toString('HH:mm'), t_end.toString('HH:mm'), interval_min, duracao_min
+            )
             trips_count_summary = "Total de viagens geradas: {}".format(len(trips_list))
-            
+            grade_summary = self._draft_summary()
+
             summary_text = (
                 "<b>RESUMO DA LINHA:</b><br/><br/>"
                 "<b>Paradas na sequência:</b><br/>{}<br/><br/>"
                 "<b>{}</b><br/>"
                 "<b>Janela de Horário:</b> {}<br/>"
-                "<b>Viagens:</b> {}".format(stops_summary, cal_summary, freq_summary, trips_count_summary)
+                "<b>Viagens:</b> {}<br/>"
+                "<b>Grade ajustada:</b> {}".format(stops_summary, cal_summary, freq_summary,
+                                                   trips_count_summary, grade_summary)
             )
             self.label_revisao_summary.setText(summary_text)
             
@@ -3140,7 +3214,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 linha=linha,
                 paradas=self.sequenced_stops,
                 service=service,
-                frequencia=frequencia
+                frequencia=frequencia,
+                stop_times=getattr(self, 'build_stop_times', None)
             )
 
             # 2. Calcula o traçado via roteamento OSM com fallback por trecho e gera a camada shapes
@@ -3338,6 +3413,166 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             count = (end_sec - start_sec) // step_sec + 1
             
         self.label_trips_summary.setText("Número estimado de viagens: <b>{}</b>".format(count))
+        self._recalculate_draft_schedule()
+
+    def _draft_signature(self, stop_ids, hora_inicio, hora_fim, interval_min, duracao_min):
+        """Identidade dos parâmetros que geraram a grade em memória — muda
+        quando o usuário mexe na página de horários, e só então a grade
+        ajustada à mão é descartada."""
+        return (tuple(stop_ids), hora_inicio, hora_fim, interval_min, duracao_min,
+                self._build_trip_prefix())
+
+    def _build_trip_prefix(self):
+        short_name = ""
+        if hasattr(self, 'input_route_short_name'):
+            short_name = self.input_route_short_name.text().strip()
+        short_name = short_name or "route"
+        return "{}_{}".format(short_name, getattr(self, "build_direction_id", "0"))
+
+    def _recalculate_draft_schedule(self):
+        """(Re)gera a grade em memória a partir da frequência da página e
+        redesenha o diagrama. Descarta qualquer ajuste manual — é o caminho
+        de 'restaurar frequência regular'."""
+        if not hasattr(self, 'schedule_scene'):
+            return
+
+        stop_ids = [stop.get("stop_id") for stop in getattr(self, 'sequenced_stops', [])
+                    if stop.get("stop_id")]
+        if not stop_ids:
+            # Sem paradas sequenciadas não há grade real a mostrar — nunca
+            # inventar stop_ids, que iriam parar no feed_edit.gpkg.
+            self.build_trips = []
+            self.build_stop_times = []
+            self._build_draft_signature = None
+            self.schedule_scene.clear()
+            return
+
+        hora_inicio = self.time_start.time().toString("HH:mm:ss")
+        hora_fim = self.time_end.time().toString("HH:mm:ss")
+        interval_min = self.spin_interval.value()
+        duracao_min = self.spin_duration.value()
+
+        from .schedule_edit_core import expand_frequency_to_stop_times
+        trips_list, stop_times_list = expand_frequency_to_stop_times(
+            stop_ids=stop_ids,
+            hora_inicio=hora_inicio,
+            hora_fim=hora_fim,
+            intervalo_min=interval_min,
+            duracao_min=duracao_min,
+            prefix=self._build_trip_prefix()
+        )
+
+        self.build_trips = trips_list
+        self.build_stop_times = stop_times_list
+        self._build_draft_signature = self._draft_signature(
+            stop_ids, hora_inicio, hora_fim, interval_min, duracao_min)
+        self._render_schedule_diagram()
+
+    def _render_schedule_diagram(self):
+        if not hasattr(self, 'schedule_scene'):
+            return
+
+        stop_times_list = getattr(self, 'build_stop_times', [])
+        if not stop_times_list:
+            self.schedule_scene.clear()
+            return
+
+        from .schedule_edit_core import schedule_from_draft
+
+        short_name = ""
+        if hasattr(self, 'input_route_short_name'):
+            short_name = self.input_route_short_name.text().strip()
+        service = getattr(self, 'build_service', None)
+        if isinstance(service, dict):
+            service_id = service.get('service_id', '')
+        else:
+            service_id = service or ''
+
+        sched = schedule_from_draft(
+            stop_times_list,
+            route_short_name=short_name or "route",
+            direction_id=getattr(self, "build_direction_id", "0"),
+            service_id=service_id,
+            trip_headsign=self.sequenced_stops[-1].get("stop_name", "")
+            if getattr(self, 'sequenced_stops', None) else ''
+        )
+        self.schedule_scene.set_schedule(sched)
+        self.schedule_view.fit_all()
+        self._update_schedule_days_label(len(sched.trips))
+
+    def _update_schedule_days_label(self, n_viagens):
+        """Decisão 72: um conjunto de viagens vale para todos os dias do
+        calendário — a tela precisa dizer isso, para o ajuste não ser feito
+        no escuro."""
+        if not hasattr(self, 'label_schedule_dias'):
+            return
+        dias = [chk.text() for chk in getattr(self, 'chk_days', []) if chk.isChecked()]
+        if dias:
+            self.label_schedule_dias.setText(
+                "Estas {} viagens valem para: {}".format(n_viagens, ", ".join(dias)))
+        else:
+            self.label_schedule_dias.setText(
+                "Estas {} viagens ainda não têm dias de operação marcados.".format(n_viagens))
+
+    def _draft_summary(self):
+        """Primeira saída, última chegada e headway mínimo/máximo da grade
+        ajustada — usado no resumo da revisão."""
+        from .schedule_edit_core import trips_from_stop_times, headways, from_seconds
+        viagens = trips_from_stop_times(getattr(self, 'build_stop_times', []))
+        if not viagens:
+            return "sem viagens"
+        hw = [v for v in headways(getattr(self, 'build_stop_times', [])).values()
+              if v is not None]
+        texto = "primeira saída {} · última chegada {}".format(
+            from_seconds(viagens[0]["start_s"]),
+            from_seconds(max(v["end_s"] for v in viagens)))
+        if hw:
+            texto += " · headway de {} a {} min".format(
+                round(min(hw) / 60.0), round(max(hw) / 60.0))
+        return texto
+
+    def _on_schedule_nudge_key(self, tecla):
+        """'+'/'-' deslocam a viagem inteira; '>'/'<' só o extremo
+        selecionado (decisão 78). O passo vem do QSpinBox da página."""
+        if not hasattr(self, 'schedule_scene'):
+            return
+        trip_item = self.schedule_scene._selected_item
+        if trip_item is None:
+            self.label_schedule_status.setText("Selecione uma viagem no diagrama.")
+            return
+
+        selected_trip = trip_item.trip
+        endpoint = getattr(self.schedule_scene, 'selected_endpoint', None) or 'first'
+        passo_s = self.spin_schedule_step.value() * 60
+        delta_s = passo_s if tecla in ('>', '+') else -passo_s
+
+        from .schedule_edit_core import (shift_trip, shift_trip_endpoint,
+                                         trips_from_stop_times, headways, from_seconds)
+
+        if tecla in ('>', '<'):
+            self.build_stop_times = shift_trip_endpoint(
+                self.build_stop_times, selected_trip.trip_id, endpoint, delta_s)
+        else:
+            self.build_stop_times = shift_trip(
+                self.build_stop_times, selected_trip.trip_id, delta_s)
+
+        self._render_schedule_diagram()
+
+        # Restaura a seleção (viagem + extremo) depois do redesenho.
+        item = self.schedule_scene._trip_items.get(selected_trip.trip_id)
+        if item is not None:
+            self.schedule_scene.select_trip_item(item, endpoint=endpoint)
+
+        atual = next((v for v in trips_from_stop_times(self.build_stop_times)
+                      if v["trip_id"] == selected_trip.trip_id), None)
+        if atual is not None:
+            hw = headways(self.build_stop_times).get(selected_trip.trip_id)
+            texto = "Viagem {} · saída {} · chegada {}".format(
+                atual["trip_id"], from_seconds(atual["start_s"]), from_seconds(atual["end_s"]))
+            if hw is not None:
+                texto += " · headway {} min".format(round(hw / 60.0))
+            self.label_schedule_status.setText(texto)
+
 
     def _move_sequence_up(self):
         row = self.list_widget_sequencia.currentRow()

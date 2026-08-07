@@ -17,13 +17,18 @@
  ***************************************************************************/
 """
 
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtGui import QImage, QPainter
 from qgis.PyQt.QtWidgets import QGraphicsView
 
 
 class BlockView(QGraphicsView):
     """View do diagrama: zoom na roda, pan no botão do meio."""
+
+    # Emitido quando o usuário tecla '>', '<', '+' ou '-'. O diálogo conecta
+    # este sinal para deslocar a viagem selecionada ('+'/'-') ou só o extremo
+    # selecionado ('>'/'<') — a view não conhece o modelo.
+    nudgeKeyPressed = pyqtSignal(str)
 
     _ZOOM_STEP = 1.15
     _MIN_SCALE = 0.15
@@ -37,6 +42,7 @@ class BlockView(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setBackgroundBrush(Qt.GlobalColor.white)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)   # para receber o teclado
         self._scale = 1.0
         self._panning = False
         self._pan_last = None
@@ -96,6 +102,20 @@ class BlockView(QGraphicsView):
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    # --- Teclado (nudge) -----------------------------------------------
+    def keyPressEvent(self, event):
+        # event.text() entrega o caractere já resolvido pelo layout — '>' e '<'
+        # ficam em teclas diferentes em ABNT2 e em US-International.
+        tecla = event.text()
+        if tecla not in ('>', '<', '+', '-'):
+            # Teclado numérico, onde text() pode vir vazio.
+            tecla = {Qt.Key.Key_Plus: '+', Qt.Key.Key_Minus: '-'}.get(event.key())
+        if tecla:
+            self.nudgeKeyPressed.emit(tecla)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     # --- Exportação -----------------------------------------------------
     def export_png(self, path, scale=2.0):

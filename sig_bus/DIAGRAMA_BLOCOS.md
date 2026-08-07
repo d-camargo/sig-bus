@@ -185,16 +185,33 @@ bem distintas mesmo com dezenas de veículos.
 
 ### 5.3 Indicador de headway (seleção)
 
-Ao clicar numa viagem no **Modo Blocos**, desenha-se uma **pontilhada** ligando o início
-da **viagem anterior da mesma linha+sentido** ao início da viagem selecionada, com
-marcadores nos dois pontos e o rótulo `headway N min`. A viagem anterior é pré-computada
-em `_prev_trip` (agrupando por `(linha, sentido)` e ordenando por início). Como essa
-anterior costuma ser de **outro veículo**, a linha cruza faixas — exibindo visualmente o
-intervalo entre partidas. A primeira viagem de cada linha/sentido não tem headway.
+Ao clicar numa viagem — **nos dois modos** —, desenha-se uma **cota de desenho técnico**
+ligando o início da **viagem anterior da mesma linha+sentido** ao início da viagem
+selecionada: linha de cota **horizontal** acima das duas barras, **linhas de chamada
+verticais** descendo até cada início, traços nas duas pontas e o rótulo `headway N min`
+centralizado. A cota é sempre reta, mesmo quando as duas viagens estão em sub-linhas
+diferentes (antes era uma diagonal entre os centros das barras). A viagem anterior é
+pré-computada em `_prev_trip` (agrupando por `(linha, sentido)` e ordenando por início);
+a primeira viagem de cada linha/sentido não tem headway.
+
+### 5.3.1 Seleção de extremo
+
+`TripItem.mousePressEvent` escolhe, além da viagem, o **extremo mais próximo do X
+clicado**: metade esquerda → `'first'` (saída), metade direita → `'last'` (chegada).
+`BlockScene.select_trip_endpoint(item, endpoint)` guarda o extremo em
+`selected_endpoint` e emite `endpointClicked(Trip, str)`, ao lado do `tripClicked` já
+existente — o diálogo standalone do Diagrama de Blocos continua funcionando sem conectar
+nada novo. Quem usa isso é a etapa de ajuste de horários da aba "Construir GTFS", que
+precisa saber qual ponta mover com `>`/`<`.
 
 ### 5.4 Interação (`block_view.py`)
 
 - **Roda do mouse** → zoom (âncora sob o cursor); **botão do meio** → pan.
+- **Teclado:** `>`, `<`, `+` e `-` emitem `nudgeKeyPressed(str)` com o caractere. A leitura
+  é por `event.text()` (o layout já resolveu a tecla — `>` e `<` ficam em teclas diferentes
+  em ABNT2 e US-International), com `Key_Plus`/`Key_Minus` do teclado numérico aceitos em
+  adição. A view continua sem conhecer o modelo: quem traduz tecla em deslocamento de
+  horário é o diálogo.
 - `fit_all()` enquadra a cena inteira ao gerar — essencial porque uma faixa de ida muito
   alta (linha movimentada) escondia a faixa de volta abaixo da tela.
 - Export **PNG** (`QImage`, 2×) e **SVG** (`QSvgGenerator`, se `QtSvg` presente).

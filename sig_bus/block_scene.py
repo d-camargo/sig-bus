@@ -258,9 +258,15 @@ class TripItem(QGraphicsRectItem):
 
     def mousePressEvent(self, event):
         sc = self.scene()
-        if sc is not None and hasattr(sc, 'tripClicked'):
-            sc.select_trip_item(self)
-            sc.tripClicked.emit(self.trip)
+        if sc is not None:
+            r = self.rect()
+            endpoint = 'first' if event.pos().x() < r.center().x() else 'last'
+            if hasattr(sc, 'select_trip_endpoint'):
+                sc.select_trip_endpoint(self, endpoint)
+            elif hasattr(sc, 'select_trip_item'):
+                sc.select_trip_item(self, endpoint=endpoint)
+            if hasattr(sc, 'tripClicked'):
+                sc.tripClicked.emit(self.trip)
         super().mousePressEvent(event)
 
 
@@ -268,11 +274,13 @@ class BlockScene(QGraphicsScene):
     """Cena do diagrama. set_schedule(schedule) (re)desenha tudo."""
 
     tripClicked = pyqtSignal(object)   # Trip
+    endpointClicked = pyqtSignal(object, str)  # Trip, 'first'|'last'
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.mapper = None
         self._selected_item = None
+        self._selected_endpoint = None
         self._route_colors = {}
         self._block_colors = {}
         self._mode = 'trips'
@@ -287,15 +295,27 @@ class BlockScene(QGraphicsScene):
         return self._terminal_codes.get(headsign or '', '')
 
     # ------------------------------------------------------------------
-    def select_trip_item(self, item):
+    def select_trip_item(self, item, endpoint=None):
         if self._selected_item is not None and self._selected_item is not item:
             try:
                 self._selected_item.set_highlighted(False)
             except RuntimeError:
                 pass   # item já removido
         self._selected_item = item
+        self._selected_endpoint = endpoint
         item.set_highlighted(True)
         self._show_headway(item.trip)
+
+    def select_trip_endpoint(self, item, endpoint):
+        """Seleciona uma viagem e um de seus extremos ('first' ou 'last')."""
+        if endpoint not in ('first', 'last'):
+            raise ValueError(f"endpoint deve ser 'first' ou 'last', recebido: {endpoint!r}")
+        self.select_trip_item(item, endpoint=endpoint)
+        self.endpointClicked.emit(item.trip, endpoint)
+
+    @property
+    def selected_endpoint(self):
+        return self._selected_endpoint
 
     # ------------------------------------------------------------------
     def _clear_headway(self):
@@ -307,12 +327,11 @@ class BlockScene(QGraphicsScene):
         self._headway_items = []
 
     def _show_headway(self, trip):
-        """Desenha (só no Modo Blocos) a pontilhada do headway da viagem
-        selecionada: liga o início da viagem ANTERIOR da mesma linha+sentido
-        ao início da viagem selecionada, com o valor em minutos."""
+        """Desenha o indicador de headway em cota da viagem selecionada (nos
+        dois modos): liga o início da viagem ANTERIOR da mesma linha+sentido
+        ao início da viagem selecionada com linha de cota horizontal e
+        linhas de chamada verticais, indicando o valor em minutos."""
         self._clear_headway()
-        if self._mode != 'blocks':
-            return
         prev = self._prev_trip.get(trip.trip_id)
         if prev is None:
             return
@@ -326,13 +345,22 @@ class BlockScene(QGraphicsScene):
         x1, y1 = r_prev.left(), r_prev.center().y()
         x2, y2 = r_sel.left(), r_sel.center().y()
 
+        y_cota = min(r_prev.top(), r_sel.top()) - 12
+
         pen = QPen(QColor('#111111'))
         pen.setStyle(Qt.PenStyle.DashLine)
         pen.setWidthF(1.2)
-        self._headway_items.append(self.addLine(x1, y1, x2, y2, pen))
-        # marcadores verticais nos dois inícios
-        for x, yc in ((x1, y1), (x2, y2)):
-            self._headway_items.append(self.addLine(x, yc - 6, x, yc + 6, pen))
+
+        # Linhas de chamada verticais das viagens ate a cota
+        self._headway_items.append(self.addLine(x1, y1, x1, y_cota, pen))
+        self._headway_items.append(self.addLine(x2, y2, x2, y_cota, pen))
+
+        # Linha horizontal de cota
+        self._headway_items.append(self.addLine(x1, y_cota, x2, y_cota, pen))
+
+        # Marcadores verticais nos dois extremos da cota
+        for x in (x1, x2):
+            self._headway_items.append(self.addLine(x, y_cota - 4, x, y_cota + 4, pen))
 
         mins = round((trip.start_time_s - prev.start_time_s) / 60.0)
         label = QGraphicsSimpleTextItem('headway {} min'.format(mins))
@@ -341,7 +369,7 @@ class BlockScene(QGraphicsScene):
         label.setFont(f)
         label.setBrush(QBrush(QColor('#111111')))
         br = label.boundingRect()
-        label.setPos((x1 + x2) / 2.0 - br.width() / 2.0, min(y1, y2) - 18)
+        label.setPos((x1 + x2) / 2.0 - br.width() / 2.0, y_cota - 16)
         self.addItem(label)
         self._headway_items.append(label)
         for it in self._headway_items:
@@ -374,6 +402,7 @@ class BlockScene(QGraphicsScene):
         diferenciado pela hachura da volta (ver TripItem.paint)."""
         self.clear()
         self._selected_item = None
+        self._selected_endpoint = None
         self._route_colors = {}
         self._block_colors = {}
         self._idle_segments = []
