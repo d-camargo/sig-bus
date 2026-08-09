@@ -2,7 +2,12 @@
 """Guarda de regressão Qt6: nenhum enum do Qt5/QGIS 3 em forma não
 qualificada pode voltar ao pacote por copy-paste de código antigo
 (decisão 41 e decisão 55, PLAN.md). Varredura de texto pura — não importa PyQt nem
-QGIS, roda em qualquer ambiente."""
+QGIS, roda em qualquer ambiente.
+
+Exceção por linha (decisão 90): ``# qt6-compat: <justificativa>`` no fim da
+linha isenta **aquela** linha das violações. A justificativa é obrigatória —
+pragma vazio não isenta nada, para a exceção não virar um jeito silencioso de
+desligar a guarda."""
 import glob
 import os
 import re
@@ -56,19 +61,35 @@ def _source_files():
         yield path
 
 
-def _scan(path):
+# Supressão por linha: `# qt6-compat:` seguido de justificativa não vazia.
+_SUPPRESS_RE = re.compile(r'#\s*qt6-compat:\s*\S')
+
+
+def _is_exempt(line):
+    """Só isenta com justificativa: `# qt6-compat:` sozinho não vale."""
+    return bool(_SUPPRESS_RE.search(line))
+
+
+def _scan_lines(lines):
+    """Violações de uma sequência de linhas: `(lineno, achado, forma correta)`."""
     violations = []
-    with open(path, encoding='utf-8') as handle:
-        for lineno, line in enumerate(handle, start=1):
-            for match in QT_MEMBER_RE.finditer(line):
-                text = match.group(0)
-                if text.count('.') < 2:
-                    member = text.split('.', 1)[1]
-                    violations.append((lineno, text, 'Qt.<Enum>.%s' % member))
-            for pattern, fix in LEGACY_PATTERNS:
-                for match in pattern.finditer(line):
-                    violations.append((lineno, match.group(0), fix))
+    for lineno, line in enumerate(lines, start=1):
+        if _is_exempt(line):
+            continue
+        for match in QT_MEMBER_RE.finditer(line):
+            text = match.group(0)
+            if text.count('.') < 2:
+                member = text.split('.', 1)[1]
+                violations.append((lineno, text, 'Qt.<Enum>.%s' % member))
+        for pattern, fix in LEGACY_PATTERNS:
+            for match in pattern.finditer(line):
+                violations.append((lineno, match.group(0), fix))
     return violations
+
+
+def _scan(path):
+    with open(path, encoding='utf-8') as handle:
+        return _scan_lines(handle.readlines())
 
 
 def test_no_legacy_qt5_enum_usage():
@@ -83,3 +104,24 @@ def test_no_legacy_qt5_enum_usage():
     assert not failures, (
         "Enum(s) de API antiga do Qt5/QGIS 3 encontrados:\n" + "\n".join(failures)
     )
+
+
+def test_pragma_isenta_so_a_linha_e_so_com_justificativa():
+    """Passo 140: o próprio pragma, sobre strings em memória."""
+    # Sem pragma: continua violação.
+    assert _scan_lines(['f = QVariant.String\n'])
+
+    # Com pragma justificado: isenta.
+    assert not _scan_lines(
+        ['f = QVariant.String  # qt6-compat: fallback QGIS<3.38\n'])
+
+    # Pragma sem justificativa não isenta nada.
+    assert _scan_lines(['f = QVariant.String  # qt6-compat:\n'])
+    assert _scan_lines(['f = QVariant.String  # qt6-compat\n'])
+
+    # A isenção vale só para a linha que a carrega.
+    achados = _scan_lines([
+        'a = QVariant.String  # qt6-compat: fallback QGIS<3.38\n',
+        'b = QVariant.Int\n',
+    ])
+    assert [lineno for lineno, _, _ in achados] == [2]

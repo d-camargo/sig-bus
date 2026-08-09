@@ -63,8 +63,8 @@ plugin by CTU GeoForAll Lab (GPL v2+). No external plugin is required.
 
 ## Requirements
 
-- QGIS 3.40 LTR or later — runs on both QGIS 3.40 (Qt 5) and QGIS 4 (Qt 6)
-  (tested on 3.44 and 4.2)
+- QGIS 3.34 LTR through 4.x — runs on both Qt 5 (QGIS 3.x) and Qt 6 (QGIS 4.x)
+  (declared range `3.34` – `4.99`; probed on 3.34.4, tested on 3.44 and 4.2)
 - QGIS built-in Python (no external dependencies beyond QGIS itself)
 
 ## Installation
@@ -98,13 +98,14 @@ Expected demand data follows the SIU-BHTrans format
 
 To package and release a new version of the SIG-Bus plugin:
 
-1. **Update version:** Edit `sig_bus/metadata.txt` to increment `version=X.Y` (ensuring `qgisMinimumVersion=3.40` and `supportsQt6=True`).
+1. **Update version:** Edit `sig_bus/metadata.txt` to increment `version=X.Y` (keeping `qgisMinimumVersion=3.34`, `qgisMaximumVersion=4.99` and `supportsQt6=True` — without the maximum, QGIS assumes `3.99` and rejects every QGIS 4.x).
 2. **Update Changelog:** Add release notes under a new version heading in `CHANGELOG.md`.
 3. **Run Test Suite:** Execute `pytest` to verify all tests and guards pass.
-4. **Package Plugin:** Create the distribution `.zip` archive using `qgis-plugin-ci` or `make package`:
+4. **Probe the installed QGIS:** Run `python3 sig_bus/scripts/check_qgis_compat.py` against the QGIS you are targeting — it imports every module, builds a `QgsField`, checks the qualified-enum inventory and loads the `.ui`, printing `OK`/`FAIL` per item.
+5. **Package Plugin:** Create the distribution `.zip` archive using `qgis-plugin-ci` or `make package`:
    - Via `qgis-plugin-ci`: `qgis-plugin-ci package <version>`
    - Via `make`: `cd sig_bus && make package VERSION=v<version>`
-5. **Tag and Publish:** Create and push a Git tag (e.g. `git tag -a v0.5 -m "Release 0.5" && git push origin v0.5`) and upload the generated `.zip` to QGIS Plugin Repository or GitHub Releases.
+6. **Tag and Publish:** Create and push a Git tag (e.g. `git tag -a v0.5 -m "Release 0.5" && git push origin v0.5`) and upload the generated `.zip` to QGIS Plugin Repository or GitHub Releases.
 
 ## Author
 
@@ -179,8 +180,9 @@ necessário.
 
 ## Requisitos
 
-- QGIS 3.40 LTR ou superior — roda tanto no QGIS 3.40 (Qt 5) quanto no
-  QGIS 4 (Qt 6) (testado em 3.44 e 4.2)
+- QGIS 3.34 LTR até a série 4.x — roda tanto em Qt 5 (QGIS 3.x) quanto em
+  Qt 6 (QGIS 4.x) (faixa declarada `3.34` – `4.99`; sondado no 3.34.4,
+  testado em 3.44 e 4.2)
 - Python embutido do QGIS (sem dependências externas além do QGIS)
 
 ## Instalação
@@ -214,13 +216,14 @@ Os dados de demanda esperados seguem o formato do SIU-BHTrans
 
 Para empacotar e publicar uma nova versão do plugin SIG-Bus:
 
-1. **Atualizar versão:** Edite `sig_bus/metadata.txt` para incrementar `version=X.Y` (mantendo `qgisMinimumVersion=3.40` e `supportsQt6=True`).
+1. **Atualizar versão:** Edite `sig_bus/metadata.txt` para incrementar `version=X.Y` (mantendo `qgisMinimumVersion=3.34`, `qgisMaximumVersion=4.99` e `supportsQt6=True` — sem o máximo, o QGIS assume `3.99` e recusa todo QGIS 4.x).
 2. **Atualizar Changelog:** Registre as novidades em `CHANGELOG.md` sob o cabeçalho da nova versão.
 3. **Executar Testes:** Rode `pytest` no repositório para garantir que todos os testes e guardas passem.
-4. **Empacotar o Plugin:** Gere o arquivo `.zip` para distribuição usando `qgis-plugin-ci` ou `make package`:
+4. **Sondar o QGIS instalado:** Rode `python3 sig_bus/scripts/check_qgis_compat.py` contra o QGIS alvo — ele importa cada módulo, constrói um `QgsField`, confere o inventário de enums qualificados e carrega o `.ui`, imprimindo `OK`/`FAIL` item a item.
+5. **Empacotar o Plugin:** Gere o arquivo `.zip` para distribuição usando `qgis-plugin-ci` ou `make package`:
    - Via `qgis-plugin-ci`: `qgis-plugin-ci package <versao>`
    - Via `make`: `cd sig_bus && make package VERSION=v<versao>`
-5. **Publicar e Taggear:** Crie e envie a tag Git (ex.: `git tag -a v0.5 -m "Release 0.5" && git push origin v0.5`) e faça o upload do `.zip` gerado para o repositório de plugins do QGIS ou GitHub Releases.
+6. **Publicar e Taggear:** Crie e envie a tag Git (ex.: `git tag -a v0.5 -m "Release 0.5" && git push origin v0.5`) e faça o upload do `.zip` gerado para o repositório de plugins do QGIS ou GitHub Releases.
 
 ## Autor
 

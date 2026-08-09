@@ -49,11 +49,28 @@ from qgis.core import (
 
 from qgis.PyQt.QtCore import QMetaType
 
-# QVariant.Type não existe mais no PyQt6 (QGIS 4): QgsField(nome,
-# QMetaType.Type) é a forma suportada desde o QGIS 3.38 e a única no QGIS 4
-# (decisão 36, PLAN.md). Um caminho de código só — roda no QGIS 3.40 e no 4.
-FIELD_STRING = QMetaType.Type.QString
-FIELD_INT = QMetaType.Type.Int
+
+def _resolve_field_types():
+    """Tipo de campo do `QgsField` resolvido por **capacidade**, não pela versão
+    declarada (decisões 87-89).
+
+    `QgsField(nome, QMetaType.Type)` existe do QGIS 3.38 em diante e é a única
+    forma no QGIS 4 — `QVariant.Type` não existe mais no PyQt6. Abaixo do 3.38
+    (o LTR 3.34 do Ubuntu 24.04, que roda tudo o mais do plugin) o construtor
+    levanta `TypeError` e a única saída é o `QVariant` do Qt5. Sondar é mais
+    barato e mais honesto do que cravar um piso de versão no metadata."""
+    from qgis.core import QgsField
+    try:
+        QgsField('_probe', QMetaType.Type.QString)
+    except TypeError:
+        # Só chega aqui em QGIS < 3.38, que é sempre Qt5 — importar QVariant
+        # aqui dentro, nunca no topo: no PyQt6 ele não tem .String/.Int.
+        from qgis.PyQt.QtCore import QVariant  # qt6-compat: fallback QGIS<3.38
+        return QVariant.String, QVariant.Int  # qt6-compat: fallback QGIS<3.38
+    return QMetaType.Type.QString, QMetaType.Type.Int
+
+
+FIELD_STRING, FIELD_INT = _resolve_field_types()
 
 LOG_TAG = 'SIG-Bus'
 

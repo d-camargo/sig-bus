@@ -40,7 +40,7 @@ def test_show_headway_cota():
     # - 2 linhas de chamada verticais
     # - 1 linha horizontal de cota
     # - 2 marcadores nos extremos da cota
-    # - 1 rótulo de texto ("headway 10 min")
+    # - 1 rótulo de texto ("10 min")
     assert len(scene._headway_items) == 6
     
     lines = [it for it in scene._headway_items if isinstance(it, QGraphicsLineItem)]
@@ -48,7 +48,7 @@ def test_show_headway_cota():
     
     assert len(lines) == 5
     assert len(labels) == 1
-    assert labels[0].text() == 'headway 10 min'
+    assert labels[0].text() == '10 min'
 
 
 def test_select_trip_endpoint():
@@ -104,7 +104,7 @@ def test_cota_tambem_no_modo_viagens():
     lines = [it for it in scene._headway_items if isinstance(it, QGraphicsLineItem)]
     labels = [it for it in scene._headway_items if isinstance(it, QGraphicsSimpleTextItem)]
     assert len(lines) == 5
-    assert labels[0].text() == 'headway 10 min'
+    assert labels[0].text() == '10 min'
 
     # A cota é reta: a linha horizontal tem os dois y iguais.
     horizontais = [ln for ln in lines if ln.line().y1() == ln.line().y2()
@@ -140,4 +140,3 @@ def test_nudge_key_emite_caracteres():
     view.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_A,
                                  Qt.KeyboardModifier.NoModifier, 'a'))
     assert emitidas == []
-

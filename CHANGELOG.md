@@ -12,7 +12,69 @@ o **Diagrama de Blocos** (alocação de frota). Feed de referência nos testes: 
 
 ---
 
-## Não lançado — Ajuste fino dos horários no Diagrama de Blocos (Fase 12)
+## 0.6 — Leitura do Diagrama de Blocos: cota enxuta e régua de saídas
+
+Duas mudanças de **leitura** no Diagrama de Blocos, pedidas depois de usar o
+ajuste fino de horários da 0.5. Nenhuma delas muda dado: as duas só mudam o que
+o diagrama conta a quem olha.
+
+Do ponto de vista de **transporte público**, a régua de saídas é a leitura que o
+quadro de horários não dá de graça: **quantas partidas por faixa horária,
+separadas por sentido** — exatamente o que se olha para decidir se o pico está
+coberto e se o intervalo entre-pico está frouxo.
+
+- **A cota mostra só a medida (decisão 96)**: o rótulo do indicador de headway
+  era `headway 12 min`; agora é `12 min`. Numa cota de desenho técnico o que se
+  lê é a medida — o que ela mede já está dito pela geometria (duas chamadas
+  verticais partindo de dois inícios da mesma linha e sentido). De quebra, o
+  rótulo curto cabe entre duas viagens próximas sem invadir a barra vizinha.
+- **Régua de saídas na base do diagrama (decisões 97-101)**: um traço vertical
+  curto e discreto por partida, **ida na banda de cima e volta na de baixo**, no
+  pé do eixo de tempo. A mancha de traços mostra pico e vale por sentido sem
+  precisar varrer o diagrama faixa por faixa. É derivada dos mesmos
+  `start_time_s` que desenham as barras (`departure_ticks`), então nasce correta
+  e acompanha qualquer deslocamento feito por `>`/`<`/`+`/`-`. Não é histograma,
+  não é clicável e não distingue linha; por ser item de cena, sai no PNG/SVG
+  exportado.
+
+---
+
+## 0.5.1 — Faixa de versões do QGIS: o plugin recusado no 4.2 e no 3.34
+
+Correção de **empacotamento**, não de lógica: nas duas pontas da faixa
+declarada, o gerenciador de complementos recusava um plugin que o código já
+suportava.
+
+- **O teto barrava o QGIS 4.2 (decisão 82)**: a 0.5 prometeu
+  `qgisMaximumVersion=4.99` e gravou `3.99`. O gerenciador mostrava *"Plugin
+  designed for QGIS 3.40 - 3.99"* e marcava o plugin como incompatível em todo
+  QGIS 4.x — apesar de a compatibilidade Qt6 já estar feita e testada.
+  Vale lembrar por que a chave não pode simplesmente sumir: **ausente**, o QGIS
+  assume `<major do mínimo>.99`, ou seja o mesmo 3.99 que causou o problema.
+- **O piso excluía o QGIS 3.34 (decisões 87-89)**: `qgisMinimumVersion=3.40` não
+  descrevia requisito nenhum do plugin — existia por causa de **uma linha**,
+  `FIELD_STRING = QMetaType.Type.QString`, já que `QgsField(nome,
+  QMetaType.Type)` só existe a partir do 3.38. A sondagem contra o 3.34.4 real
+  mostrou que **todo** o resto (enums qualificados, `writeAsVectorFormatV3`,
+  roteamento, import dos módulos) já roda lá. O tipo de campo agora é resolvido
+  **por capacidade** (`_resolve_field_types`, com fallback para `QVariant`), e o
+  piso desce para o LTR 3.34 que o Ubuntu 24.04 empacota.
+- **Faixa final: 3.34 – 4.99**, com guarda em `test_metadata.py` (comparando por
+  tupla de inteiros — em ordem lexicográfica `'3.99' > '4.99'`) e sondagem
+  manual contra o QGIS instalado via `sig_bus/scripts/check_qgis_compat.py`.
+- **O CHANGELOG não fica mais aberto (decisão 93)**: um teste falha se sobrar
+  seção "Não lançado" ou se a primeira seção de versão não casar com o
+  `version=` do `metadata.txt` — foi assim que as Fases 7 a 12 ficaram
+  publicadas sob "Não lançado" com a 0.5 já no ar.
+
+---
+
+## 0.5 — Construir GTFS, geocodificação e ajuste fino de horários
+
+*(Seções abaixo: entraram todas na 0.5, publicada sem que o CHANGELOG fosse
+fechado — daí a guarda da 0.5.1.)*
+
+### Ajuste fino dos horários no Diagrama de Blocos (Fase 12)
 
 A página "Horários" do assistente "Construir GTFS" pedia um único intervalo e o propagava igual para o dia inteiro. Na operação real o intervalo encurta no pico e alarga fora dele — esta fase permite acertar **viagem a viagem** ainda no bloco de construção, antes de a linha virar dado gravado, reaproveitando o Diagrama de Blocos que o plugin já tem.
 
@@ -28,7 +90,7 @@ Do ponto de vista de **transporte público**, é a diferença entre um quadro de
 
 ---
 
-## Não lançado — Google Maps opcional + Overpass como último degrau grátis (Fase 11)
+### Google Maps opcional + Overpass como último degrau grátis (Fase 11)
 
 Esta fase adiciona o suporte opcional à **Google Geocoding API** como primeiro provedor de geocodificação e introduz o corretor de grafia via **Overpass (OSM)** como último recurso para resolver nomes de vias digitados incorretamente.
 
@@ -41,7 +103,7 @@ Do ponto de vista de **transporte público**, a integração com o Google resolv
 
 ---
 
-## Não lançado — O Nominatim não perdoa erro de digitação (Fase 10)
+### O Nominatim não perdoa erro de digitação (Fase 10)
 
 Depois das correções da Fase 9 a requisição saía e o log provava isso — e mesmo
 assim o botão **Geocodificar** continuava devolvendo "não encontrado". A medição
@@ -106,7 +168,7 @@ lugar.
 
 ---
 
-## Não lançado — Geocodificação no QGIS 4 (Fase 9): enum de rede e bbox por município
+### Geocodificação no QGIS 4 (Fase 9): enum de rede e bbox por município
 
 No QGIS 4 (Qt 6) o botão **Geocodificar** devolvia "não encontrado" para *todo*
 endereço, com bairro e sem bairro. A causa era um enum não qualificado —
@@ -141,7 +203,7 @@ return []`. Toda requisição voltava vazia, sem nenhuma mensagem.
 - **Mensagem de resumo com contexto**: quando nenhuma parada é localizada, o aviso
   mostra o município/UF usados na busca e aponta o log `SIG-Bus`.
 
-### Arquivos tocados
+#### Arquivos tocados
 
 `geocoding.py`, `SigBus_dialog.py`, `gtfs_reader.py`, `osm_routing.py`,
 `conftest.py`, `test_geocoding.py`, `test_qt6_compat.py`,
@@ -149,7 +211,7 @@ return []`. Toda requisição voltava vazia, sem nenhuma mensagem.
 
 ---
 
-## Não lançado — Construção de GTFS (Fase 8): Padrão de Endereço, Geocodificação e Lote
+### Construção de GTFS (Fase 8): Padrão de Endereço, Geocodificação e Lote
 
 Melhorias de legibilidade, usabilidade e robustez na aba **Construir GTFS**:
 
@@ -161,13 +223,13 @@ Melhorias de legibilidade, usabilidade e robustez na aba **Construir GTFS**:
 - **Marcação no Mapa (Decisões 49 e 50)**: botão **Marcar no mapa** ativa a ferramenta interativa `PickStopPointTool` (`map_tools.py`) para selecionar coordenadas com um clique no canvas (ideal para linhas rurais), com adição automática do raster OpenStreetMap (`ensure_osm_basemap`).
 - **Importação de Paradas em Lote via CSV (Decisão 43)**: suporte à importação por arquivo CSV (delimitador `;`, UTF-8 com BOM, `stops_csv.py`), com o modelo de exemplo `modelo_paradas.csv` e guia explicativo `MODELO_PARADAS_CSV.md`.
 
-### Arquivos tocados
+#### Arquivos tocados
 
 `SigBus_dialog.py`, `geocoding.py`, `gtfs_builder_core.py`, `address_format.py` (novo), `stops_csv.py` (novo), `map_tools.py` (novo), `modelo_paradas.csv` (novo), `MODELO_PARADAS_CSV.md` (novo), `GUIA_CONSTRUIR_GTFS.md`, `ARQUITETURA_CONSTRUIR_GTFS.md`, `README.md`, `CHANGELOG.md`.
 
 ---
 
-## Não lançado — Suporte a QGIS 4 / Qt 6
+### Suporte a QGIS 4 / Qt 6
 
 O **QGIS 4 roda sobre Qt 6**, e o PyQt6 removeu os enums "curtos" do Qt 5
 (`Qt.AlignTop`, `Qt.Horizontal`, `QMessageBox.Yes`, `.exec_()` etc.), assim
@@ -197,7 +259,7 @@ no QGIS 3.40 LTR (Qt 5) quanto no QGIS 4 (Qt 6).
   reaparecer — evita que copy-paste de código antigo reintroduza a
   regressão.
 
-### Arquivos tocados
+#### Arquivos tocados
 
 `SigBus.py`, `SigBus_dialog.py`, `gtfs_reader.py`, `gtfs_export.py`,
 `block_core.py`, `block_diagram_dialog.py`, `block_scene.py`,

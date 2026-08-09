@@ -87,7 +87,7 @@ Core (Model)             block_core.py   → leitura, modelo, inferência (QgsTa
 | Arquivo | Camada | Responsabilidade |
 |---------|--------|------------------|
 | `block_core.py` | Core | `Trip`/`Block`/`BlockParams`/`Schedule`, `ScheduleReader`, `BlockBuilder`, `BlockDiagramTask` |
-| `block_scene.py` | Engine | `BlockScene`, `TripItem`, layout, cores, headway |
+| `block_scene.py` | Engine | `BlockScene`, `TripItem`, layout, cores, headway, `departure_ticks` (régua de saídas) |
 | `block_view.py` | Engine | `BlockView`: zoom, pan, export PNG/SVG |
 | `block_diagram_dialog.py` | Interface | janela, controles, painel de detalhes |
 | `SigBus_dialog.py` | Integração | botão “Diagrama de Blocos” + `diagramaClicked()` |
@@ -179,6 +179,7 @@ Subclasse de `QgsTask` (padrão `_GtfsLoadTask`/`_AlocacaoTask`): I/O pesado em 
 | **Cor** da barra | por **linha** | por **veículo** (matizes pelo ângulo áureo) |
 | **Espessura** | ida cheia, volta fina | idem |
 | Conectores pontilhados | — | **ociosidade** entre viagens do veículo |
+| Traço curto no pé do eixo | **régua de saídas**: 1 traço por partida, ida em cima / volta embaixo | idem |
 
 A cor por veículo usa rotação de matiz de 137,5° (`QColor.fromHsv`) para manter cores
 bem distintas mesmo com dezenas de veículos.
@@ -188,8 +189,9 @@ bem distintas mesmo com dezenas de veículos.
 Ao clicar numa viagem — **nos dois modos** —, desenha-se uma **cota de desenho técnico**
 ligando o início da **viagem anterior da mesma linha+sentido** ao início da viagem
 selecionada: linha de cota **horizontal** acima das duas barras, **linhas de chamada
-verticais** descendo até cada início, traços nas duas pontas e o rótulo `headway N min`
-centralizado. A cota é sempre reta, mesmo quando as duas viagens estão em sub-linhas
+verticais** descendo até cada início, traços nas duas pontas e o rótulo `N min`
+centralizado — numa cota o que se lê é a **medida**; o que ela mede (o intervalo entre
+inícios da mesma linha e sentido) já está dito pela geometria. A cota é sempre reta, mesmo quando as duas viagens estão em sub-linhas
 diferentes (antes era uma diagonal entre os centros das barras). A viagem anterior é
 pré-computada em `_prev_trip` (agrupando por `(linha, sentido)` e ordenando por início);
 a primeira viagem de cada linha/sentido não tem headway.
@@ -215,6 +217,26 @@ precisa saber qual ponta mover com `>`/`<`.
 - `fit_all()` enquadra a cena inteira ao gerar — essencial porque uma faixa de ida muito
   alta (linha movimentada) escondia a faixa de volta abaixo da tela.
 - Export **PNG** (`QImage`, 2×) e **SVG** (`QSvgGenerator`, se `QtSvg` presente).
+
+### 5.5 Régua de saídas
+
+No pé do eixo de tempo, abaixo da linha de base, um **traço vertical curto por
+partida**: banda de cima = **ida**, banda de baixo = **volta** (rotuladas na faixa de
+rótulos, e só quando há traço na banda). É o equivalente a um *rug plot* sob um eixo de
+tempo — a mancha de traços mostra sozinha onde está o **pico** e onde está o **vale** de
+saídas, por sentido, sem varrer o diagrama faixa por faixa.
+
+`departure_ticks(trips)` (função pura de módulo) devolve `(start_time_s, banda)` por
+viagem, ordenado por horário; `banda` é `'volta'` só quando `direction_id == '1'` —
+qualquer outro valor, inclusive vazio, é `'ida'`. `_draw_departure_rug` desenha a partir
+disso, e a altura reservada é `RUG_H` (constantes `RUG_TOP_GAP`, `RUG_TICK_H`,
+`RUG_BAND_GAP`), que o `sceneRect` e o rótulo de hora inferior já descontam.
+
+O que ela **não** é: não é histograma (não agrega por faixa, é um traço por viagem), não
+é clicável nem tem tooltip, e não distingue linha — só sentido. É **derivada**, não
+editável: sai dos mesmos `start_time_s` que desenham as barras, então acompanha qualquer
+deslocamento feito por `>`/`<`/`+`/`-` assim que a cena é redesenhada. Por ser item de
+cena, aparece no PNG/SVG exportado.
 
 ---
 
@@ -282,5 +304,9 @@ A camada de dados e o algoritmo (puro Python/SQLite) foram validados fora do QGI
   linhas, ociosidade).
 - Lógica de headway (`_prev_trip`): anterior correta por linha+sentido, sem headway na
   primeira viagem.
+- Régua de saídas (`test_block_scene_rug.py`): `departure_ticks` (um traço por viagem,
+  banda por sentido, `direction_id` vazio caindo em `'ida'`, saída ordenada) e a cena
+  (ida estritamente acima de volta, `sceneRect` crescendo `RUG_H`, rótulo `volta`
+  ausente num diagrama só de ida).
 
 A camada Qt/GUI (cena, view, diálogo) é validada manualmente dentro do QGIS.
