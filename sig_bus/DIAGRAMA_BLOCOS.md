@@ -87,6 +87,7 @@ Core (Model)             block_core.py   → leitura, modelo, inferência (QgsTa
 | Arquivo | Camada | Responsabilidade |
 |---------|--------|------------------|
 | `block_core.py` | Core | `Trip`/`Block`/`BlockParams`/`Schedule`, `ScheduleReader`, `BlockBuilder`, `BlockDiagramTask` |
+| `schedule_edit_core.py` | Core | Manipulação de grade de horários temporária para o ajuste fino (reaproveitamento da engine) |
 | `block_scene.py` | Engine | `BlockScene`, `TripItem`, layout, cores, headway, `departure_ticks` (régua de saídas) |
 | `block_view.py` | Engine | `BlockView`: zoom, pan, export PNG/SVG |
 | `block_diagram_dialog.py` | Interface | janela, controles, painel de detalhes |
