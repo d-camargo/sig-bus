@@ -10,7 +10,7 @@ import sys
 # Adiciona o diretório do projeto ao path
 sys.path.insert(0, '/home/diego/projects/sig-bus')
 
-from qgis.core import QgsPointXY
+from qgis.core import Qgis, QgsPointXY
 from sig_bus.gtfs_edit_core import WorkingCopy
 from sig_bus.gtfs_builder_core import (
     compute_progress,
@@ -18,6 +18,8 @@ from sig_bus.gtfs_builder_core import (
     find_existing_stop,
     list_reusable_calendars,
     expand_frequency_to_stop_times,
+    set_config,
+    get_config,
 )
 from sig_bus import gtfs_schema
 from sig_bus import gtfs_reader
@@ -313,6 +315,36 @@ class TestGtfsBuilderProgress(unittest.TestCase):
             "stop_sequence": 1
         })
 
+    def test_expand_frequency_duracao_min(self):
+        # Com duracao_min=30, 3 paradas em viagem das 06:00:
+        # stop1 → 06:00:00, stop2 → 06:15:00, stop3 → 06:30:00
+        stop_ids = ['stop1', 'stop2', 'stop3']
+        trips, stop_times = expand_frequency_to_stop_times(
+            stop_ids, "06:00", "06:00", 60, duracao_min=30
+        )
+
+        self.assertEqual(len(trips), 1)
+        self.assertEqual(len(stop_times), 3)
+
+        self.assertEqual(stop_times[0]["arrival_time"], "06:00:00")
+        self.assertEqual(stop_times[1]["arrival_time"], "06:15:00")
+        self.assertEqual(stop_times[2]["arrival_time"], "06:30:00")
+
+        # departure_time igual a arrival_time
+        for st in stop_times:
+            self.assertEqual(st["arrival_time"], st["departure_time"])
+
+    def test_expand_frequency_prefix(self):
+        stop_ids = ['stop1', 'stop2']
+        trips, stop_times = expand_frequency_to_stop_times(
+            stop_ids, "06:00", "07:00", 60, prefix="100_0"
+        )
+        self.assertEqual(len(trips), 2)
+        self.assertEqual(trips[0]["trip_id"], "trip_100_0_060000")
+        self.assertEqual(trips[1]["trip_id"], "trip_100_0_070000")
+        self.assertEqual(stop_times[0]["trip_id"], "trip_100_0_060000")
+        self.assertEqual(stop_times[2]["trip_id"], "trip_100_0_070000")
+
     def test_save_route(self):
         # 1. Cria gpkg vazio
         success = self.wc.enter_empty(overwrite=True)
@@ -382,7 +414,7 @@ class TestGtfsBuilderProgress(unittest.TestCase):
         cursor.execute("SELECT trip_id, route_id, service_id, direction_id, trip_headsign FROM trips ORDER BY trip_id")
         trips = cursor.fetchall()
         self.assertEqual(len(trips), 3)
-        self.assertEqual(trips[0][0], "trip_060000")
+        self.assertEqual(trips[0][0], "trip_100_0_060000")
         self.assertEqual(trips[0][3], "0")
         self.assertEqual(trips[0][4], "Destino Teste")
 
@@ -390,9 +422,111 @@ class TestGtfsBuilderProgress(unittest.TestCase):
         cursor.execute("SELECT trip_id, arrival_time, departure_time, stop_sequence FROM stop_times ORDER BY trip_id, stop_sequence")
         st = cursor.fetchall()
         self.assertEqual(len(st), 6) # 3 trips * 2 stops = 6 stop_times
-        self.assertEqual(st[0], ("trip_060000", "06:00:00", "06:00:00", "1"))
+        self.assertEqual(st[0], ("trip_100_0_060000", "06:00:00", "06:00:00", "1"))
 
         conn.close()
+
+    def test_save_route_with_duracao(self):
+        self.wc.enter_empty(overwrite=True)
+        from sig_bus.gtfs_builder_core import save_route
+
+        agency = {
+            "agency_name": "Empresa Teste",
+            "agency_url": "http://teste.com",
+            "agency_timezone": "America/Sao_Paulo",
+        }
+        linha = {
+            "route_short_name": "100",
+            "route_long_name": "Linha Teste",
+            "route_type": 3,
+            "direction_id": "0",
+            "trip_headsign": "Destino Teste",
+            "shape_id": "SHAPE_100"
+        }
+        paradas = [
+            {"stop_id": "S1", "stop_name": "Parada A", "lat": -23.55, "lon": -46.63, "status": "Nova"},
+            {"stop_id": "S2", "stop_name": "Parada B", "lat": -23.56, "lon": -46.64, "status": "Nova"}
+        ]
+        service = {
+            "service_id": "service_diario",
+            "monday": 1, "tuesday": 1, "wednesday": 1, "thursday": 1, "friday": 1,
+            "saturday": 0, "sunday": 0,
+            "start_date": "20260101", "end_date": "20261231"
+        }
+        frequencia = ("06:00:00", "06:00:00", 60, 30)
+
+        save_route(self.gpkg_path, agency, linha, paradas, service, frequencia)
+
+        conn = sqlite3.connect(self.gpkg_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT arrival_time, departure_time FROM stop_times ORDER BY stop_sequence")
+        st = cursor.fetchall()
+        conn.close()
+
+        self.assertEqual(st[0], ("06:00:00", "06:00:00"))
+        self.assertEqual(st[1], ("06:30:00", "06:30:00"))
+
+    def test_save_route_com_stop_times_ajustados(self):
+        self.wc.enter_empty(overwrite=True)
+        from sig_bus.gtfs_builder_core import save_route
+
+        agency = {
+            "agency_name": "Empresa Teste",
+            "agency_url": "http://teste.com",
+            "agency_timezone": "America/Sao_Paulo",
+        }
+        linha = {
+            "route_short_name": "100",
+            "route_long_name": "Linha Teste",
+            "route_type": "3",
+            "direction_id": "0",
+            "trip_headsign": "Destino Teste",
+        }
+        paradas = [
+            {"stop_name": "Parada A", "stop_lat": -20.0, "stop_lon": -40.0},
+            {"stop_name": "Parada B", "stop_lat": -20.1, "stop_lon": -40.1},
+        ]
+        service = {
+            "service_id": "service_diario",
+            "monday": "1", "tuesday": "1", "wednesday": "1", "thursday": "1",
+            "friday": "1", "saturday": "1", "sunday": "1",
+            "start_date": "20260101", "end_date": "20261231",
+        }
+        frequencia = ("06:00:00", "07:00:00", 60)
+
+        # Grade ajustada à mão: a segunda viagem foi deslocada 15 min
+        stop_times = [
+            {"trip_id": "trip_100_0_070000", "arrival_time": "07:15:00",
+             "departure_time": "07:15:00", "stop_id": "S1", "stop_sequence": 1},
+            {"trip_id": "trip_100_0_070000", "arrival_time": "07:15:00",
+             "departure_time": "07:15:00", "stop_id": "S2", "stop_sequence": 2},
+            {"trip_id": "trip_100_0_060000", "arrival_time": "06:00:00",
+             "departure_time": "06:00:00", "stop_id": "S1", "stop_sequence": 1},
+            {"trip_id": "trip_100_0_060000", "arrival_time": "06:00:00",
+             "departure_time": "06:00:00", "stop_id": "S2", "stop_sequence": 2},
+        ]
+
+        save_route(self.gpkg_path, agency, linha, paradas, service, frequencia,
+                   stop_times=stop_times)
+
+        conn = sqlite3.connect(self.gpkg_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT trip_id, arrival_time, departure_time, stop_sequence "
+            "FROM stop_times ORDER BY departure_time, stop_sequence"
+        )
+        st = cursor.fetchall()
+
+        # As viagens saem dos trip_id distintos, na ordem de saída
+        cursor.execute("SELECT trip_id FROM trips")
+        trips = [row[0] for row in cursor.fetchall()]
+        conn.close()
+
+        # Grava exatamente a grade ajustada — não a da frequência
+        self.assertEqual(len(st), 4)
+        self.assertEqual(st[0], ("trip_100_0_060000", "06:00:00", "06:00:00", "1"))
+        self.assertEqual(st[2], ("trip_100_0_070000", "07:15:00", "07:15:00", "1"))
+        self.assertEqual(trips, ["trip_100_0_060000", "trip_100_0_070000"])
 
     def test_save_agency_only(self):
         # 1. Cria gpkg vazio
@@ -484,6 +618,44 @@ class TestGtfsBuilderProgress(unittest.TestCase):
         self.assertAlmostEqual(polyline[1].y(), -23.555)
         self.assertAlmostEqual(polyline[2].x(), -46.64)
         self.assertAlmostEqual(polyline[2].y(), -23.56)
+
+    def test_set_config(self):
+        self.wc.enter_empty(overwrite=True)
+        set_config(self.gpkg_path, "uf", "RS")
+        set_config(self.gpkg_path, "municipio", "Caxias do Sul")
+
+        conn = sqlite3.connect(self.gpkg_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT chave, valor FROM sig_bus_config ORDER BY chave")
+        rows = dict(cursor.fetchall())
+        conn.close()
+
+        self.assertEqual(rows.get("uf"), "RS")
+        self.assertEqual(rows.get("municipio"), "Caxias do Sul")
+
+        # Test update (override)
+        set_config(self.gpkg_path, "uf", "SC")
+        conn = sqlite3.connect(self.gpkg_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT valor FROM sig_bus_config WHERE chave = 'uf'")
+        val = cursor.fetchone()[0]
+        conn.close()
+        self.assertEqual(val, "SC")
+
+    def test_get_config(self):
+        self.wc.enter_empty(overwrite=True)
+        self.assertEqual(get_config(self.gpkg_path, "build_city", ""), "")
+        set_config(self.gpkg_path, "build_city", "Caxias do Sul")
+        self.assertEqual(get_config(self.gpkg_path, "build_city", ""), "Caxias do Sul")
+
+    def test_sig_bus_config_fora_da_exportacao(self):
+        """Trava a decisão 46: a tabela interna de configuração nunca pode
+        entrar na whitelist de tabelas exportadas para o .zip do GTFS."""
+        caminho = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'gtfs_export.py')
+        with open(caminho, encoding='utf-8') as handle:
+            fonte = handle.read()
+        self.assertNotIn('sig_bus_config', fonte)
 
 
 if __name__ == '__main__':

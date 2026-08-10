@@ -17,7 +17,7 @@
  ***************************************************************************/
 """
 
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtGui import QImage, QPainter
 from qgis.PyQt.QtWidgets import QGraphicsView
 
@@ -25,18 +25,24 @@ from qgis.PyQt.QtWidgets import QGraphicsView
 class BlockView(QGraphicsView):
     """View do diagrama: zoom na roda, pan no botão do meio."""
 
+    # Emitido quando o usuário tecla '>', '<', '+' ou '-'. O diálogo conecta
+    # este sinal para deslocar a viagem selecionada ('+'/'-') ou só o extremo
+    # selecionado ('>'/'<') — a view não conhece o modelo.
+    nudgeKeyPressed = pyqtSignal(str)
+
     _ZOOM_STEP = 1.15
     _MIN_SCALE = 0.15
     _MAX_SCALE = 12.0
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setRenderHint(QPainter.Antialiasing, True)
-        self.setRenderHint(QPainter.TextAntialiasing, True)
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
-        self.setDragMode(QGraphicsView.NoDrag)
-        self.setBackgroundBrush(Qt.white)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        self.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self.setBackgroundBrush(Qt.GlobalColor.white)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)   # para receber o teclado
         self._scale = 1.0
         self._panning = False
         self._pan_last = None
@@ -63,16 +69,16 @@ class BlockView(QGraphicsView):
         if scene is None:
             return
         self.resetTransform()
-        self.fitInView(scene.sceneRect(), Qt.KeepAspectRatio)
+        self.fitInView(scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
         # Registra a escala resultante para os limites de zoom funcionarem.
         self._scale = self.transform().m11() or 1.0
 
     # --- Pan (botão do meio) -------------------------------------------
     def mousePressEvent(self, event):
-        if event.button() == Qt.MiddleButton:
+        if event.button() == Qt.MouseButton.MiddleButton:
             self._panning = True
             self._pan_last = event.pos()
-            self.setCursor(Qt.ClosedHandCursor)
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
             return
         super().mousePressEvent(event)
@@ -90,12 +96,26 @@ class BlockView(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MiddleButton and self._panning:
+        if event.button() == Qt.MouseButton.MiddleButton and self._panning:
             self._panning = False
             self.unsetCursor()
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    # --- Teclado (nudge) -----------------------------------------------
+    def keyPressEvent(self, event):
+        # event.text() entrega o caractere já resolvido pelo layout — '>' e '<'
+        # ficam em teclas diferentes em ABNT2 e em US-International.
+        tecla = event.text()
+        if tecla not in ('>', '<', '+', '-'):
+            # Teclado numérico, onde text() pode vir vazio.
+            tecla = {Qt.Key.Key_Plus: '+', Qt.Key.Key_Minus: '-'}.get(event.key())
+        if tecla:
+            self.nudgeKeyPressed.emit(tecla)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     # --- Exportação -----------------------------------------------------
     def export_png(self, path, scale=2.0):
@@ -105,10 +125,10 @@ class BlockView(QGraphicsView):
             return False
         rect = scene.sceneRect()
         img = QImage(int(rect.width() * scale), int(rect.height() * scale),
-                     QImage.Format_ARGB32)
-        img.fill(Qt.white)
+                     QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.white)
         painter = QPainter(img)
-        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         scene.render(painter, target=img.rect(), source=rect)
         painter.end()
         return img.save(path, 'PNG')

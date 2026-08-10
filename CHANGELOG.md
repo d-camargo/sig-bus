@@ -12,6 +12,262 @@ o **Diagrama de Blocos** (alocação de frota). Feed de referência nos testes: 
 
 ---
 
+## 0.6 — Leitura do Diagrama de Blocos: cota enxuta e régua de saídas
+
+Duas mudanças de **leitura** no Diagrama de Blocos, pedidas depois de usar o
+ajuste fino de horários da 0.5. Nenhuma delas muda dado: as duas só mudam o que
+o diagrama conta a quem olha.
+
+Do ponto de vista de **transporte público**, a régua de saídas é a leitura que o
+quadro de horários não dá de graça: **quantas partidas por faixa horária,
+separadas por sentido** — exatamente o que se olha para decidir se o pico está
+coberto e se o intervalo entre-pico está frouxo.
+
+- **A cota mostra só a medida (decisão 96)**: o rótulo do indicador de headway
+  era `headway 12 min`; agora é `12 min`. Numa cota de desenho técnico o que se
+  lê é a medida — o que ela mede já está dito pela geometria (duas chamadas
+  verticais partindo de dois inícios da mesma linha e sentido). De quebra, o
+  rótulo curto cabe entre duas viagens próximas sem invadir a barra vizinha.
+- **Régua de saídas na base do diagrama (decisões 97-101)**: um traço vertical
+  curto e discreto por partida, **ida na banda de cima e volta na de baixo**, no
+  pé do eixo de tempo. A mancha de traços mostra pico e vale por sentido sem
+  precisar varrer o diagrama faixa por faixa. É derivada dos mesmos
+  `start_time_s` que desenham as barras (`departure_ticks`), então nasce correta
+  e acompanha qualquer deslocamento feito por `>`/`<`/`+`/`-`. Não é histograma,
+  não é clicável e não distingue linha; por ser item de cena, sai no PNG/SVG
+  exportado.
+
+---
+
+## 0.5.1 — Faixa de versões do QGIS: o plugin recusado no 4.2 e no 3.34
+
+Correção de **empacotamento**, não de lógica: nas duas pontas da faixa
+declarada, o gerenciador de complementos recusava um plugin que o código já
+suportava.
+
+- **O teto barrava o QGIS 4.2 (decisão 82)**: a 0.5 prometeu
+  `qgisMaximumVersion=4.99` e gravou `3.99`. O gerenciador mostrava *"Plugin
+  designed for QGIS 3.40 - 3.99"* e marcava o plugin como incompatível em todo
+  QGIS 4.x — apesar de a compatibilidade Qt6 já estar feita e testada.
+  Vale lembrar por que a chave não pode simplesmente sumir: **ausente**, o QGIS
+  assume `<major do mínimo>.99`, ou seja o mesmo 3.99 que causou o problema.
+- **O piso excluía o QGIS 3.34 (decisões 87-89)**: `qgisMinimumVersion=3.40` não
+  descrevia requisito nenhum do plugin — existia por causa de **uma linha**,
+  `FIELD_STRING = QMetaType.Type.QString`, já que `QgsField(nome,
+  QMetaType.Type)` só existe a partir do 3.38. A sondagem contra o 3.34.4 real
+  mostrou que **todo** o resto (enums qualificados, `writeAsVectorFormatV3`,
+  roteamento, import dos módulos) já roda lá. O tipo de campo agora é resolvido
+  **por capacidade** (`_resolve_field_types`, com fallback para `QVariant`), e o
+  piso desce para o LTR 3.34 que o Ubuntu 24.04 empacota.
+- **Faixa final: 3.34 – 4.99**, com guarda em `test_metadata.py` (comparando por
+  tupla de inteiros — em ordem lexicográfica `'3.99' > '4.99'`) e sondagem
+  manual contra o QGIS instalado via `sig_bus/scripts/check_qgis_compat.py`.
+- **O CHANGELOG não fica mais aberto (decisão 93)**: um teste falha se sobrar
+  seção "Não lançado" ou se a primeira seção de versão não casar com o
+  `version=` do `metadata.txt` — foi assim que as Fases 7 a 12 ficaram
+  publicadas sob "Não lançado" com a 0.5 já no ar.
+
+---
+
+## 0.5 — Construir GTFS, geocodificação e ajuste fino de horários
+
+*(Seções abaixo: entraram todas na 0.5, publicada sem que o CHANGELOG fosse
+fechado — daí a guarda da 0.5.1.)*
+
+### Ajuste fino dos horários no Diagrama de Blocos (Fase 12)
+
+A página "Horários" do assistente "Construir GTFS" pedia um único intervalo e o propagava igual para o dia inteiro. Na operação real o intervalo encurta no pico e alarga fora dele — esta fase permite acertar **viagem a viagem** ainda no bloco de construção, antes de a linha virar dado gravado, reaproveitando o Diagrama de Blocos que o plugin já tem.
+
+Do ponto de vista de **transporte público**, é a diferença entre um quadro de horários teórico (frequência constante das 5h às 23h) e o quadro que a operação realmente pratica. E o ajuste é feito onde ele custa menos: antes da gravação, sem precisar abrir a tabela crua de `stop_times` depois.
+
+- **Duração da viagem (decisão 81a)**: `expand_frequency_to_stop_times` ganhou `duracao_min`. Antes, **todas** as paradas de uma viagem recebiam o mesmo horário — viagem de duração zero, sem chegada para deslocar e com `arrival_time == departure_time` na última parada. Agora os horários são distribuídos linearmente entre a primeira e a última parada. Sem o parâmetro, o comportamento antigo é preservado.
+- **`trip_id` único por linha e sentido (decisão 81b)**: o id gerado era `trip_<HHMMSS>`, sem linha nem sentido — duas linhas que saem 06:00 produziam o mesmo `trip_id`, e o editor indexa viagem por `trip_id`. O parâmetro `prefix` compõe `trip_<linha>_<sentido>_<HHMMSS>`.
+- **Núcleo puro `schedule_edit_core.py` (decisão 74)**: deslocar viagem (`shift_trip`), deslocar extremo com re-interpolação do miolo (`shift_trip_endpoint`), resumir a grade (`trips_from_stop_times`), calcular intervalos (`headways`), validar (`validate_draft_times` → `(erros, avisos)`) e montar o `Schedule` da cena (`schedule_from_draft`) — tudo sobre listas de dicionários, sem Qt, coberto por `test_schedule_edit_core.py`.
+- **Atalhos de teclado (decisões 76-78)**: `>`/`<` movem só a saída **ou** só a chegada (o clique na metade esquerda/direita da barra escolhe qual) e redistribuem as paradas intermediárias; `+`/`-` movem a viagem inteira preservando a duração. As teclas são lidas por `event.text()` — `>` e `<` ficam em teclas diferentes em ABNT2 e US-International. O passo é configurável (padrão 15 min).
+- **Headway vira cota de desenho técnico (decisão 75)**: era uma diagonal entre os centros de duas barras em sub-linhas diferentes; agora é uma linha horizontal com linhas de chamada verticais até os dois inícios e o valor no meio — e passa a valer também no Modo Viagens, que é o modo da página de ajuste.
+- **Gravar não apaga mais o ajuste (decisão 80)**: `save_route` ganhou `stop_times=None`. Com a grade ajustada, grava exatamente aquelas linhas em vez de reexpandir a frequência; sem o parâmetro, nada muda para quem já chamava a função.
+- **Um ajuste vale para todos os dias do calendário (decisão 72)**: no GTFS um único conjunto de viagens já atende os cinco dias úteis — quem diz "seg a sex" é o `calendar`. O comportamento já era esse; o que faltava era a tela dizer isso, e agora um rótulo acima do diagrama lista os dias.
+
+---
+
+### Google Maps opcional + Overpass como último degrau grátis (Fase 11)
+
+Esta fase adiciona o suporte opcional à **Google Geocoding API** como primeiro provedor de geocodificação e introduz o corretor de grafia via **Overpass (OSM)** como último recurso para resolver nomes de vias digitados incorretamente.
+
+Do ponto de vista de **transporte público**, a integração com o Google resolve casos de endereços recém-criados, estabelecimentos ou locais comerciais que ainda não figuram nas bases públicas do OpenStreetMap, garantindo que o assistente de construção de GTFS encontre o ponto com alta precisão sem depender exclusivamente de coordenadas manuais.
+
+- **Google Geocoding API opcional (Decisões 62, 63, 66)**: Quando uma chave de API é fornecida e o modo está em `auto`, o `GoogleGeocoder` é acionado primeiro na cascata `Google → Nominatim → Photon`. A chave é armazenada com segurança no `QSettings` do usuário e não é salva no GeoPackage do projeto (Decisão 62). Candidatos em nível genérico de localidade/município são automaticamente filtrados para evitar posicionamento incorreto no centro da cidade (Decisão 66).
+- **Corretor de vias Overpass (`street_index.py`, Decisão 68)**: Se todos os provedores retornarem vazio e houver contexto de município, o módulo realiza o levantamento das vias reais da região via Overpass e utiliza busca por similaridade textual (`difflib`, `cutoff=0.80`) para corrigir o logradouro e refazer **uma** consulta ao Nominatim com o nome corrigido — que resolve o número da casa; se ela também falhar, o ponto sai do `center` da via, sempre com o `(via: <nome real>)` da decisão 59 declarando o palpite.
+- **Redação de credenciais em logs (`_redigir_credenciais`, Decisão 65)**: Parâmetros sensíveis (`key=`, `api_key=`, `token=` e afins) são ocultados com `***` nas mensagens gravadas no log do QGIS, prevenindo o vazamento de chaves privadas em relatórios de suporte.
+- **Identificação da procedência do ponto (Decisão 70)**: Rótulos de status na UI informam a origem exata do resultado (`✓ localizado (Google)`, `✓ localizado (Nominatim)`, `✓ localizado (Photon)` ou `✓ localizado (via: ... — OSM)`).
+
+---
+
+### O Nominatim não perdoa erro de digitação (Fase 10)
+
+Depois das correções da Fase 9 a requisição saía e o log provava isso — e mesmo
+assim o botão **Geocodificar** continuava devolvendo "não encontrado". A medição
+de 2026-08-05, reproduzindo as URLs do log contra a API pública uma variável por
+vez, isolou a causa: `viewbox`, `bounded=1`, número da casa e acentuação são
+todos indiferentes; a única variável que zera o resultado é a **grafia do
+logradouro**. `Rua Giusepe Fórmolo` (um `p` a menos que o `Giuseppe` real do
+OpenStreetMap) devolve **0 candidatos**, na busca estruturada e na livre. A
+causa deixou de ser técnica e passou a ser de dado — e as seis tentativas da
+cascata falhavam juntas porque eram o mesmo motor consultado seis vezes.
+
+Do ponto de vista de **transporte público**, isso é o caso comum: o itinerário
+vem de planilha ou de papel da operadora, digitado por gente, e um nome de rua
+de origem italiana (`Giuseppe Fôrmolo`, na serra gaúcha) erra fácil. Sem
+tolerância a typo, o cadastro de paradas por endereço simplesmente não sai do
+lugar.
+
+- **Photon como último degrau da cascata (Decisão 57)**: o
+  `photon.komoot.io` é o geocodificador do Komoot sobre os **mesmos dados do
+  OSM**, público, sem chave e tolerante a erro de digitação por construção.
+  Verificado: `q=Rua Giusepe Fórmolo` + bbox de Caxias do Sul traz
+  `Rua Giuseppe Fôrmolo` em 1º e 2º lugar. O Nominatim **não** foi substituído —
+  continua sendo quem faz busca estruturada e resolve número de casa; o Photon
+  só é consultado depois de a cascata inteira ter voltado vazia. Uma requisição
+  a mais apenas no caso que hoje falha, zero custo no caminho feliz. Dois
+  detalhes medidos viraram código: `lang=pt` devolve HTTP 400 (não enviar
+  `lang`), e a `bbox` do Photon é `minLon,minLat,maxLon,maxLat` — ordem
+  **diferente** do `viewbox` do Nominatim já gravado em `build_city_viewbox`.
+- **Transporte separado de interpretação (`geocoding.py`)**: `_get_json(url)`
+  faz a requisição, respeita o intervalo de 1 s e devolve o JSON decodificado
+  (`list` **ou** `dict`); `_buscar` virou uma casca fina sobre ele para o
+  formato do Nominatim, e o `PhotonGeocoder` tem a sua, para o GeoJSON do
+  Photon — que é normalizado no mesmo dicionário `lat`/`lon`/`display_name` que
+  a UI já consome.
+- **Correção de grafia nunca é silenciosa (Decisão 59)**: quando o logradouro do
+  candidato aceito difere do digitado, o status da parada vira
+  `✓ localizado (via: <nome real>)` em vez de `✓ localizado`, e o par vai para o
+  log `SIG-Bus`. A mesma resposta do Photon trouxe `Rua Giusepe Bressan`, uma
+  rua diferente e existente no mesmo município — o acerto não é garantido, e o
+  assistente não corrige o cadastro do usuário pelas costas dele. A comparação
+  normalizada (minúsculas, acentos removidos, espaços colapsados) mora em
+  `address_format.normalizar_logradouro`, que já é a fonte única do padrão de
+  endereço.
+- **A mensagem de "nada localizado" parou de culpar o município (Decisão 60)**:
+  antes ela mandava "Confira o município na página da agência"; no caso relatado
+  o município estava certo e a orientação levou o usuário a procurar no lugar
+  errado. Agora lista até 3 dos endereços que falharam, aponta a grafia do
+  logradouro como causa mais provável e lembra de "Marcar no mapa" como saída.
+- **Cache de sessão e menos trabalho repetido (Decisão 61)**: com o degrau novo
+  o pior caso virou 7 requisições de 1 s **por parada**, e uma linha importada
+  por CSV tem dezenas delas. Passou a haver cache de sessão por URL, e
+  "Geocodificar" pula as paradas que já têm coordenada — o que também impede que
+  um ponto marcado à mão no canvas seja sobrescrito por um clique a mais.
+- **Cada tentativa etiquetada no log**: `a-estruturada-num`, `b-estruturada`,
+  `c-livre`, `sem-bbox …`, `photon`, `city-bbox`, junto de `erro=` e
+  `candidatos=`, para o próximo diagnóstico não exigir reconstruir a URL à mão.
+- **Alternativa recusada, registrada para ninguém refazer (Decisão 58)**: índice
+  de vias por Overpass + `difflib` também funciona (4.342 vias de Caxias do Sul
+  em 3,8 s; ratio 0,923 no 1º lugar), mas resolve só o nome da via — ainda
+  exigiria voltar ao Nominatim pela coordenada — e pede cache por município e um
+  limiar a calibrar. Fica como plano B se o Photon público sair do ar.
+
+---
+
+### Geocodificação no QGIS 4 (Fase 9): enum de rede e bbox por município
+
+No QGIS 4 (Qt 6) o botão **Geocodificar** devolvia "não encontrado" para *todo*
+endereço, com bairro e sem bairro. A causa era um enum não qualificado —
+`QNetworkReply.NoError`, que o PyQt6 removeu — levantando `AttributeError` dentro
+do `try` do `NominatimGeocoder._buscar` e sendo engolido pelo `except Exception:
+return []`. Toda requisição voltava vazia, sem nenhuma mensagem.
+
+- **Enum de rede corrigido (Decisão 51)**: `QNetworkReply.NetworkError.NoError` e,
+  na mesma varredura, `QgsVectorFileWriter.WriterError.NoError` /
+  `ActionOnExistingFile.CreateOrOverwrite*` (`SigBus_dialog.py`, `gtfs_reader.py`),
+  `QgsBlockingNetworkRequest.ErrorCode.NoError` e
+  `QgsVectorLayerDirector.Direction.DirectionBoth` (`osm_routing.py`) e
+  `QgsLayoutExporter.ExportResult.Success`. Todas as formas foram verificadas no
+  QGIS 3.44/Qt5 **e** no QGIS 4.2/Qt6 — um codebase só, sem shim de versão.
+- **Geocodificação deixou de falhar em silêncio (Decisão 52)**: cada tentativa
+  registra no painel **Log Messages**, aba `SIG-Bus`, a URL consultada, o código de
+  erro e o número de candidatos; exceção vai com `traceback` completo. Erro de
+  programação deixou de ser indistinguível de "endereço inexistente".
+- **`bounded=1` virou filtro de qualidade, não regra dura (Decisão 53)**: se toda a
+  cascata restrita à caixa envolvente do município voltar vazia, ela é repetida sem
+  `viewbox`/`bounded` antes de declarar "não encontrado" — bbox errada ou de
+  município homônimo não zera mais o resultado. Na busca livre, o bairro não é mais
+  repetido quando é o próprio município.
+- **Caixa envolvente do município recalculada na UI (Decisão 54)**: salvar a agência
+  grava `build_city_viewbox` junto de município/UF e a invalida quando o par muda —
+  a bbox nunca fica cacheada apontando para outra cidade. Falha de rede aí não
+  bloqueia o salvamento.
+- **Guarda de Qt6 ampliada (Decisão 55)**: `test_qt6_compat.py` passou a cobrir
+  `QNetworkReply`, `QgsVectorFileWriter`, `QgsBlockingNetworkRequest`,
+  `QgsVectorLayerDirector` e `QgsLayoutExporter`, e a varrer também os arquivos de
+  teste — os mocks do `conftest.py` expunham a forma curta e escondiam a regressão.
+- **Mensagem de resumo com contexto**: quando nenhuma parada é localizada, o aviso
+  mostra o município/UF usados na busca e aponta o log `SIG-Bus`.
+
+#### Arquivos tocados
+
+`geocoding.py`, `SigBus_dialog.py`, `gtfs_reader.py`, `osm_routing.py`,
+`conftest.py`, `test_geocoding.py`, `test_qt6_compat.py`,
+`GUIA_CONSTRUIR_GTFS.md`, `ARQUITETURA_CONSTRUIR_GTFS.md`, `CHANGELOG.md`.
+
+---
+
+### Construção de GTFS (Fase 8): Padrão de Endereço, Geocodificação e Lote
+
+Melhorias de legibilidade, usabilidade e robustez na aba **Construir GTFS**:
+
+- **Legibilidade e Temas (Decisão 42)**: padronização das folhas de estilo em constantes centralizadas em `SigBus_dialog.py` (`QSS_INPUT`, `QSS_CARD`, `QSS_HINT`, `QSS_STATUS_OK`, `QSS_STATUS_ERR`), garantindo contraste legível em temas claros e escuros (Night Mapping).
+- **Padrão de Endereço (Decisão 43)**: formato padronizado `Logradouro, Número - Bairro` via `sig_bus/address_format.py`, com Município e UF configurados globalmente na agência.
+- **Geocodificação Estruturada por Contexto (Decisões 44, 45 e 47)**: busca síncrona no Nominatim em cascata (com número, sem número, e busca livre), restrita ao contexto e à caixa envolvente (bounding box / `viewbox`) do Município configurado.
+- **Tabela Interna `sig_bus_config` (Decisão 46)**: persistência de metadados da agência e caixa envolvente do município no GeoPackage de trabalho, ignorada na exportação GTFS.
+- **Indicadores Visuais de Status e Supressão de Lat/Lon (Decisão 48)**: remoção dos campos visuais de latitude e longitude da tabela de paradas, substituídos por status visuais (`✓ localizado`, `✗ não encontrado`, `📍 marcado no mapa`).
+- **Marcação no Mapa (Decisões 49 e 50)**: botão **Marcar no mapa** ativa a ferramenta interativa `PickStopPointTool` (`map_tools.py`) para selecionar coordenadas com um clique no canvas (ideal para linhas rurais), com adição automática do raster OpenStreetMap (`ensure_osm_basemap`).
+- **Importação de Paradas em Lote via CSV (Decisão 43)**: suporte à importação por arquivo CSV (delimitador `;`, UTF-8 com BOM, `stops_csv.py`), com o modelo de exemplo `modelo_paradas.csv` e guia explicativo `MODELO_PARADAS_CSV.md`.
+
+#### Arquivos tocados
+
+`SigBus_dialog.py`, `geocoding.py`, `gtfs_builder_core.py`, `address_format.py` (novo), `stops_csv.py` (novo), `map_tools.py` (novo), `modelo_paradas.csv` (novo), `MODELO_PARADAS_CSV.md` (novo), `GUIA_CONSTRUIR_GTFS.md`, `ARQUITETURA_CONSTRUIR_GTFS.md`, `README.md`, `CHANGELOG.md`.
+
+---
+
+### Suporte a QGIS 4 / Qt 6
+
+O **QGIS 4 roda sobre Qt 6**, e o PyQt6 removeu os enums "curtos" do Qt 5
+(`Qt.AlignTop`, `Qt.Horizontal`, `QMessageBox.Yes`, `.exec_()` etc.), assim
+como o QGIS 4 removeu os aliases depreciados dos seus próprios enums
+(`Qgis.Critical`, `QgsTask.CanCancel`, `QgsUnitTypes.LayoutMillimeters`). Sem
+essa migração o plugin nem abria no QGIS 4 (`AttributeError: type object 'Qt'
+has no attribute 'AlignTop'`). A forma qualificada usada aqui vale nos dois
+ambientes: **um único caminho de código**, sem shim de versão, rodando tanto
+no QGIS 3.40 LTR (Qt 5) quanto no QGIS 4 (Qt 6).
+
+- **Enums qualificados em todo o pacote**: `SigBus.py`, `SigBus_dialog.py`,
+  `gtfs_reader.py`, `gtfs_export.py`, `block_core.py`,
+  `block_diagram_dialog.py`, `block_scene.py` e `block_view.py` passaram a
+  usar a forma qualificada dos enums Qt/QGIS (`Qt.AlignmentFlag.AlignTop`,
+  `Qgis.MessageLevel.Critical`, `QgsTask.Flag.CanCancel`,
+  `Qgis.LayoutUnit.Millimeters`, `.exec()`).
+- **`QVariant.Type` → `QMetaType.Type`**: `QVariant.Type` não existe mais no
+  PyQt6, então `QgsField(nome, QVariant.String)` é quebra dura no QGIS 4.
+  `gtfs_reader.py` expõe `FIELD_STRING`/`FIELD_INT` (`QMetaType.Type.QString`/
+  `.Int`), usados por todas as criações de campo do plugin.
+- **`qgisMinimumVersion` atualizado** de `3.0` para `3.40` e
+  `supportsQt6=True` acrescentado em `metadata.txt` — o `QgsField` com
+  `QMetaType` exige QGIS ≥ 3.38 (3.40 é o LTR), e sem o flag o QGIS 4 não
+  considera o plugin instalável.
+- **Guarda de regressão**: novo `test_qt6_compat.py` varre todo o pacote por
+  padrão de texto em busca de enums na forma antiga (Qt5) e falha se algum
+  reaparecer — evita que copy-paste de código antigo reintroduza a
+  regressão.
+
+#### Arquivos tocados
+
+`SigBus.py`, `SigBus_dialog.py`, `gtfs_reader.py`, `gtfs_export.py`,
+`block_core.py`, `block_diagram_dialog.py`, `block_scene.py`,
+`block_view.py`, `metadata.txt`, `conftest.py`, `README.md`,
+`test_qt6_compat.py` (novo).
+
+---
+
 ## v0.4 — Refino do Diagrama de Blocos e reorganização da interface
 
 Versão focada em **legibilidade** do diagrama e em **fidelidade do modelo de frota**.

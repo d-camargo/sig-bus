@@ -121,7 +121,7 @@ def fetch_ways_for_stops(paradas_em_ordem, margem_m=300):
         blocking = QgsBlockingNetworkRequest()
         res = blocking.post(req, payload.encode("utf-8"), True)
         
-        if res != QgsBlockingNetworkRequest.NoError:
+        if res != QgsBlockingNetworkRequest.ErrorCode.NoError:
             return []
             
         reply = blocking.reply()
@@ -189,7 +189,8 @@ def build_road_graph(elementos_osm):
     layer.updateExtents()
 
     # 3. Construir o grafo
-    director = QgsVectorLayerDirector(layer, -1, '', '', '', QgsVectorLayerDirector.DirectionBoth)
+    director = QgsVectorLayerDirector(
+        layer, -1, '', '', '', QgsVectorLayerDirector.Direction.DirectionBoth)
     strategy = QgsNetworkDistanceStrategy()
     director.addStrategy(strategy)
 

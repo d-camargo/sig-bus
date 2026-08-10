@@ -138,6 +138,26 @@ SUB_ROW_H = 16        # altura da barra de cada viagem
 SUB_ROW_GAP = 3       # espaço vertical entre sub-linhas
 LANE_VPAD = 5         # respiro acima/abaixo do conteúdo da faixa
 
+# Régua de saídas (rug plot) abaixo da linha de base: um traço por partida,
+# ida na banda de cima e volta na de baixo (decisões 97-101).
+RUG_TOP_GAP = 3       # respiro entre a linha de base e o primeiro traço
+RUG_TICK_H = 5        # altura de cada traço
+RUG_BAND_GAP = 3      # espaço vertical entre a banda de ida e a de volta
+RUG_H = RUG_TOP_GAP + 2 * RUG_TICK_H + RUG_BAND_GAP   # altura total reservada
+
+
+def departure_ticks(trips):
+    """Uma partida por viagem: lista de `(start_time_s, banda)` por horário.
+
+    `banda` é `'volta'` só quando `direction_id == '1'`; qualquer outro valor,
+    inclusive vazio, cai em `'ida'` (decisão 98). Sem dedução: uma viagem, um
+    traço (decisão 101)."""
+    ticks = [(t.start_time_s,
+              'volta' if str(getattr(t, 'direction_id', '')) == '1' else 'ida')
+             for t in trips]
+    ticks.sort(key=lambda pair: pair[0])
+    return ticks
+
 
 class TimeAxisMapper:
     """Converte tempo(s)↔x(px) e índice de faixa→y(px)."""
@@ -180,10 +200,10 @@ class TripItem(QGraphicsRectItem):
         self.setPen(self._base_pen)
         self.setAcceptHoverEvents(True)
         self.setToolTip(self._tooltip())
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         # Recorta o rótulo-filho ao retângulo da barra (defesa extra além do
         # elide), para a sigla nunca vazar por cima das barras vizinhas.
-        self.setFlag(QGraphicsItem.ItemClipsChildrenToShape, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
         if code:
             self._add_label(rect, code, color)
 
@@ -192,7 +212,7 @@ class TripItem(QGraphicsRectItem):
         if rect.width() < _BAR_LABEL_MIN_W or rect.height() < _BAR_LABEL_MIN_H:
             return
         fm = QFontMetrics(_BAR_LABEL_FONT)
-        elided = fm.elidedText(text, Qt.ElideRight, int(rect.width() - 4))
+        elided = fm.elidedText(text, Qt.TextElideMode.ElideRight, int(rect.width() - 4))
         if not elided or elided == '…':
             return
         label = QGraphicsSimpleTextItem(elided, self)
@@ -205,7 +225,7 @@ class TripItem(QGraphicsRectItem):
         label.setZValue(1)
         # O rótulo é puramente visual: ignora o mouse para o clique cair na
         # barra (TripItem.mousePressEvent) em vez de ser engolido pelo texto.
-        label.setAcceptedMouseButtons(Qt.NoButton)
+        label.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         label.setAcceptHoverEvents(False)
 
     # Hachura da volta: linhas diagonais semi-transparentes, espaçamento em px.
@@ -258,9 +278,15 @@ class TripItem(QGraphicsRectItem):
 
     def mousePressEvent(self, event):
         sc = self.scene()
-        if sc is not None and hasattr(sc, 'tripClicked'):
-            sc.select_trip_item(self)
-            sc.tripClicked.emit(self.trip)
+        if sc is not None:
+            r = self.rect()
+            endpoint = 'first' if event.pos().x() < r.center().x() else 'last'
+            if hasattr(sc, 'select_trip_endpoint'):
+                sc.select_trip_endpoint(self, endpoint)
+            elif hasattr(sc, 'select_trip_item'):
+                sc.select_trip_item(self, endpoint=endpoint)
+            if hasattr(sc, 'tripClicked'):
+                sc.tripClicked.emit(self.trip)
         super().mousePressEvent(event)
 
 
@@ -268,11 +294,13 @@ class BlockScene(QGraphicsScene):
     """Cena do diagrama. set_schedule(schedule) (re)desenha tudo."""
 
     tripClicked = pyqtSignal(object)   # Trip
+    endpointClicked = pyqtSignal(object, str)  # Trip, 'first'|'last'
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.mapper = None
         self._selected_item = None
+        self._selected_endpoint = None
         self._route_colors = {}
         self._block_colors = {}
         self._mode = 'trips'
@@ -281,21 +309,34 @@ class BlockScene(QGraphicsScene):
         self._prev_trip = {}        # trip_id -> viagem anterior (mesma linha+sentido)
         self._headway_items = []    # itens do indicador de headway (seleção)
         self._terminal_codes = {}   # trip_headsign -> sigla de 3 letras
+        self._departure_items = []  # itens da régua de saídas (decisões 97-101)
 
     def terminal_code(self, headsign):
         """Sigla de 3 letras do terminal de destino (vazio se desconhecido)."""
         return self._terminal_codes.get(headsign or '', '')
 
     # ------------------------------------------------------------------
-    def select_trip_item(self, item):
+    def select_trip_item(self, item, endpoint=None):
         if self._selected_item is not None and self._selected_item is not item:
             try:
                 self._selected_item.set_highlighted(False)
             except RuntimeError:
                 pass   # item já removido
         self._selected_item = item
+        self._selected_endpoint = endpoint
         item.set_highlighted(True)
         self._show_headway(item.trip)
+
+    def select_trip_endpoint(self, item, endpoint):
+        """Seleciona uma viagem e um de seus extremos ('first' ou 'last')."""
+        if endpoint not in ('first', 'last'):
+            raise ValueError(f"endpoint deve ser 'first' ou 'last', recebido: {endpoint!r}")
+        self.select_trip_item(item, endpoint=endpoint)
+        self.endpointClicked.emit(item.trip, endpoint)
+
+    @property
+    def selected_endpoint(self):
+        return self._selected_endpoint
 
     # ------------------------------------------------------------------
     def _clear_headway(self):
@@ -307,12 +348,11 @@ class BlockScene(QGraphicsScene):
         self._headway_items = []
 
     def _show_headway(self, trip):
-        """Desenha (só no Modo Blocos) a pontilhada do headway da viagem
-        selecionada: liga o início da viagem ANTERIOR da mesma linha+sentido
-        ao início da viagem selecionada, com o valor em minutos."""
+        """Desenha o indicador de headway em cota da viagem selecionada (nos
+        dois modos): liga o início da viagem ANTERIOR da mesma linha+sentido
+        ao início da viagem selecionada com linha de cota horizontal e
+        linhas de chamada verticais, indicando o valor em minutos."""
         self._clear_headway()
-        if self._mode != 'blocks':
-            return
         prev = self._prev_trip.get(trip.trip_id)
         if prev is None:
             return
@@ -326,22 +366,31 @@ class BlockScene(QGraphicsScene):
         x1, y1 = r_prev.left(), r_prev.center().y()
         x2, y2 = r_sel.left(), r_sel.center().y()
 
+        y_cota = min(r_prev.top(), r_sel.top()) - 12
+
         pen = QPen(QColor('#111111'))
-        pen.setStyle(Qt.DashLine)
+        pen.setStyle(Qt.PenStyle.DashLine)
         pen.setWidthF(1.2)
-        self._headway_items.append(self.addLine(x1, y1, x2, y2, pen))
-        # marcadores verticais nos dois inícios
-        for x, yc in ((x1, y1), (x2, y2)):
-            self._headway_items.append(self.addLine(x, yc - 6, x, yc + 6, pen))
+
+        # Linhas de chamada verticais das viagens ate a cota
+        self._headway_items.append(self.addLine(x1, y1, x1, y_cota, pen))
+        self._headway_items.append(self.addLine(x2, y2, x2, y_cota, pen))
+
+        # Linha horizontal de cota
+        self._headway_items.append(self.addLine(x1, y_cota, x2, y_cota, pen))
+
+        # Marcadores verticais nos dois extremos da cota
+        for x in (x1, x2):
+            self._headway_items.append(self.addLine(x, y_cota - 4, x, y_cota + 4, pen))
 
         mins = round((trip.start_time_s - prev.start_time_s) / 60.0)
-        label = QGraphicsSimpleTextItem('headway {} min'.format(mins))
+        label = QGraphicsSimpleTextItem('{} min'.format(mins))
         f = QFont('Sans Serif', 8)
         f.setBold(True)
         label.setFont(f)
         label.setBrush(QBrush(QColor('#111111')))
         br = label.boundingRect()
-        label.setPos((x1 + x2) / 2.0 - br.width() / 2.0, min(y1, y2) - 18)
+        label.setPos((x1 + x2) / 2.0 - br.width() / 2.0, y_cota - 16)
         self.addItem(label)
         self._headway_items.append(label)
         for it in self._headway_items:
@@ -374,12 +423,14 @@ class BlockScene(QGraphicsScene):
         diferenciado pela hachura da volta (ver TripItem.paint)."""
         self.clear()
         self._selected_item = None
+        self._selected_endpoint = None
         self._route_colors = {}
         self._block_colors = {}
         self._idle_segments = []
         self._trip_items = {}
         self._prev_trip = {}
         self._headway_items = []
+        self._departure_items = []
         self._mode = getattr(schedule, 'mode', 'trips')
 
         trips = schedule.trips
@@ -461,11 +512,59 @@ class BlockScene(QGraphicsScene):
 
         self._draw_lanes(lane_boxes, right)
         self._draw_time_axis(t_min, t_max, total_h)
+        self._draw_departure_rug([t for _, lane_trips in lanes for t in lane_trips],
+                                 total_h)
         self._draw_idle()
         self._draw_trips(placements)
 
-        # +24 embaixo: respiro para a linha de base e os rótulos de hora inferiores.
-        self.setSceneRect(0, 0, right + 16, total_h + 24)
+        # +RUG_H+24 embaixo: régua de saídas, rótulos de hora inferiores e respiro.
+        self.setSceneRect(0, 0, right + 16, total_h + RUG_H + 24)
+
+    def _draw_departure_rug(self, trips, total_h):
+        """Régua de saídas abaixo da linha de base (decisões 97-101).
+
+        Um traço vertical curto por partida — ida na banda de cima, volta na de
+        baixo —, de modo que a mancha mostre pico e vale por sentido. É
+        derivada dos mesmos `start_time_s` que desenham as barras: item de cena
+        (logo, sai no PNG/SVG exportado), sem tooltip, hover nem clique
+        (decisão 100)."""
+        ticks = departure_ticks(trips)
+        if not ticks:
+            return
+
+        m = self.mapper
+        pen = QPen(QColor('#8a97a3'))
+        pen.setWidthF(0.6)
+        band_y = {'ida': total_h + RUG_TOP_GAP,
+                  'volta': total_h + RUG_TOP_GAP + RUG_TICK_H + RUG_BAND_GAP}
+
+        bands_drawn = set()
+        for t_s, band in ticks:
+            x = m.x(t_s)
+            if x < m.left - 0.5:
+                continue
+            y0 = band_y[band]
+            line = self.addLine(x, y0, x, y0 + RUG_TICK_H, pen)
+            line.setZValue(-4)     # abaixo das barras (zValue 10)
+            self._departure_items.append(line)
+            bands_drawn.add(band)
+
+        # Rótulo de cada banda na faixa de rótulos, na convenção de _draw_lanes.
+        # Só há rótulo onde há traço: diagrama só de ida não ganha "volta"
+        # pendurado.
+        label_font = QFont('Sans Serif', 6)
+        for band in ('ida', 'volta'):
+            if band not in bands_drawn:
+                continue
+            label = QGraphicsSimpleTextItem(band)
+            label.setFont(label_font)
+            label.setBrush(QBrush(QColor('#8a97a3')))
+            br = label.boundingRect()
+            label.setPos(m.left - 8 - br.width(),
+                         band_y[band] + (RUG_TICK_H - br.height()) / 2.0)
+            label.setZValue(-4)
+            self.addItem(label)
+            self._departure_items.append(label)
 
     def _collect_idle(self, lane_trips, y):
         """Registra os trechos ociosos (gaps) entre viagens consecutivas de um
@@ -481,7 +580,7 @@ class BlockScene(QGraphicsScene):
         if not self._idle_segments:
             return
         pen = QPen(QColor('#9aa6b2'))
-        pen.setStyle(Qt.DotLine)
+        pen.setStyle(Qt.PenStyle.DotLine)
         pen.setWidthF(0.8)
         for x0, y0, x1, y1 in self._idle_segments:
             if x1 > x0:
@@ -536,7 +635,7 @@ class BlockScene(QGraphicsScene):
             # Fundo alternado para legibilidade
             bg = QGraphicsRectItem(QRectF(m.left, top, right - m.left, height))
             bg.setBrush(QBrush(QColor('#f4f6f8' if idx % 2 == 0 else '#e9edf1')))
-            bg.setPen(QPen(Qt.NoPen))
+            bg.setPen(QPen(Qt.PenStyle.NoPen))
             bg.setZValue(-10)
             self.addItem(bg)
 
@@ -557,7 +656,7 @@ class BlockScene(QGraphicsScene):
         # sem rótulo, para situar embarques no meio da hora cheia.
         half_pen = QPen(QColor('#d6dde3'))
         half_pen.setWidthF(0.5)
-        half_pen.setStyle(Qt.DashLine)
+        half_pen.setStyle(Qt.PenStyle.DashLine)
 
         x_max = m.x(t_max)
         first_h = int(t_min // 3600)
@@ -569,7 +668,8 @@ class BlockScene(QGraphicsScene):
                 line.setZValue(-5)
                 # Rótulo da hora repetido em cima e embaixo, para referência
                 # nas duas pontas do diagrama.
-                for y_lbl in (m.top - 16, total_h + 4):
+                # Embaixo o rótulo desce RUG_H para não invadir a régua de saídas.
+                for y_lbl in (m.top - 16, total_h + RUG_H + 4):
                     lbl = QGraphicsSimpleTextItem('{}h'.format(h))
                     lbl.setFont(axis_font)
                     lbl.setBrush(QBrush(QColor('#555555')))

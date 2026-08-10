@@ -27,8 +27,57 @@ Estas escolhas guiam toda a arquitetura abaixo:
 29. **Geração de shapes reutilizando `GtfsReader.build_shapes_line`**: Ao invés de duplicar a lógica de escrever strings de caminhos e geometrias em arquivo, o assistente popula a tabela de apoio intermediária `shapes_point`. O leitor de GTFS existente (`gtfs_reader.py`) é então utilizado para ler os pontos, ordená-los e convertê-los na polilinha final da tabela `shapes`.
 30. **Assistente baseado em `QStackedWidget` na própria aba "Construir GTFS"**: O assistente foi concebido sem arquivos de interface `.ui` gerados no Qt Designer. Ele é inteiramente construído dinamicamente via código no arquivo `SigBus_dialog.py` através de um `QStackedWidget`. Duas barras de progresso (Mínimo e Máximo) permanecem visíveis no topo do widget exibindo o progresso e o checklist de itens ausentes.
 31. **Núcleo de construção puro (sem QGIS) sempre que aplicável**: Funções de progresso, normalização de texto, expansão de horários por frequência e interação direta com SQLite foram isoladas em `gtfs_builder_core.py` utilizando apenas as bibliotecas padrão Python (`sqlite3`, `json`, `math`) e `osgeo.ogr`. Isso possibilita a validação de testes unitários offline e de forma standalone.
+32. **Decisão 42 (Estilização de Legibilidade e Suporte a Temas)**: Padronização das folhas de estilo em constantes centralizadas em `SigBus_dialog.py` (`QSS_INPUT`, `QSS_CARD`, `QSS_HINT`, `QSS_STATUS_OK`, `QSS_STATUS_ERR`), garantindo contraste legível em temas claros e escuros (Night Mapping).
+33. **Decisão 43 (Padrão de Endereço e Formato CSV em Lote)**: Isolamento do formato de endereço (`Logradouro, Número - Bairro`) no módulo puro `address_format.py` e suporte ao formato de lote em `;` (UTF-8 com BOM) no módulo `stops_csv.py`, além do modelo versionado `sig_bus/modelo_paradas.csv`.
+34. **Decisão 44 (Geocodificação Estruturada com Cascata de Busca)**: Extensão do `NominatimGeocoder` em `geocoding.py` para busca estruturada por contexto (com número -> sem número -> busca livre), com preservação de retrocompatibilidade.
+35. **Decisão 45 (Contexto Geográfico da Agência - Município e UF)**: Inclusão dos campos obrigatórios de Município e UF no cadastro da Agência para direcionar a geocodificação e delimitar o escopo urbano do feed.
+36. **Decisão 46 (Tabela de Configuração Interna `sig_bus_config`)**: Tabela chave-valor no GeoPackage de trabalho para persistir parâmetros internos (município, UF, bbox do município), ignorada durante a exportação GTFS.
+37. **Decisão 47 (Bounding Box do Município para Geocodificação)**: Cálculo e armazenamento da caixa envolvente do município (`city_bbox` / `build_city_viewbox`) para aplicar restrição espacial (`viewbox` + `bounded=1`) na busca Nominatim.
+38. **Decisão 48 (Supressão Visual de Lat/Lon e Indicadores de Status)**: Remoção dos campos de texto visíveis de lat/lon na tabela de paradas, substituídos por rótulos visuais de status (`✓ localizado`, `✗ não encontrado`, `📍 marcado no mapa`).
+39. **Decisão 49 (Ferramenta Interativa `PickStopPointTool` de Captura no Canvas)**: Módulo `map_tools.py` provendo ferramenta de mapa para seleção direta de pontos no canvas do QGIS para linhas rurais ou sem endereço.
+40. **Decisão 50 (Mapa de Fundo OSM Automático `ensure_osm_basemap`)**: Adição dinâmica de camada raster OpenStreetMap WMS/XYZ ao projeto para suporte visual durante a marcação de paradas no mapa.
+41. **Decisão 51 (Enum qualificado, não shim de versão)**: A correção de compatibilidade com o Qt6/QGIS 4 é sempre a forma qualificada do enum (`QNetworkReply.NetworkError.NoError`, `QgsVectorFileWriter.WriterError.NoError`, `QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwrite*`, `QgsBlockingNetworkRequest.ErrorCode.NoError`, `QgsVectorLayerDirector.Direction.DirectionBoth`, `QgsLayoutExporter.ExportResult.Success`) — todas existem tanto no PyQt5/QGIS 3 quanto no PyQt6/QGIS 4. Nada de `hasattr` nem de `if QT_VERSION`: um caminho de código só (decisão 35).
+42. **Decisão 52 (Falha de rede nunca é silenciosa)**: O `except Exception: return []` do `NominatimGeocoder._buscar` continua (a decisão 19 exige que a geocodificação nunca bloqueie o fluxo), mas cada tentativa agora registra no `QgsMessageLog`, sob a tag `SIG-Bus`, a URL consultada, o código de erro do reply e o número de candidatos — e, no ramo de exceção, o `traceback` completo. Sem isso, um erro de programação fica indistinguível de "endereço inexistente", que foi exatamente o que escondeu o bug do enum não qualificado no QGIS 4.
+43. **Decisão 53 (`bounded=1` é filtro de qualidade, não regra dura)**: Revisão da decisão 47. Se a cascata inteira com `viewbox`+`bounded=1` voltar vazia, o `geocode` repete a cascata sem esses dois parâmetros antes de declarar "não encontrado" — uma bbox errada, desatualizada ou de município homônimo deixa de zerar permanentemente o resultado. Na busca livre, o bairro é omitido quando é o próprio município (comparação normalizada), para não gerar `"…, Caxias do Sul, Caxias do Sul - RS, Brasil"`.
+44. **Decisão 54 (A bbox pertence ao par município/UF)**: `build_city_viewbox` é calculada e gravada junto de `build_city`/`build_state` ao salvar a agência, e invalidada assim que qualquer um dos dois mudar — nunca fica cacheada apontando para outra cidade. Falha de rede nesse ponto não bloqueia o salvamento da agência: no máximo o feed fica sem bbox.
+45. **Decisão 55 (A guarda de Qt6 cobre também rede e I/O)**: O teste-guarda `test_qt6_compat.py` (decisão 41) só varria `Qt.*` e alguns widgets, e por isso `QNetworkReply.NoError`, `QgsVectorFileWriter.NoError`, `QgsBlockingNetworkRequest.NoError` e `QgsVectorLayerDirector.DirectionBoth` sobreviveram à Fase 7. A guarda passa a listar essas classes e a varrer também os arquivos de teste (os mocks eram parte do problema) — uma linha de regex por classe, e é a única coisa que impede a regressão de voltar.
+46. **Decisão 56 (A causa deixou de ser técnica e passou a ser de dado: o Nominatim não perdoa typo)**: Medido em 2026-08-05 reproduzindo as URLs do log do usuário contra a API pública, uma variável por vez:
+
+    | Variável alterada | Candidatos |
+    |---|---|
+    | `viewbox` presente/ausente | 2 (indiferente) |
+    | `bounded=1` presente/ausente | 2 (indiferente) |
+    | número da casa (`210`) presente/ausente | 2 (indiferente) |
+    | acentuação `Fórmolo` × `Fôrmolo` | 2 (indiferente) |
+    | **`Giusepe` (um `p`) × `Giuseppe` do OSM** | **0** |
+
+    A única variável que zera o resultado é a grafia do logradouro — tanto na busca estruturada quanto na livre. Nenhuma das correções da Fase 9 estava errada; elas simplesmente não atacam este problema, e as seis tentativas da cascata falham juntas porque são o mesmo motor consultado seis vezes.
+47. **Decisão 57 (A tolerância entra como último degrau da cascata, com o Photon — o Nominatim não é substituído)**: O Photon (`photon.komoot.io`) é o geocodificador de busca incremental do Komoot sobre os **mesmos dados do OSM**, público, sem chave, e tolerante a erro de digitação por construção (índice Elasticsearch). Verificado: `q=Rua Giusepe Fórmolo` + `bbox` de Caxias do Sul devolve `Rua Giuseppe Fôrmolo` em 1º **e** 2º lugar. O Nominatim continua sendo o caminho principal — é ele que faz busca estruturada e resolve número de casa — e o Photon só é consultado depois de a cascata inteira ter voltado vazia: uma requisição a mais **apenas no caso que hoje falha**, zero custo no caminho feliz. Dois detalhes medidos que viraram código: **(i)** `lang=pt` faz o Photon devolver **HTTP 400** (aceita só `de`/`en`/`fr`/`it`) — não enviar `lang`; **(ii)** o `bbox` do Photon é `minLon,minLat,maxLon,maxLat`, ordem **diferente** do `viewbox` do Nominatim (`lon_min,lat_max,lon_max,lat_min`) já gravado em `build_city_viewbox`, então a conversão é obrigatória. Com a bbox de outro estado a mesma consulta devolve 0 — o filtro geográfico da decisão 47 continua valendo; quando não há bbox, ele é aplicado no pós-filtro por `properties.city`/`county`.
+48. **Decisão 58 (Alternativa considerada e recusada: índice de vias por Overpass + `difflib`)**: Também medida em 2026-08-05: uma consulta Overpass traz as **4.342 vias nomeadas** de Caxias do Sul em 3,8 s, e `difflib.get_close_matches` põe `Rua Giuseppe Fôrmolo` em 1º (ratio 0,923) bem separado do 2º (0,718). Funciona, e reaproveitaria o Overpass que `osm_routing.py` já usa. Recusada mesmo assim porque resolve só o **nome** da via — ainda seria preciso voltar ao Nominatim pela coordenada — e exige cache por município mais um limiar de similaridade a calibrar. São várias peças móveis para chegar ao mesmo lugar que uma URL a mais. Fica registrada como plano B se o Photon público sair do ar ou passar a exigir chave. **Não refazer o experimento.**
+49. **Decisão 59 (Correção de grafia nunca é silenciosa)**: Com o degrau tolerante, `"Rua Giusepe Fórmolo"` passa a virar `✓ localizado` apontando para um nome que o usuário não digitou — e a mesma resposta trouxe `Rua Giusepe Bressan`, uma rua **diferente e existente** no mesmo município, então o acerto não é garantido. Quando o logradouro do candidato aceito difere do digitado (comparação por `address_format.normalizar_logradouro`: minúsculas, acentos removidos, espaços colapsados), o status da linha vira `✓ localizado (via: <nome real>)` e o par vai para o log. A normalização mora em `address_format.py` porque ele já é a fonte única do padrão de endereço (decisão 43), não solta na UI. Sem isso o assistente estaria corrigindo o cadastro do cliente pelas costas dele.
+50. **Decisão 60 (A mensagem de "nada localizado" para de culpar o município)**: A mensagem anterior mandava "Confira o município na página da agência"; no caso relatado o município estava certo, e a orientação levou o usuário a procurar no lugar errado. Passa a listar os endereços que falharam (até 3, para não virar parede de texto) e a apontar a causa que os dados mostram ser a mais comum — grafia do logradouro —, mantendo "Marcar no mapa" como a saída sempre disponível da decisão 19. O município/UF continuam na mensagem, mas como contexto da busca, não como acusação.
+51. **Cache de sessão e etiqueta por tentativa (Fase 10)**: Com o degrau do Photon o pior caso passou a ser 7 requisições de 1 s **por parada**, e uma linha real importada por CSV tem dezenas de paradas, muitas na mesma via. Duas contenções, ambas baratas: um cache de sessão em `NominatimGeocoder._session_cache` indexado pela **URL** (que já embute endereço, município, UF e bbox — não é preciso uma chave composta à parte), consultado antes do intervalo de 1 s; e, em `_geocode_stops`, pular as paradas que já têm `lat`/`lon`, o que também impede que um ponto marcado à mão no canvas seja sobrescrito por um clique a mais em "Geocodificar". Cada tentativa carrega uma etiqueta no log (`a-estruturada-num`, `b-estruturada`, `c-livre`, `sem-bbox …`, `photon`, `google`, `city-bbox`) para o próximo diagnóstico não exigir reconstruir a URL à mão.
+52. **Decisão 61 (Orquestração desatrelada do `NominatimGeocoder`)**: A orquestração da cascata de geocodificação foi extraída do `NominatimGeocoder` para a função de módulo `geocode(endereco, contexto=None)` em `sig_bus/geocoding.py`. Cada provedor (`GoogleGeocoder`, `NominatimGeocoder`, `PhotonGeocoder` e o corretor Overpass em `street_index.py`) executa apenas sua consulta própria, e `_geocode_stops` em `SigBus_dialog.py` chama a função de módulo.
+53. **Decisão 62 (Configuração de geocodificação em `geocoding_config.py` e persistência fora do GeoPackage)**: Criação de `sig_bus/geocoding_config.py` como fonte única de configuração (`get_provider_mode`/`set_provider_mode` e `get_google_api_key`/`set_google_api_key`). A chave da API do Google e a preferência de modo são salvas em `QSettings` (`SIG-Bus/geocoding/...`) e **nunca** no GeoPackage (`sig_bus_config`), evitando vazar credenciais privadas ou atrelar custos de API do usuário ao arquivo `.gpkg` compartilhado.
+54. **Decisão 63 (Inclusão do `GoogleGeocoder` como primeiro provedor na cascata `auto`)**: Adição da classe `GoogleGeocoder` em `sig_bus/geocoding.py`. Quando o modo for `"auto"` e houver uma chave de API configurada, o Google Geocoding API é consultado primeiro na ordem `Google → Nominatim → Photon`. Sem chave ou em modo `"osm"`, a busca ignora o Google e consulta apenas os provedores gratuitos OSM.
+55. **Decisão 64 (Tratamento de status de erro do Google sem bloquear a cascata)**: Na classe `GoogleGeocoder`, `status == "OK"` devolve os candidatos e `"ZERO_RESULTS"` devolve `[]`. Respostas de erro (`REQUEST_DENIED`, `OVER_QUERY_LIMIT`, `INVALID_REQUEST`) registram `Warning` no `QgsMessageLog`, gravam o erro em `GoogleGeocoder.ultimo_erro` para exibição na UI e devolvem `[]`, permitindo que a cascata continue nos provedores gratuitos.
+56. **Decisão 65 (Redação de credenciais em logs - `_redigir_credenciais`)**: Função `_redigir_credenciais(texto)` em `sig_bus/geocoding.py`, aplicada dentro do próprio `_log` — assim nenhuma chamada nova pode esquecer de redigir. Oculta o valor dos parâmetros sensíveis (`key=`, `api_key=`, `token=` e afins) substituindo por `***` em todas as mensagens gravadas no `QgsMessageLog`, prevenindo vazamento acidental de chaves de API nos logs do QGIS. A URL realmente requisitada continua intacta.
+57. **Decisão 66 (Descarte de resultados em nível de cidade/localidade no Google)**: Candidatos retornados pelo `GoogleGeocoder` cujos tipos (`types`) pertençam apenas a divisões administrativas genéricas (ex.: `locality`, `administrative_area_level_1`) sem interseção com tipos em nível de rua (`street_address`, `route`, `premise`, `subpremise`, `intersection`, `establishment`, `point_of_interest`) são descartados com log detalhado, evitando posicionar paradas no centro do município.
+58. **Decisão 67 (Intervalo de tempo de 1 s por host - `HOSTS_COM_LIMITE`)**: Em `_get_json`, a espera de 1.0 s entre requisições passou a rastrear o tempo por host individualmente. Apenas hosts com limite público de taxa (`nominatim.openstreetmap.org` e `photon.komoot.io`, em `HOSTS_COM_LIMITE`) sofrem o delay de 1.0 s; chamadas ao Google (`maps.googleapis.com`) não aguardam delay desnecessário.
+59. **Decisão 68 (Corretor de grafia via Overpass como último degrau - `street_index.py`)**: Módulo `sig_bus/street_index.py` consulta o Overpass (`way["highway"]["name"]`) dentro da bounding box do município para listar todas as vias reais. Caso todos os provedores da cascata retornem vazio, o assistente utiliza `difflib.get_close_matches` para encontrar o nome correto da rua e refazer uma busca com o nome corrigido.
+60. **Decisão 69 (Tabela das 4 ordens de Bounding Box do projeto)**: Cada serviço/API de geocodificação ou roteamento utilizado pelo SIG-Bus exige os limites geográficos (bbox) em uma ordem de coordenadas diferente:
+
+    | Serviço / Módulo | Parâmetro | Formato / Ordem das Coordenadas |
+    |---|---|---|
+    | **Nominatim** (`geocoding.py`) | `viewbox` | `lon_min,lat_max,lon_max,lat_min` |
+    | **Photon** (`geocoding.py`) | `bbox` | `minLon,minLat,maxLon,maxLat` |
+    | **Google Maps** (`geocoding.py`) | `bounds` | `lat_min,lon_min|lat_max,lon_max` |
+    | **Overpass** (`street_index.py` / `osm_routing.py`) | consulta QL | `(lat_min,lon_min,lat_max,lon_max)` |
+
+61. **Decisão 70 (Rastreamento e exibição da procedência do ponto)**: Cada candidato normalizado retorna com o atributo `provider` (`"google"`, `"nominatim"`, `"photon"` ou `"osm-overpass"`). A interface em `SigBus_dialog.py` exibe a origem no status visual da parada (ex.: `✓ localizado (Google)`, `✓ localizado (via: Rua Giuseppe Fôrmolo — OSM)`), informando a origem de cada ponto.
 
 ---
+
 
 ## 2. Visão geral (MVC em três camadas)
 
@@ -130,15 +179,39 @@ Provê a conversão de endereços em coordenadas geográficas.
     *   Usa a classe `QgsNetworkAccessManager` para executar a requisição de forma bloqueante síncrona dentro da lógica do assistente.
     *   Implementa o *throttle* de requisições de 1.0 segundo com `time.sleep` para cumprimento das políticas públicas do Nominatim.
     *   Tratamento de exceções robusto: qualquer falha na conexão, time out ou parsing retorna uma lista vazia `[]`, não quebrando o fluxo principal do usuário.
+    *   Toda tentativa é registrada no `QgsMessageLog` com a tag `SIG-Bus` (decisão 52): URL, código de erro e número de candidatos em nível `Info`; falha de rede, resposta vazia/inesperada e exceção (com `traceback`) em nível `Warning`. `[]` deixou de significar silêncio.
+    *   Cascata com `viewbox`+`bounded=1` primeiro; se ela inteira voltar vazia, a mesma cascata é repetida sem esses parâmetros (decisão 53) antes de devolver `[]`.
 
 ---
 
-## 6. EXTENSÕES DO CORE — `WorkingCopy.enter_empty()`
+## 6. EXTENSÕES DO CORE E MÓDULOS AUXILIARES
 
+### 6.1 `WorkingCopy.enter_empty()`
 Implementado em `gtfs_edit_core.py`:
 *   Inicializa um GeoPackage (`.gpkg`) vazio a partir do zero.
 *   Adiciona a definição espacial `EPSG:4326` (WGS84) para as tabelas `stops` e `shapes_point` (tipo ponto) e para `shapes` (tipo linha).
 *   Popula as colunas da tabela de acordo com as especificações do `gtfs_schema.py`.
+
+### 6.2 Formatação de Endereços — `address_format.py`
+Módulo Python puro (sem dependência Qt/QGIS):
+*   `parse_address(texto)`: Decompõe endereços no padrão `Logradouro, Número - Bairro` em um dicionário estruturado.
+*   `format_address(partes)`: Monta o endereço no formato canônico.
+
+### 6.3 Processamento de Lote CSV — `stops_csv.py`
+Módulo puro para gerenciar importação/exportação de paradas:
+*   `write_template(caminho)`: Gera o modelo CSV com delimitador `;`, codificação UTF-8 com BOM e exemplos.
+*   `parse_stops_csv(caminho)`: Realiza a leitura e validação das paradas em lote, suportando endereços ou coordenadas diretas.
+
+### 6.4 Ferramentas de Mapa — `map_tools.py`
+Módulo de apoio visual e captura no QGIS canvas:
+*   `PickStopPointTool`: Ferramenta interativa (`QgsMapToolEmitPoint`) para captura de coordenadas diretamente por clique no mapa.
+*   `ensure_osm_basemap()`: Adiciona uma camada raster OpenStreetMap XYZ no fundo do projeto QGIS caso nenhuma esteja presente.
+
+### 6.5 Configurações Internas — Tabela `sig_bus_config`
+Gerenciada por `set_config` e `get_config` em `gtfs_builder_core.py`:
+*   Tabela relacional em SQLite de chave-valor (`chave TEXT PRIMARY KEY, valor TEXT`).
+*   Armazena `build_city`, `build_state`, `build_country` e a caixa envolvente `build_city_viewbox`.
+*   Totalmente isolada do feed GTFS exportado (não consta na whitelist de exportação).
 
 ---
 
@@ -157,7 +230,8 @@ A navegação pelo assistente de construção de GTFS ocorre da seguinte forma a
 4.  **Página 3: Sequência (`page_sequencia`)**
     *   Reordenação visual das paradas inseridas (subir/descer na lista) e deduplicação opcional de nomes e endereços.
 5.  **Página 4: Horários (`page_horarios`)**
-    *   Configuração da operação horária da linha baseada em frequências (início, fim e intervalo).
+    *   Configuração da operação horária da linha baseada em frequências (início, fim, intervalo e **duração da viagem**).
+    *   **Ajuste fino no diagrama** (Fase 12): a mesma página traz uma `BlockView`/`BlockScene` em Modo Viagens sobre a grade em memória (`self.build_stop_times`), com passo configurável, legenda dos atalhos, rótulo dos dias do calendário e botão "Restaurar frequência regular".
 6.  **Página 5: Revisão (`page_revisao`)**
     *   Resumo de todas as informações inseridas para a linha.
     *   Permite salvar a linha (persiste no banco de dados e calcula o traçado viário via OSM/Dijkstra).
@@ -175,3 +249,76 @@ A implementação seguiu passos incrementais para assegurar a testabilidade das 
 4.  **Pipeline de Roteamento viário com OSM**: Integração com a API do Overpass e processamento do grafo pelo `qgis.analysis`.
 5.  **Interface gráfica**: Desenvolvimento dinâmico do assistente, `QStackedWidget`, lógica de navegação dos botões e ligação com o canvas nativo.
 6.  **Integração e Validação**: Ligação de "Construir GTFS" à aba "Edição GTFS" compartilhando o mesmo GeoPackage de trabalho.
+
+
+---
+
+## 9. AJUSTE FINO DE HORÁRIOS (Fase 12 — decisões 71-81)
+
+Na operação real o intervalo encurta no pico e alarga fora dele, então a
+frequência única propagada para o dia inteiro não basta. O ajuste acontece
+**antes de gravar**, sobre a grade que o assistente já monta em memória.
+
+### 9.1 Decisões
+
+*   **71 — O ajuste é etapa do assistente, não uma segunda tela de edição do
+    `feed_edit.gpkg`.** Opera sobre `self.build_stop_times`/`self.build_trips`,
+    antes de qualquer gravação. Ajustar depois, na aba "Edição GTFS", continua
+    possível (decisão 23) — só deixa de ser o único caminho.
+*   **72 — Um conjunto de viagens por `service_id`; o `calendar` é quem
+    multiplica pelos dias.** Não existe cópia de viagem por dia da semana: um
+    `>` ali mexe nos cinco dias de uma vez. O que a Fase 12 acrescenta é a tela
+    **dizer isso** (rótulo "Estas N viagens valem para: seg, ter, ...").
+*   **73 — Reaproveitar `BlockScene`/`BlockView`/`block_core.Trip`.** A geometria,
+    o eixo de tempo, as faixas, as cores e a exportação PNG/SVG continuam sendo o
+    código do Diagrama de Blocos; a Fase 12 só acrescenta edição.
+*   **74 — Núcleo de edição puro em `schedule_edit_core.py`, sem Qt.** Extensão da
+    decisão 31: deslocar viagem, deslocar extremo, resumir a grade, calcular
+    headway e validar são funções sobre listas de dicionários de `stop_times`,
+    verificáveis por `pytest` fora do QGIS (`test_schedule_edit_core.py`).
+*   **75 — O headway vira cota e vale nos dois modos.** `_show_headway` não sai
+    mais cedo em Modo Viagens; a diagonal entre centros de barra deu lugar a uma
+    cota horizontal com linhas de chamada verticais.
+*   **76 — Os atalhos são lidos por `event.text()`, não por keycode**, porque `>`
+    e `<` ficam em teclas diferentes em ABNT2 e US-International.
+    `Key_Plus`/`Key_Minus` do teclado numérico são aceitos em adição.
+*   **77 — O passo do deslocamento é configurável, com 15 min de padrão.**
+*   **78 — `>`/`<` movem só o extremo selecionado e re-interpolam o miolo;
+    `+`/`-` movem a viagem inteira.** O clique escolhe a viagem **e** o extremo
+    mais próximo do X clicado. A sequência de horários nunca decresce, e um
+    deslocamento que inverteria saída e chegada é recusado (a função devolve a
+    grade original).
+*   **79 — Cada tecla redesenha a cena inteira via `set_schedule`.** Uma linha tem
+    dezenas de viagens, não milhares: reconstruir o `Schedule` é mais simples e
+    menos sujeito a estado inconsistente que mutar item a item. A seleção
+    (viagem + extremo) é restaurada logo depois do redesenho.
+*   **80 — `save_route` ganha `stop_times=None`: sem o parâmetro, nada muda.**
+*   **81 — Viagem precisa ter duração > 0 e `trip_id` único.**
+
+### 9.2 Módulo `schedule_edit_core.py`
+
+Funções puras (sem Qt no nível do módulo; `block_core` só é importado sob demanda
+dentro de `schedule_from_draft`):
+
+| Função | Papel |
+|---|---|
+| `expand_frequency_to_stop_times(stop_ids, hora_inicio, hora_fim, intervalo_min, duracao_min=None, prefix=None)` | Gera a grade regular. `duracao_min` distribui os horários linearmente entre as paradas (antes toda parada recebia o mesmo horário — barra de largura zero); `prefix` compõe `trip_<prefix>_<HHMMSS>`, evitando a colisão de `trip_id` entre linhas que saem no mesmo horário. Sem os dois, o comportamento anterior é preservado. |
+| `trips_from_stop_times(stop_times)` | Resume a grade em `{trip_id, start_s, end_s, n_stops}`, em ordem de saída. |
+| `headways(stop_times)` | `{trip_id: headway_s}` em relação à viagem anterior **na ordem da grade** — headway negativo denuncia ordem trocada por um ajuste. |
+| `shift_trip(stop_times, trip_id, delta_s)` | `+`/`-`: move a viagem inteira, preservando a duração. Recusa o que iria para antes de `00:00:00`; horários acima de 24 h são mantidos (o GTFS permite). |
+| `shift_trip_endpoint(stop_times, trip_id, endpoint, delta_s)` | `>`/`<`: move só `'first'` (saída) ou `'last'` (chegada) e redistribui linearmente as paradas intermediárias. Recusa o cruzamento dos extremos. |
+| `validate_draft_times(stop_times)` | Devolve `(erros, avisos)`. Erro bloqueia o avanço; aviso só pede confirmação. |
+| `schedule_from_draft(stop_times, route_short_name, direction_id, service_id, trip_headsign)` | Converte a grade num `block_core.Schedule` (`mode='trips'`) para a cena desenhar — sem tocar em `sqlite3`. O `ScheduleReader` continua sendo o único caminho para o diagrama que lê do GeoPackage. |
+
+Todas devolvem listas novas: a grade de entrada nunca é mutada.
+
+### 9.3 Contrato novo de `save_route`
+
+`save_route(gpkg_path, agency, linha, paradas, service, frequencia, stop_times=None)`.
+
+Sem `stop_times`, nada muda: a função expande `frequencia` como antes (agora
+repassando `duracao_min` e o prefixo de `trip_id`). Com `stop_times`, grava
+**exatamente** aquelas linhas, derivando a lista de viagens dos `trip_id`
+distintos na ordem de saída — é o que impede o `DELETE` + reexpansão de apagar o
+ajuste manual no "Salvar Linha". O `DELETE` prévio das viagens da rota continua
+igual.

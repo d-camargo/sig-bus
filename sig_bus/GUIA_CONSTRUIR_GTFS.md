@@ -25,10 +25,10 @@ Um checklist ("**falta: ...**") é exibido logo abaixo das barras de progresso, 
 O assistente guia o usuário página por página (uma linha de cada vez) através de uma interface baseada em abas dinâmicas:
 
 ### 1. Configuração Inicial (Agência)
-* **Objetivo:** Cadastrar as informações da operadora de transporte.
-* **Campos Obrigatórios:** Nome da agência (`agency_name`), URL (`agency_url`) e Fuso Horário (`agency_timezone`).
-* **Campos Opcionais:** Idioma (`agency_lang`) e Telefone (`agency_phone`).
-* **Nota:** Essas informações são salvas globalmente e configuradas uma única vez ao iniciar a criação do feed.
+* **Objetivo:** Cadastrar as informações da operadora de transporte e a localização geográfica da agência.
+* **Campos Obrigatórios:** Nome da agência (`agency_name`), URL (`agency_url`), Fuso Horário (`agency_timezone`), Município (`build_city`) e UF (`build_state`).
+* **Campos Opcionais:** Idioma (`agency_lang`), Telefone (`agency_phone`) e País (`build_country`, fixo em "Brasil").
+* **Nota:** O Município e a UF são salvos na tabela interna `sig_bus_config` e definem o contexto e o bounding box (`viewbox`) para restringir a geocodificação de paradas.
 
 ### 2. Nova Linha: Identidade
 * **Objetivo:** Definir os dados básicos de identificação da linha de ônibus/rota.
@@ -36,10 +36,23 @@ O assistente guia o usuário página por página (uma linha de cada vez) atravé
 
 ### 3. Paradas (Endereços e Geocodificação)
 * **Objetivo:** Informar onde ficam localizados os pontos de embarque/desembarque da linha.
-* **Geocodificação Automática (Nominatim):** O usuário digita os endereços textuais e clica em **Geocodificar**. O plugin consulta o serviço público do Nominatim (OpenStreetMap) de forma síncrona e preenche a latitude e longitude de cada ponto.
-* **Deduplicação de Paradas:** Se o endereço normalizado (espaços colapsados e minúsculas) coincidir com alguma parada já salva no GeoPackage, o assistente exibe a opção `"parada já existe — reaproveitar"` ativada por padrão, evitando duplicar registros.
+* **Padrão de Endereço:** Os endereços devem ser inseridos no padrão `Logradouro, Número - Bairro` (ex.: `Rua Giuseppe Fórmolo, 210 - Centro`). O bairro é opcional. O município e a UF vêm automaticamente da configuração da agência.
+* **Geocodificação Automática Estruturada (Nominatim e Fallback Photon):** O usuário digita os endereços textuais e clica em **Geocodificar**. O plugin executa uma busca síncrona estruturada por contexto no Nominatim em cascata (com número, sem número e busca livre), delimitada pela caixa envolvente do município. Caso o Nominatim não encontre o endereço, o assistente aciona automaticamente o geocodificador **Photon (Komoot)** como último degrau de fallback, tolerante a erros de digitação. As consultas em lote utilizam cache de sessão para evitar requisições de rede repetidas.
+* **Status Visual das Paradas:** Os campos visuais de latitude e longitude foram suprimidos da tabela para simplificar a interface, sendo substituídos por rótulos visuais de status (`✓ localizado`, `✗ não encontrado`, `📍 marcado no mapa`).
+* **Botão "Marcar no mapa":** Para cada parada (especialmente em linhas rurais sem endereço textual), o usuário pode clicar em **Marcar no mapa**. O plugin oculta temporariamente o assistente, ativa a ferramenta interativa `PickStopPointTool` e permite selecionar o ponto com um clique no canvas do QGIS. Se o projeto não possuir uma camada base, uma camada raster OpenStreetMap é adicionada automaticamente via `ensure_osm_basemap`.
+* **Importação e Exportação por CSV em Lote:**
+  * **Baixar modelo CSV:** Gera o modelo `modelo_paradas.csv` (formato `;`, UTF-8 com BOM) para preenchimento no Excel/LibreOffice.
+  * **Importar CSV:** Permite carregar um lote de paradas de um arquivo CSV, suportando tanto endereços no padrão quanto coordenadas lat/lon diretas (linhas rurais).
+* **Erro de digitação no nome da rua (a causa mais comum):** o Nominatim **não corrige typo** — `Rua Giusepe Fórmolo` (um `p` a menos que o `Giuseppe` real do OpenStreetMap) devolve **zero** candidatos em todas as tentativas, mesmo com município, UF e número corretos. É por isso que o Photon entra como último degrau: ele tolera a grafia errada e encontra a rua assim mesmo.
+  * **Como identificar:** quando a busca aceita um logradouro com grafia diferente da digitada, o status da parada não vira `✓ localizado` e sim **`✓ localizado (via: <nome real>)`** — o nome entre parênteses é a rua que o buscador realmente casou. A troca nunca é silenciosa: o par digitado/aceito também vai para o log `SIG-Bus`.
+  * **Quando a via casada não é a desejada:** confira o nome entre parênteses antes de avançar. Ruas de nome parecido existem no mesmo município (ex.: `Giusepe Bressan` × `Giuseppe Fôrmolo`), então o acerto não é garantido. Se estiver errado, corrija a grafia no campo do endereço e clique em **Geocodificar** de novo, ou use **Marcar no mapa** para posicionar o ponto à mão.
+* **Quando a geocodificação não encontra nada:** Se o resumo ao fim da busca disser *"Nenhuma parada localizada: ..."* (com os endereços que falharam), siga nesta ordem:
+  1. **Confira a grafia do logradouro** nos endereços citados na mensagem — é a causa mais provável, pelo motivo do item acima.
+  2. **Confira o município e a UF na página "Configuração inicial" (agência)** — é o contexto usado em toda a busca. Município errado (ou de outro estado) descarta os candidatos certos.
+  3. **Abra o painel "Log Messages" do QGIS, aba `SIG-Bus`** — cada tentativa registra com tag explícita (`[a-estruturada-num]`, `[b-estruturada]`, `[c-livre]`, `[sem-bbox ...]`, `[photon]`, `[city-bbox]`) a URL consultada, o código de erro da resposta e quantos candidatos vieram. É ali que aparece a diferença entre "endereço inexistente" e falha de rede/serviço fora do ar.
+  4. **Use "Marcar no mapa"** — é a saída sempre disponível: nenhuma parada depende da geocodificação para ser cadastrada.
+* **Deduplicação de Paradas:** Se o endereço normalizado coincidir com alguma parada já salva no GeoPackage, o assistente exibe a opção `"parada já existe — reaproveitar"` ativada por padrão, evitando duplicar registros.
 * **Ajuste Manual e no Mapa:**
-  * Caso um endereço não seja encontrado pela geocodificação, o usuário pode digitar manualmente a latitude e a longitude.
   * Ao clicar em "Confirmar e avançar", os pontos são carregados temporariamente em uma camada do QGIS (`stops_temp`) e o plugin ativa a ferramenta nativa de edição de vértices para permitir que os pontos sejam arrastados e reposicionados no mapa.
 
 ### 4. Sequência de Paradas
@@ -50,16 +63,61 @@ O assistente guia o usuário página por página (uma linha de cada vez) atravé
 * **Objetivo:** Gerar as viagens e os horários em cada parada de forma automática, evitando digitação tabela a tabela.
 * **Configuração:**
   * **Calendário:** Reutilizar um calendário existente (ex: dias úteis, sábados, domingos) ou criar um novo definindo o identificador (`service_id`), os dias de operação e o período de vigência (datas de início e término).
-  * **Frequência:** Informar a hora de início da operação, a hora de término e o intervalo entre as viagens (em minutos).
-* **Expansão Automática:** O plugin expande a frequência e distribui os horários de chegada (`arrival_time`) e partida (`departure_time`) linearmente entre as paradas na tabela `stop_times`.
+  * **Frequência:** Informar a hora de início da operação, a hora de término, o intervalo entre as viagens (em minutos) e a **duração da viagem (em minutos)**.
+* **Expansão Automática:** O plugin expande a frequência e distribui os horários de chegada (`arrival_time`) e partida (`departure_time`) linearmente entre as paradas na tabela `stop_times` com base na duração informada.
+
+### 5.1 Ajuste de horários (diagrama, na mesma página)
+* **Objetivo:** Visualizar e refinar viagem a viagem o quadro gerado pela frequência — ainda em memória, antes de qualquer gravação. Na operação real o intervalo encurta no pico e alarga fora dele.
+* **Diagrama:** o mesmo Diagrama de Blocos do plugin, em Modo Viagens: cada viagem é uma barra cuja largura é a duração informada acima.
+* **Seleção:** clique na barra da viagem. A **metade esquerda** seleciona a **saída**; a **metade direita**, a **chegada**.
+* **Passo:** o campo **Passo** define quantos minutos cada tecla desloca (padrão: 15 minutos).
+* **Atalhos de teclado** (clique no diagrama antes, para ele receber o teclado):
+
+  | Tecla | Efeito |
+  |---|---|
+  | `>` | adia o extremo selecionado (saída **ou** chegada) em um passo |
+  | `<` | antecipa o extremo selecionado em um passo |
+  | `+` | adia a viagem inteira (saída e chegada juntas), preservando a duração |
+  | `-` | antecipa a viagem inteira, preservando a duração |
+
+  Ao mover um extremo, as paradas intermediárias são redistribuídas linearmente entre a saída e a chegada resultantes. Um deslocamento que inverteria saída e chegada é recusado — a grade fica como estava.
+* **Indicador de headway (cota):** com uma viagem selecionada, uma cota de desenho técnico liga a saída da viagem anterior à da selecionada, com o valor `headway N min`.
+* **Restaurar frequência regular:** descarta os ajustes manuais e regera a grade a partir da hora de início/fim, intervalo e duração. Mudar qualquer um desses quatro campos também regera a grade.
+* **Um ajuste vale para todos os dias do calendário.** No GTFS um único conjunto de viagens já atende os cinco dias úteis — quem diz "seg a sex" é o calendário (`service_id`), não uma cópia por dia. O rótulo acima do diagrama mostra para quais dias aquele conjunto vale.
+* **Validação ao avançar:** erro (chegada antes da partida, sequência decrescente, saída ≥ chegada) **bloqueia** o avanço; aviso (duas viagens saindo no mesmo horário, ordem trocada, headway muito acima do típico) pede confirmação.
 
 ### 6. Revisão e Salvar
 * **Objetivo:** Revisar o resumo das configurações da linha e gravá-las definitivamente.
 * **Ações Disponíveis:**
-  * **Salvar Linha:** Grava a rota, viagens, calendários, paradas e horários no GeoPackage, além de calcular o traçado geométrico.
+  * **Salvar Linha:** Grava a rota, viagens, calendários, paradas e horários (incluindo os horários ajustados na etapa anterior) no GeoPackage, além de calcular o traçado geométrico.
   * **Adicionar segundo sentido desta linha:** Inverte a ordem das paradas para facilitar o cadastro do sentido de volta (sentido oposto).
   * **Nova linha:** Reinicia o assistente na etapa da identidade da rota para cadastrar uma nova linha de ônibus.
   * **Ir para Edição GTFS:** Redireciona o usuário para a aba de Edição GTFS, mantendo a mesma cópia de trabalho ativa.
+
+---
+
+## Geocodificação: quando o OSM não basta
+
+Embora o geocodificador gratuito baseado em OpenStreetMap (Nominatim + Photon) atenda à maioria dos casos urbanos, certos endereços comerciais ou recém-criados podem não estar indexados na base livre do OSM. Para essas situações, o SIG-Bus permite integrar opcionalmente a **Google Geocoding API**.
+
+### Chave de API do Google (Opcional)
+* **Caráter Opcional:** O uso de uma chave do Google é totalmente **opcional** e de responsabilidade/custo do próprio usuário. O plugin funciona perfeitamente sem chave (utilizando a cascata pública e gratuita Nominatim → Photon → corretor de vias Overpass).
+* **Como obter e habilitar:**
+  1. Acesse o [Google Cloud Console](https://console.cloud.google.com/).
+  2. Crie um projeto e ative a **Geocoding API**.
+  3. Em *Credenciais*, crie uma **API Key** (chave de API) e configure restrições de uso recomendadas.
+* **Onde configurar no plugin:** Na página de **Paradas** do assistente, clique no botão **"Configurar geocodificação…"** (ao lado do botão *Geocodificar*). Na janela que se abre:
+  * Escolha o modo de operação: `Automático (usa Google se houver chave)` ou `Somente OSM (Nominatim + Photon)`.
+  * Cole sua chave de API no campo `Chave da API do Google Maps`.
+  * Clique em **Testar chave** para verificar a validade das credenciais.
+* **Persistência segura:** A chave é salva localmente nas configurações do seu usuário no QGIS (`QSettings`), e **nunca** é gravada no arquivo `.gpkg` do projeto nem exportada no feed GTFS, garantindo que suas credenciais não vazem ao compartilhar arquivos de projeto.
+
+### Leitura dos Novos Status de Procedência
+Quando a busca por paradas é realizada, o plugin exibe a procedência do ponto localizado nos rótulos de status:
+* **`✓ localizado (Google)`**: A parada foi localizada via Google Geocoding API (primeiro provedor acionado quando a chave está configurada).
+* **`✓ localizado (Nominatim)`**: A parada foi localizada pela busca direta no Nominatim.
+* **`✓ localizado (Photon)`**: A parada foi localizada através do fallback do Photon.
+* **`✓ localizado (via: <nome real> — OSM)`**: A parada foi localizada após correção de grafia feita pelo corretor de vias do Overpass/OSM.
 
 ---
 
@@ -76,14 +134,15 @@ Um dos grandes diferenciais do SIG-Bus na criação do GTFS é a geração do tr
 ## Passo a Passo: Fluxo Feliz Completo
 
 1. **Acessar o assistente:** Clique na aba **Construir GTFS**.
-2. **Definir Agência:** Preencha os campos obrigatórios da operadora na página "Configuração Inicial" e clique em **Salvar e continuar**.
+2. **Definir Agência:** Preencha os campos obrigatórios da operadora (incluindo Município e UF) na página "Configuração Inicial" e clique em **Salvar e continuar**.
 3. **Identificar a Linha:** Insira o Nome Curto (ex: "105"), Nome Longo e selecione o Tipo de Rota. Clique em **Avançar**.
-4. **Adicionar Paradas:** Digite o nome/endereço de cada ponto de parada, clique em **Geocodificar** para encontrar as coordenadas automaticamente. Insira ou ajuste coordenadas manualmente se necessário.
+4. **Adicionar Paradas:** Digite os endereços no padrão (ou importe um lote via **Importar CSV** / `modelo_paradas.csv`), clique em **Geocodificar** para encontrar as coordenadas automaticamente. Para paradas rurais ou sem endereço, use o botão **Marcar no mapa** para indicar a posição diretamente no canvas.
 5. **Confirmar no Mapa:** Clique em **Confirmar e avançar**. As paradas temporárias serão carregadas no canvas do QGIS. Use a ferramenta de vértices para arrastar as paradas para a posição correta na via, se necessário.
 6. **Ordenar Paradas:** Avance para a página "Sequência" (as coordenadas editadas no canvas serão salvas automaticamente). Ordene os pontos de parada usando os botões de mover para cima/baixo.
-7. **Definir Horários:** Configure ou selecione o calendário de operação, defina a hora de início, hora de término e o intervalo (ex: a cada 20 minutos). Clique em **Avançar**.
-8. **Revisar e Salvar:** Verifique o resumo gerado e clique em **Salvar linha**. O plugin gravará as feições e calculará o traçado pelas ruas automaticamente.
-9. **Finalizar ou Cadastrar Mais:** Escolha entre criar o sentido de volta (segundo sentido), cadastrar outra linha ou clicar em **Ir para Edição GTFS** para validar e exportar o feed compactado `.zip` final.
+7. **Definir Horários e Duração:** Configure ou selecione o calendário de operação, defina a hora de início, hora de término, o intervalo (ex: a cada 20 minutos) e a duração estimada da viagem (em minutos).
+8. **Ajustar Horários no Diagrama (opcional):** Ainda na página "Horários", use o diagrama para acertar viagem a viagem: clique numa barra e use `>`/`<` (só a saída ou a chegada) ou `+`/`-` (a viagem inteira), com o passo definido no campo **Passo**. Clique em **Avançar**.
+9. **Revisar e Salvar:** Verifique o resumo gerado e clique em **Salvar linha**. O plugin gravará as feições e calculará o traçado pelas ruas automaticamente.
+10. **Finalizar ou Cadastrar Mais:** Escolha entre criar o sentido de volta (segundo sentido), cadastrar outra linha ou clicar em **Ir para Edição GTFS** para validar e exportar o feed compactado `.zip` final.
 
 ---
 
@@ -141,6 +200,14 @@ Abaixo estão listadas as mensagens de aviso e de erro emitidas pelo assistente:
   * **Causa:** O intervalo entre viagens foi configurado com valor zero ou negativo.
   * **Solução:** Defina um intervalo de tempo maior que zero (ex: `15` minutos).
 
+* **"A grade de horários contém inconsistências e não pode avançar: ..."** (Aviso)
+  * **Causa:** O ajuste manual no diagrama deixou uma viagem inconsistente (chegada anterior à partida na mesma parada, sequência de paradas decrescente ou saída igual/posterior à chegada).
+  * **Solução:** Corrija a viagem citada com `>`/`<`/`+`/`-`, ou clique em **Restaurar frequência regular** para voltar à grade gerada automaticamente.
+
+* **"A grade de horários tem pontos a conferir: ... Avançar assim mesmo?"** (Pergunta)
+  * **Causa:** Duas viagens saem no mesmo horário, o ajuste inverteu a ordem de duas viagens ou algum headway ficou acima do triplo do intervalo típico.
+  * **Solução:** Nenhuma correção é obrigatória — confirme se o quadro é mesmo esse (pico/entrepico) ou volte e ajuste.
+
 * **"Dados de horários/calendário não foram configurados."** (Aviso)
   * **Causa:** O assistente tentou salvar a linha sem que a página de horários tivesse sido concluída com sucesso.
   * **Solução:** Certifique-se de avançar todas as etapas anteriores preenchendo as configurações corretamente.
@@ -152,8 +219,14 @@ Abaixo estão listadas as mensagens de aviso e de erro emitidas pelo assistente:
 ### 2. Mensagens do Geocodificador
 
 * **Status: "não encontrado"**
-  * **Causa:** O endereço digitado é muito específico, incorreto, ou não possui correspondência na base do OpenStreetMap/Nominatim.
-  * **Solução:** Simplifique o endereço (use apenas o nome da rua e cidade, ex: "Av. Afonso Pena, Belo Horizonte") ou preencha a latitude e longitude manualmente.
+  * **Causa:** O endereço digitado é muito específico, incorreto ou não possui correspondência nas bases do Nominatim nem do Photon (Komoot). Erro de digitação no nome da rua é o caso mais frequente.
+  * **Solução:** Confira a grafia do logradouro, simplifique o endereço (use apenas o nome da rua e município, ex: "Rua Afonso Pena, Caxias do Sul") ou marque o ponto diretamente no mapa com **Marcar no mapa**.
+* **Status: "✓ localizado (via: &lt;nome real&gt;)"**
+  * **Causa:** A busca só encontrou a parada com um logradouro de grafia diferente da digitada — normalmente um erro de digitação corrigido pelo Photon.
+  * **Solução:** Nenhuma, se o nome entre parênteses for a rua desejada. Se não for, corrija a grafia e clique em **Geocodificar** novamente, ou use **Marcar no mapa**. O assistente nunca altera o endereço cadastrado por conta própria.
+* **Aviso: "Nenhuma parada localizada: &lt;endereços&gt;"**
+  * **Causa:** *Todos* os endereços falharam na busca (tanto no Nominatim quanto no fallback do Photon). A causa mais comum é a grafia do logradouro; depois dela, município/UF incorretos no cadastro da agência ou falha de conexão de rede/serviço fora do ar.
+  * **Solução:** Confira a grafia dos endereços citados na própria mensagem, depois o município e a UF na página da agência, e verifique o painel **Log Messages** do QGIS (aba `SIG-Bus`): cada consulta registra com tags (`[a-estruturada-num]`, `[b-estruturada]`, `[c-livre]`, `[sem-bbox ...]`, `[photon]`) a URL consultada, o código de erro de rede e a quantidade de candidatos encontrados. A opção **Marcar no mapa** permanece totalmente funcional para incluir as paradas.
 
 ---
 

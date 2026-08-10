@@ -494,7 +494,7 @@ class BlockDiagramTask(QgsTask):
     def __init__(self, gpkg_path, route_short_names, service_ids=None,
                  directions=None, t_min=0, t_max=DAY_MAX_S, mode='trips',
                  params=None):
-        super().__init__('Montando diagrama de blocos', QgsTask.CanCancel)
+        super().__init__('Montando diagrama de blocos', QgsTask.Flag.CanCancel)
         self.gpkg = gpkg_path
         self.route_short_names = list(route_short_names)
         self.service_ids = service_ids
@@ -544,7 +544,7 @@ class BlockDiagramTask(QgsTask):
         except Exception as e:   # noqa: BLE001 — reporta à GUI
             self._error = str(e)
             QgsMessageLog.logMessage(
-                'Falha no diagrama: {}'.format(e), LOG_TAG, Qgis.Critical)
+                'Falha no diagrama: {}'.format(e), LOG_TAG, Qgis.MessageLevel.Critical)
             return False
         return True
 

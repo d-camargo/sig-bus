@@ -5,9 +5,14 @@
 
 [general]
 name=SIG-Bus
-qgisMinimumVersion=3.0
+# Faixa de versões do QGIS suportadas: do LTR 3.34, que o Ubuntu 24.04
+# empacota, até o fim da série 4.x. Sem qgisMaximumVersion explícito o QGIS
+# assume <major do mínimo>.99 (= 3.99) e recusa todo QGIS 4.x.
+qgisMinimumVersion=3.34
+qgisMaximumVersion=4.99
+supportsQt6=True
 description=Carrega dados GTFS e dados de demanda no QGIS para análise de transporte público.
-version=0.4
+version=0.6
 author=Diego Camargo
 email=diegocamargo.bft@gmail.com
 

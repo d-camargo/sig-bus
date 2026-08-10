@@ -32,7 +32,7 @@ from datetime import datetime
 from zipfile import ZipFile
 
 from qgis.PyQt import uic, QtWidgets
-from qgis.PyQt.QtCore import QVariant, Qt, QDate, QTime
+from qgis.PyQt.QtCore import Qt, QDate, QTime
 from qgis.PyQt.QtGui import QFont
 from qgis.PyQt.QtWidgets import (
     QFileDialog,
@@ -42,6 +42,7 @@ from qgis.PyQt.QtWidgets import (
     QPushButton,
     QMessageBox,
     QComboBox,
+    QInputDialog,
 )
 from qgis.core import (
     Qgis,
@@ -74,7 +75,6 @@ from qgis.core import (
     QgsTask,
     QgsRendererCategory,
     QgsRendererRange,
-    QgsUnitTypes,
     QgsVectorFileWriter,
     QgsVectorLayer,
 )
@@ -83,6 +83,8 @@ import processing as _processing
 
 from .gtfs_reader import (
     ESSENTIAL_LAYERS,
+    FIELD_INT,
+    FIELD_STRING,
     GtfsError,
     GtfsReader,
     create_join_indexes,
@@ -92,6 +94,14 @@ from . import gtfs_schema
 from .gtfs_export import GtfsExporter
 from .gtfs_validator import GtfsValidator
 from .gtfs_builder_core import compute_progress
+from .address_format import ADDRESS_PATTERN_HINT, ADDRESS_PLACEHOLDER, parse_address, normalizar_logradouro
+
+# Folhas de estilo padronizadas para o assistente (Fase 8, passo 72, decisão 42)
+QSS_INPUT = "border: 1px solid #ccc; border-radius: 4px; padding: 4px; background-color: #ffffff; color: #2d3748;"
+QSS_CARD = "background-color: #fcfcfc; color: #2d3748; border: 1px solid #e0e0e0; border-radius: 6px; padding: 6px; margin-bottom: 4px;"
+QSS_HINT = "color: #4a5568; background-color: transparent; margin-bottom: 8px;"
+QSS_STATUS_OK = "color: #276749; background-color: transparent; font-weight: bold; border: none;"
+QSS_STATUS_ERR = "color: #e53e3e; background-color: transparent; font-style: italic; border: none;"
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 
@@ -170,7 +180,7 @@ class _HorariosTask(QgsTask):
     - Resultado: camada de pontos em memória — abre instantaneamente."""
 
     def __init__(self, gpkg_path, route_name):
-        super().__init__('Carregando horários', QgsTask.CanCancel)
+        super().__init__('Carregando horários', QgsTask.Flag.CanCancel)
         self.gpkg_path = gpkg_path
         self.route_name = str(route_name)
         # (stop_id, seq, arr, dep, trip_id, route_id, shape_id, dir, svc, nome, wkt)
@@ -234,22 +244,22 @@ class _HorariosTask(QgsTask):
                 "Erro",
                 "Falha ao carregar horários: {}".format(
                     self.error or "tarefa interrompida."),
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
 
         mem = QgsVectorLayer("Point?crs=EPSG:4326", "horarios_paradas", "memory")
         provider = mem.dataProvider()
         provider.addAttributes([
-            QgsField('stop_id',        QVariant.String),
-            QgsField('stop_sequence',  QVariant.String),
-            QgsField('arrival_time',   QVariant.String),
-            QgsField('departure_time', QVariant.String),
-            QgsField('trip_id',        QVariant.String),
-            QgsField('shape_id',       QVariant.String),
-            QgsField('direction_id',   QVariant.String),
-            QgsField('service_id',     QVariant.String),
-            QgsField('stop_name',      QVariant.String),
-            QgsField('linha',          QVariant.String),
+            QgsField('stop_id',        FIELD_STRING),
+            QgsField('stop_sequence',  FIELD_STRING),
+            QgsField('arrival_time',   FIELD_STRING),
+            QgsField('departure_time', FIELD_STRING),
+            QgsField('trip_id',        FIELD_STRING),
+            QgsField('shape_id',       FIELD_STRING),
+            QgsField('direction_id',   FIELD_STRING),
+            QgsField('service_id',     FIELD_STRING),
+            QgsField('stop_name',      FIELD_STRING),
+            QgsField('linha',          FIELD_STRING),
         ])
         mem.updateFields()
 
@@ -284,13 +294,13 @@ class _HorariosTask(QgsTask):
                 "Info",
                 "Horários carregados: {} registros para a linha {}.".format(
                     mem.featureCount(), self.route_name),
-                level=Qgis.Info, duration=8)
+                level=Qgis.MessageLevel.Info, duration=8)
         else:
             iface.messageBar().pushMessage(
                 "Aviso",
                 "Nenhum horário encontrado para a linha {}.".format(
                     self.route_name),
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
 
 
 class _GtfsLoadTask(QgsTask):
@@ -302,7 +312,7 @@ class _GtfsLoadTask(QgsTask):
     para mexer em QgsProject."""
 
     def __init__(self, gtfs_path, gpkg_path):
-        super().__init__('Carregando GTFS', QgsTask.CanCancel)
+        super().__init__('Carregando GTFS', QgsTask.Flag.CanCancel)
         self.gtfs_path = gtfs_path
         self.gpkg_path = gpkg_path
         self.reader = GtfsReader(gtfs_path)
@@ -338,7 +348,7 @@ class _GtfsLoadTask(QgsTask):
             msg = self.error or "tarefa cancelada ou interrompida."
             iface.messageBar().pushMessage(
                 "Erro", "Falha ao carregar o GTFS: {}".format(msg),
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
 
         # Carrega apenas as camadas essenciais como camadas de mapa. As
@@ -364,7 +374,7 @@ class _GtfsLoadTask(QgsTask):
             "GTFS carregado em '{}'. Escolha uma linha e clique em "
             "'Filtrar dados' para ver os horários por parada.".format(
                 os.path.basename(self.gpkg_path)),
-            level=Qgis.Info, duration=12)
+            level=Qgis.MessageLevel.Info, duration=12)
 
 
 class _DemandLoadTask(QgsTask):
@@ -376,7 +386,7 @@ class _DemandLoadTask(QgsTask):
     que rodava na thread da GUI e travava com muitos registros."""
 
     def __init__(self, data_path, gpkg_path):
-        super().__init__('Carregando dados de demanda', QgsTask.CanCancel)
+        super().__init__('Carregando dados de demanda', QgsTask.Flag.CanCancel)
         self.data_path = data_path
         self.gpkg_path = gpkg_path
         self.error = None
@@ -412,10 +422,11 @@ class _DemandLoadTask(QgsTask):
             opt = QgsVectorFileWriter.SaveVectorOptions()
             opt.driverName = 'GPKG'
             opt.layerName = 'dados_demanda'
-            opt.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
+            opt.actionOnExistingFile = (
+                QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteFile)
             res = QgsVectorFileWriter.writeAsVectorFormatV3(
                 vlayer, self.gpkg_path, QgsCoordinateTransformContext(), opt)
-            if res[0] != QgsVectorFileWriter.NoError:
+            if res[0] != QgsVectorFileWriter.WriterError.NoError:
                 self.error = "Falha ao gravar dados_demanda: {}".format(res[1])
                 return False
             self.setProgress(100)
@@ -430,14 +441,14 @@ class _DemandLoadTask(QgsTask):
                 "Erro",
                 "Falha ao carregar a demanda: {}".format(
                     self.error or "tarefa interrompida."),
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
         iface.addVectorLayer(
             self.gpkg_path + '|layername=dados_demanda',
             'dados_demanda', 'ogr')
         iface.messageBar().pushMessage(
             "Info", "Dados de demanda carregados (chave de ligação: LINHA).",
-            level=Qgis.Info, duration=10)
+            level=Qgis.MessageLevel.Info, duration=10)
 
 
 class _AlocacaoTask(QgsTask):
@@ -456,7 +467,7 @@ class _AlocacaoTask(QgsTask):
     _DIR_LABEL = {'0': 'ida', '1': 'volta'}
 
     def __init__(self, gpkg_path, route_name, hora=None, demand_gpkg=None):
-        super().__init__('Alocando demanda', QgsTask.CanCancel)
+        super().__init__('Alocando demanda', QgsTask.Flag.CanCancel)
         self.gpkg_path = gpkg_path          # GTFS (routes/trips/stops)
         self.demand_gpkg = demand_gpkg or gpkg_path   # dados_demanda
         self.route_name = str(route_name)
@@ -585,7 +596,7 @@ class _AlocacaoTask(QgsTask):
             QgsMessageLog.logMessage(
                 "  {} shape {}: {} viagens, {} paradas, {:.1f} km{}".format(
                     sent_lbl, sid, n_trips, len(stops), length_km, extra_msg),
-                'SIG-Bus', Qgis.Info)
+                'SIG-Bus', Qgis.MessageLevel.Info)
 
     # ------------------------------------------------------------------
     def run(self):
@@ -727,7 +738,7 @@ class _AlocacaoTask(QgsTask):
                                 'hora {:02d}h'.format(self.hora)
                                 if self.hora is not None else 'total',
                                 n_shapes, n_trips_total, shape_id, n_viagens),
-                        'SIG-Bus', Qgis.Info)
+                        'SIG-Bus', Qgis.MessageLevel.Info)
                     if n_shapes > 1:
                         self._avisos.append(
                             "PC={} (sentido {}): {} traçados distintos na janela; "
@@ -809,25 +820,25 @@ class _AlocacaoTask(QgsTask):
             iface.messageBar().pushMessage(
                 "Erro",
                 "Falha na alocação: {}".format(self.error or "cancelada."),
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
 
         mem = QgsVectorLayer("LineString?crs=EPSG:4326",
                              "tramos_demanda", "memory")
         prov = mem.dataProvider()
         prov.addAttributes([
-            QgsField('seq_from',          QVariant.Int),
-            QgsField('stop_id_from',      QVariant.String),
-            QgsField('stop_name_from',    QVariant.String),
-            QgsField('stop_id_to',        QVariant.String),
-            QgsField('stop_name_to',      QVariant.String),
-            QgsField('embarques',         QVariant.Int),
-            QgsField('passageiros_acum',  QVariant.Int),
-            QgsField('pc',                QVariant.String),
-            QgsField('sentido',           QVariant.String),
-            QgsField('linha',             QVariant.String),
-            QgsField('hora',              QVariant.String),
-            QgsField('n_viagens',         QVariant.Int),
+            QgsField('seq_from',          FIELD_INT),
+            QgsField('stop_id_from',      FIELD_STRING),
+            QgsField('stop_name_from',    FIELD_STRING),
+            QgsField('stop_id_to',        FIELD_STRING),
+            QgsField('stop_name_to',      FIELD_STRING),
+            QgsField('embarques',         FIELD_INT),
+            QgsField('passageiros_acum',  FIELD_INT),
+            QgsField('pc',                FIELD_STRING),
+            QgsField('sentido',           FIELD_STRING),
+            QgsField('linha',             FIELD_STRING),
+            QgsField('hora',              FIELD_STRING),
+            QgsField('n_viagens',         FIELD_INT),
         ])
         mem.updateFields()
         fields = mem.fields()
@@ -870,7 +881,7 @@ class _AlocacaoTask(QgsTask):
             except Exception as _e:
                 QgsMessageLog.logMessage(
                     'Simbologia graduada falhou: {}'.format(_e),
-                    'SIG-Bus', Qgis.Warning)
+                    'SIG-Bus', Qgis.MessageLevel.Warning)
 
             total_emb = sum(s[6] for s in self._segments)
             # Carga máxima = maior passageiros_acum entre todos os tramos
@@ -892,11 +903,11 @@ class _AlocacaoTask(QgsTask):
             if self._avisos:
                 msg += " Avisos: " + ' '.join(self._avisos)
             iface.messageBar().pushMessage(
-                "Info", msg, level=Qgis.Info, duration=12)
+                "Info", msg, level=Qgis.MessageLevel.Info, duration=12)
         else:
             iface.messageBar().pushMessage(
                 "Aviso", "Nenhum tramo gerado.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
 
 
 class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
@@ -1020,18 +1031,38 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.input_agency_timezone = QtWidgets.QLineEdit()
         self.input_agency_lang = QtWidgets.QLineEdit()
         self.input_agency_phone = QtWidgets.QLineEdit()
-        
+        self.input_city = QtWidgets.QLineEdit()
+        self.input_state = QtWidgets.QLineEdit()
+        self.input_country = QtWidgets.QLineEdit()
+
+        self.input_agency_name.setStyleSheet(QSS_INPUT)
+        self.input_agency_url.setStyleSheet(QSS_INPUT)
+        self.input_agency_timezone.setStyleSheet(QSS_INPUT)
+        self.input_agency_lang.setStyleSheet(QSS_INPUT)
+        self.input_agency_phone.setStyleSheet(QSS_INPUT)
+        self.input_city.setStyleSheet(QSS_INPUT)
+        self.input_state.setStyleSheet(QSS_INPUT)
+        self.input_country.setStyleSheet(QSS_INPUT)
+
         self.input_agency_name.setPlaceholderText("Nome da Agência (ex: Transporte Urbano)")
         self.input_agency_url.setPlaceholderText("URL da Agência (ex: http://www.transporte.com)")
         self.input_agency_timezone.setPlaceholderText("Fuso Horário (ex: America/Sao_Paulo)")
         self.input_agency_lang.setPlaceholderText("Idioma (opcional, ex: pt)")
         self.input_agency_phone.setPlaceholderText("Telefone (opcional, ex: 11 3456-7890)")
-        
+        self.input_city.setPlaceholderText("Caxias do Sul")
+        self.input_state.setPlaceholderText("RS")
+        self.input_state.setMaxLength(2)
+        self.input_country.setText("Brasil")
+        self.input_country.setReadOnly(True)
+
         form_layout.addRow("Nome da Agência *:", self.input_agency_name)
         form_layout.addRow("URL da Agência *:", self.input_agency_url)
         form_layout.addRow("Fuso Horário *:", self.input_agency_timezone)
         form_layout.addRow("Idioma:", self.input_agency_lang)
         form_layout.addRow("Telefone:", self.input_agency_phone)
+        form_layout.addRow("Município *:", self.input_city)
+        form_layout.addRow("UF *:", self.input_state)
+        form_layout.addRow("País:", self.input_country)
         
         layout_config.addLayout(form_layout)
         
@@ -1052,6 +1083,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.input_route_short_name = QtWidgets.QLineEdit()
         self.input_route_long_name = QtWidgets.QLineEdit()
         self.combo_route_type = QtWidgets.QComboBox()
+        
+        self.input_route_short_name.setStyleSheet(QSS_INPUT)
+        self.input_route_long_name.setStyleSheet(QSS_INPUT)
+        self.combo_route_type.setStyleSheet(QSS_INPUT)
         
         self.input_route_short_name.setPlaceholderText("Nome Curto (ex: 101, CIRCULAR)")
         self.input_route_long_name.setPlaceholderText("Nome Longo (ex: Centro / Bairro)")
@@ -1088,20 +1123,24 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         title_label.setStyleSheet("font-size: 14px; margin-bottom: 4px;")
         layout_paradas.addWidget(title_label)
         
-        desc_label = QLabel("Insira os endereços das paradas na ordem em que ocorrem na linha. Clique em 'Geocodificar' para obter lat/lon.")
-        desc_label.setStyleSheet("color: #666; margin-bottom: 8px;")
+        desc_label = QLabel("Insira os endereços das paradas na ordem em que ocorrem na linha.")
+        desc_label.setStyleSheet(QSS_HINT)
         layout_paradas.addWidget(desc_label)
+        
+        hint_label = QLabel(ADDRESS_PATTERN_HINT)
+        hint_label.setStyleSheet(QSS_HINT)
+        layout_paradas.addWidget(hint_label)
         
         # Scroll Area para as paradas
         self.scroll_paradas = QtWidgets.QScrollArea()
         self.scroll_paradas.setWidgetResizable(True)
-        self.scroll_paradas.setStyleSheet("border: 1px solid #ddd; border-radius: 4px; background-color: white;")
+        self.scroll_paradas.setStyleSheet(QSS_CARD)
         
         self.scroll_content_paradas = QWidget()
-        self.scroll_content_paradas.setStyleSheet("background-color: white;")
+        self.scroll_content_paradas.setStyleSheet(QSS_CARD)
         self.layout_scroll_paradas = QVBoxLayout(self.scroll_content_paradas)
         from qgis.PyQt.QtCore import Qt
-        self.layout_scroll_paradas.setAlignment(Qt.AlignTop)
+        self.layout_scroll_paradas.setAlignment(Qt.AlignmentFlag.AlignTop)
         
         self.scroll_paradas.setWidget(self.scroll_content_paradas)
         layout_paradas.addWidget(self.scroll_paradas)
@@ -1110,6 +1149,9 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         layout_botoes_paradas = QtWidgets.QHBoxLayout()
         self.button_add_stop = QtWidgets.QPushButton("Adicionar Endereço")
         self.button_geocode = QtWidgets.QPushButton("Geocodificar")
+        self.button_config_geocode = QtWidgets.QPushButton("Configurar geocodificação…")
+        self.button_download_csv_template = QtWidgets.QPushButton("Baixar modelo CSV")
+        self.button_import_csv = QtWidgets.QPushButton("Importar CSV")
         
         self.button_add_stop.setStyleSheet("""
             QPushButton {
@@ -1122,6 +1164,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
             QPushButton:hover {
                 background-color: #2c5282;
+                color: white;
             }
         """)
         
@@ -1136,11 +1179,60 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
             QPushButton:hover {
                 background-color: #2c7a7b;
+                color: white;
+            }
+        """)
+
+        self.button_config_geocode.setStyleSheet("""
+            QPushButton {
+                background-color: #4a5568;
+                color: white;
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #2d3748;
+                color: white;
+            }
+        """)
+
+        self.button_download_csv_template.setStyleSheet("""
+            QPushButton {
+                background-color: #4a5568;
+                color: white;
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #2d3748;
+                color: white;
+            }
+        """)
+
+        self.button_import_csv.setStyleSheet("""
+            QPushButton {
+                background-color: #805ad5;
+                color: white;
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #6b46c1;
+                color: white;
             }
         """)
         
         layout_botoes_paradas.addWidget(self.button_add_stop)
         layout_botoes_paradas.addWidget(self.button_geocode)
+        layout_botoes_paradas.addWidget(self.button_config_geocode)
+        layout_botoes_paradas.addWidget(self.button_download_csv_template)
+        layout_botoes_paradas.addWidget(self.button_import_csv)
         layout_paradas.addLayout(layout_botoes_paradas)
         
         self.stacked_build.addWidget(self.page_paradas)
@@ -1148,9 +1240,13 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         # Conexões
         self.button_add_stop.clicked.connect(self._add_stop_row)
         self.button_geocode.clicked.connect(self._geocode_stops)
+        self.button_config_geocode.clicked.connect(self._open_geocoding_config)
+        self.button_download_csv_template.clicked.connect(self._download_csv_template)
+        self.button_import_csv.clicked.connect(self._import_stops_csv)
         
         # Mantém uma lista para controlar os widgets das linhas
         self.stop_rows = []
+        self._pick_tool = None
         self.sequenced_stops = []
         self.build_direction_id = '0'
         
@@ -1162,12 +1258,12 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         
         # Label/Instruções
         label_instructions = QLabel("Organize as paradas na sequência correta de atendimento da linha. Você pode arrastá-las na lista ou usar os botões:")
-        label_instructions.setStyleSheet("font-weight: bold; margin-bottom: 8px;")
+        label_instructions.setStyleSheet("font-weight: bold; " + QSS_HINT)
         layout_sequencia.addWidget(label_instructions)
         
         # QListWidget para reordenação
         self.list_widget_sequencia = QtWidgets.QListWidget()
-        self.list_widget_sequencia.setDragDropMode(QtWidgets.QAbstractItemView.InternalMove)
+        self.list_widget_sequencia.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.InternalMove)
         self.list_widget_sequencia.setDragEnabled(True)
         self.list_widget_sequencia.setAcceptDrops(True)
         self.list_widget_sequencia.setDropIndicatorShown(True)
@@ -1177,6 +1273,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 border-radius: 6px;
                 padding: 5px;
                 background-color: #ffffff;
+                color: #2d3748;
             }
             QListWidget::item {
                 border: 1px solid #e2e8f0;
@@ -1184,6 +1281,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 padding: 8px;
                 margin-bottom: 4px;
                 background-color: #f7fafc;
+                color: #2d3748;
             }
             QListWidget::item:selected {
                 background-color: #ebf8ff;
@@ -1192,6 +1290,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
             QListWidget::item:hover {
                 background-color: #edf2f7;
+                color: #2d3748;
             }
         """)
         layout_sequencia.addWidget(self.list_widget_sequencia)
@@ -1212,6 +1311,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
             QPushButton:hover {
                 background-color: #2c5282;
+                color: white;
             }
             QPushButton:disabled {
                 background-color: #cbd5e0;
@@ -1317,9 +1417,15 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.spin_interval.setValue(30)
         self.spin_interval.setSuffix(" minutos")
         
+        self.spin_duration = QtWidgets.QSpinBox()
+        self.spin_duration.setRange(1, 600)
+        self.spin_duration.setValue(30)
+        self.spin_duration.setSuffix(" minutos")
+        
         form_freq.addRow("Hora de Início *:", self.time_start)
         form_freq.addRow("Hora de Fim *:", self.time_end)
         form_freq.addRow("Intervalo *:", self.spin_interval)
+        form_freq.addRow("Duração da Viagem *:", self.spin_duration)
         
         layout_horarios.addWidget(group_freq)
         
@@ -1336,6 +1442,45 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
         """)
         layout_horarios.addWidget(self.label_trips_summary)
+
+        # Grupo Diagrama de Horários (Visualização e Ajuste Manual)
+        group_diagram = QtWidgets.QGroupBox("Diagrama de Horários (Visualização e Ajuste)")
+        layout_group_diag = QVBoxLayout(group_diagram)
+
+        from .block_scene import BlockScene
+        from .block_view import BlockView
+
+        self.schedule_scene = BlockScene()
+        self.schedule_view = BlockView()
+        self.schedule_view.setScene(self.schedule_scene)
+        self.schedule_view.setMinimumHeight(200)
+        self.schedule_view.nudgeKeyPressed.connect(self._on_schedule_nudge_key)
+
+        # Passo do deslocamento (decisão 77) + botão de restaurar a frequência
+        linha_ajuste = QtWidgets.QHBoxLayout()
+        self.spin_schedule_step = QtWidgets.QSpinBox()
+        self.spin_schedule_step.setRange(1, 30)
+        self.spin_schedule_step.setValue(15)
+        self.spin_schedule_step.setSuffix(" minutos")
+        self.btn_restaurar_frequencia = QtWidgets.QPushButton("Restaurar frequência regular")
+        self.btn_restaurar_frequencia.clicked.connect(self._recalculate_draft_schedule)
+        linha_ajuste.addWidget(QLabel("Passo:"))
+        linha_ajuste.addWidget(self.spin_schedule_step)
+        linha_ajuste.addStretch()
+        linha_ajuste.addWidget(self.btn_restaurar_frequencia)
+        layout_group_diag.addLayout(linha_ajuste)
+
+        layout_group_diag.addWidget(QLabel(
+            "Clique numa viagem (metade esquerda = saída, metade direita = chegada). "
+            "Atalhos: <b>&gt;</b>/<b>&lt;</b> movem só a saída ou a chegada; "
+            "<b>+</b>/<b>-</b> movem a viagem inteira."))
+        # Decisão 72: um conjunto de viagens vale para todos os dias do calendário.
+        self.label_schedule_dias = QLabel("")
+        layout_group_diag.addWidget(self.label_schedule_dias)
+        layout_group_diag.addWidget(self.schedule_view)
+        self.label_schedule_status = QLabel("")
+        layout_group_diag.addWidget(self.label_schedule_status)
+        layout_horarios.addWidget(group_diagram)
         
         layout_horarios.addStretch()
         self.stacked_build.addWidget(self.page_horarios)
@@ -1351,6 +1496,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.label_revisao_summary.setStyleSheet("""
             QLabel {
                 background-color: #f7fafc;
+                color: #2d3748;
                 border: 1px solid #e2e8f0;
                 border-radius: 6px;
                 padding: 12px;
@@ -1376,6 +1522,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
             QPushButton:hover {
                 background-color: #2c5282;
+                color: white;
             }
             QPushButton:disabled {
                 background-color: #cbd5e0;
@@ -1410,6 +1557,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.time_start.timeChanged.connect(self._update_estimated_trips)
         self.time_end.timeChanged.connect(self._update_estimated_trips)
         self.spin_interval.valueChanged.connect(self._update_estimated_trips)
+        self.spin_duration.valueChanged.connect(self._update_estimated_trips)
         
         self._update_estimated_trips()
 
@@ -1474,7 +1622,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if not feature.isValid() or not field:
             iface.messageBar().pushMessage(
                 "Aviso", "Escolha uma linha antes de filtrar.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
         value = feature[field]
         if value is None:
@@ -1487,7 +1635,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 "Aviso",
                 "GeoPackage não encontrado. Use 'Reconectar GeoPackage' "
                 "para localizá-lo.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
 
         # Resolve os shape_ids da linha (route_short_name → route_id → shapes)
@@ -1548,7 +1696,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if not gtfs_path or not os.path.isfile(gtfs_path):
             iface.messageBar().pushMessage(
                 "Erro", "Selecione um arquivo GTFS (.zip) válido.",
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
 
         with ZipFile(gtfs_path) as zin:
@@ -1560,7 +1708,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 iface.messageBar().pushMessage(
                     "Info",
                     "O GTFS já contém calendar.txt; nenhuma correção necessária.",
-                    level=Qgis.Info, duration=10)
+                    level=Qgis.MessageLevel.Info, duration=10)
                 return
 
             if not has_calendar_dates:
@@ -1568,7 +1716,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     "Erro",
                     "O GTFS não contém calendar.txt nem calendar_dates.txt — "
                     "feed inválido segundo a especificação.",
-                    level=Qgis.Critical, duration=10)
+                    level=Qgis.MessageLevel.Critical, duration=10)
                 return
 
             # Feed só com calendar_dates.txt: sintetiza calendar.txt a partir dele.
@@ -1588,7 +1736,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             "Info",
             "calendar.txt gerado a partir de calendar_dates.txt. "
             "Utilize o arquivo 'gtfs_corrigido.zip'.",
-            level=Qgis.Info, duration=10)
+            level=Qgis.MessageLevel.Info, duration=10)
 
     @staticmethod
     def _calendar_from_dates(text_stream):
@@ -1640,7 +1788,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if not data_path or not os.path.isfile(data_path):
             iface.messageBar().pushMessage(
                 "Erro", "Selecione um arquivo CSV de demanda válido.",
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
 
         gpkg_path = os.path.join(os.path.dirname(data_path), 'sigt.gpkg')
@@ -1650,7 +1798,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             "Info",
             "Carregando dados de demanda em segundo plano… acompanhe o "
             "Gerenciador de Tarefas do QGIS.",
-            level=Qgis.Info, duration=8)
+            level=Qgis.MessageLevel.Info, duration=8)
 
 
 
@@ -1771,7 +1919,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if added:
             msg += " Camadas readicionadas: {}.".format(', '.join(added))
         msg += " Use 'Filtrar dados' para carregar os horários da linha."
-        iface.messageBar().pushMessage("Info", msg, level=Qgis.Info, duration=12)
+        iface.messageBar().pushMessage("Info", msg, level=Qgis.MessageLevel.Info, duration=12)
 
     def alocacaoClicked(self):
         """Aloca os embarques do CSV de demanda nos tramos da linha selecionada.
@@ -1783,7 +1931,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if not feature.isValid() or not field:
             iface.messageBar().pushMessage(
                 "Aviso", "Escolha uma linha antes de alocar a demanda.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
         value = feature[field]
         if value is None:
@@ -1795,7 +1943,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 "Aviso",
                 "GeoPackage não encontrado. Use 'Reconectar GeoPackage' "
                 "para localizá-lo.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
 
         # Localiza onde dados_demanda foi gravado (pode ser sigt.gpkg separado)
@@ -1805,7 +1953,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 "Aviso",
                 "Dados de demanda não encontrados. Use 'Inserir' para "
                 "carregá-los antes de alocar.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
 
         hora_text = self.combo_hora.currentText()
@@ -1818,7 +1966,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             "Info",
             "Alocando demanda para a linha {} ({}) em segundo plano…".format(
                 value, hora_text),
-            level=Qgis.Info, duration=6)
+            level=Qgis.MessageLevel.Info, duration=6)
 
     def diagramaClicked(self):
         """Abre o Diagrama de Blocos (tempo × linha/sentido) para o GTFS atual.
@@ -1832,14 +1980,14 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 'Aviso',
                 "GeoPackage do GTFS não encontrado. Carregue um GTFS ou use "
                 "'Reconectar GeoPackage'.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
         try:
             from .block_diagram_dialog import BlockDiagramDialog
         except Exception as e:   # noqa: BLE001
             iface.messageBar().pushMessage(
                 'Erro', 'Falha ao abrir o Diagrama de Blocos: {}'.format(e),
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
         # Parenteia à janela principal do QGIS (não a este diálogo), para a
         # janela do diagrama sobreviver ao fechamento do SIG-Bus. A referência
@@ -1862,7 +2010,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if not gtfs_path or not os.path.isfile(gtfs_path):
             iface.messageBar().pushMessage(
                 "Erro", "Selecione um arquivo GTFS (.zip) válido.",
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
             return
 
         # Prefere o feed corrigido, se existir ao lado do original.
@@ -1887,7 +2035,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             "Info",
             "Carregando GTFS em segundo plano… acompanhe o Gerenciador de "
             "Tarefas do QGIS.",
-            level=Qgis.Info, duration=8)
+            level=Qgis.MessageLevel.Info, duration=8)
 
     # ------------------------------------------------------------------
     def relatorioClicked(self):
@@ -1905,14 +2053,14 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 'Aviso',
                 "Execute 'Alocar Demanda' antes de gerar o relatório.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
         tramos = tramos_layers[0]
         feats = list(tramos.getFeatures())
         if not feats:
             iface.messageBar().pushMessage(
                 'Aviso', "Camada 'tramos_demanda' está vazia.",
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             return
 
         linha    = feats[0]['linha']
@@ -1961,7 +2109,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 'Aviso',
                 'Gráficos não gerados — verifique o log SIG-Bus para detalhes.',
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
 
         # 7. Caminho de saída ----------------------------------------------
         gpkg = self._resolve_gpkg() or ''
@@ -1979,7 +2127,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             return
 
         # 8. Layout — uma página A4 landscape por sentido com dados ----------
-        MM = QgsUnitTypes.LayoutMillimeters
+        MM = Qgis.LayoutUnit.Millimeters
         PAGE_W, PAGE_H, PAGE_GAP = 297.0, 210.0, 10.0  # mm
 
         # Páginas a criar: apenas sentidos com dados de demanda
@@ -1992,7 +2140,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if not pages_data:
             iface.messageBar().pushMessage(
                 'Aviso', 'Sem dados de demanda para gerar o relatório.',
-                level=Qgis.Warning, duration=8)
+                level=Qgis.MessageLevel.Warning, duration=8)
             for p in tmp_pngs:
                 try:
                     os.unlink(p)
@@ -2182,16 +2330,16 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             except OSError:
                 pass
 
-        if res == QgsLayoutExporter.Success:
+        if res == QgsLayoutExporter.ExportResult.Success:
             iface.messageBar().pushMessage(
                 'Info',
                 'Relatório exportado: {}'.format(save_path),
-                level=Qgis.Info, duration=12)
+                level=Qgis.MessageLevel.Info, duration=12)
         else:
             iface.messageBar().pushMessage(
                 'Erro',
                 'Falha ao exportar PDF (código {}).'.format(res),
-                level=Qgis.Critical, duration=10)
+                level=Qgis.MessageLevel.Critical, duration=10)
 
     def editEnterClicked(self):
         """
@@ -2203,7 +2351,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Aviso",
                 "GTFS não encontrado — carregue ou reconecte o GeoPackage primeiro.",
-                level=Qgis.Warning, duration=8
+                level=Qgis.MessageLevel.Warning, duration=8
             )
             return
 
@@ -2214,10 +2362,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 self,
                 "Edição em andamento",
                 "Já existe uma edição em andamento. Recriar do zero? (Não = retomar a atual)",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
             )
-            if reply == QMessageBox.Yes:
+            if reply == QMessageBox.StandardButton.Yes:
                 ok = wc.enter(overwrite=True)
             else:
                 ok = True  # Retoma a edição existente
@@ -2227,7 +2375,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 iface.messageBar().pushMessage(
                     "Erro",
                     "Falha ao criar a cópia de trabalho do GeoPackage (feed_edit.gpkg).",
-                    level=Qgis.Critical, duration=10
+                    level=Qgis.MessageLevel.Critical, duration=10
                 )
                 return
 
@@ -2236,7 +2384,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Info",
                 "Modo de edição do GTFS ativado com sucesso.",
-                level=Qgis.Info, duration=8
+                level=Qgis.MessageLevel.Info, duration=8
             )
             self._refresh_edit_status()
 
@@ -2248,7 +2396,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Aviso",
                 "Nenhuma edição para descartar.",
-                level=Qgis.Warning, duration=8
+                level=Qgis.MessageLevel.Warning, duration=8
             )
             return
 
@@ -2256,25 +2404,25 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self,
             "Descartar Edição",
             "Tem certeza que deseja descartar todas as alterações não salvas? Esta operação não pode ser desfeita.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
 
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.StandardButton.Yes:
             wc = self._working_copy
             if wc.discard():
                 self._working_copy = None
                 iface.messageBar().pushMessage(
                     "Info",
                     "Edição descartada e arquivo temporário excluído.",
-                    level=Qgis.Info, duration=8
+                    level=Qgis.MessageLevel.Info, duration=8
                 )
                 self._refresh_edit_status()
             else:
                 iface.messageBar().pushMessage(
                     "Erro",
                     "Falha ao apagar o arquivo de edição temporário.",
-                    level=Qgis.Critical, duration=10
+                    level=Qgis.MessageLevel.Critical, duration=10
                 )
 
     def editOpenClicked(self):
@@ -2286,7 +2434,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Aviso",
                 "Entre no modo edição primeiro.",
-                level=Qgis.Warning, duration=8
+                level=Qgis.MessageLevel.Warning, duration=8
             )
             return
 
@@ -2297,7 +2445,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 iface.messageBar().pushMessage(
                     "Aviso",
                     "Selecione uma viagem para editar a tabela stop_times.",
-                    level=Qgis.Warning, duration=8
+                    level=Qgis.MessageLevel.Warning, duration=8
                 )
                 return
             trip_id = trip_id.strip()
@@ -2313,7 +2461,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Erro",
                 "Falha ao carregar a camada edit_{}.".format(table),
-                level=Qgis.Critical, duration=10
+                level=Qgis.MessageLevel.Critical, duration=10
             )
             return
 
@@ -2350,7 +2498,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         iface.messageBar().pushMessage(
             "Info",
             "Tabela edit_{} aberta para edição no QGIS. O diálogo foi fechado.".format(table),
-            level=Qgis.Info, duration=8
+            level=Qgis.MessageLevel.Info, duration=8
         )
         self.close()
 
@@ -2362,7 +2510,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Aviso",
                 "Nenhuma edição ativa para validar.",
-                level=Qgis.Warning, duration=8
+                level=Qgis.MessageLevel.Warning, duration=8
             )
             return
 
@@ -2371,7 +2519,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Erro",
                 "Arquivo de edição GeoPackage não encontrado.",
-                level=Qgis.Critical, duration=8
+                level=Qgis.MessageLevel.Critical, duration=8
             )
             return
 
@@ -2380,46 +2528,46 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             errors, warnings = validator.validate()
         except Exception as e:
             msg = "Erro durante a validação: {}".format(e)
-            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.Critical)
+            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.MessageLevel.Critical)
             iface.messageBar().pushMessage(
                 "Erro",
                 msg,
-                level=Qgis.Critical, duration=10
+                level=Qgis.MessageLevel.Critical, duration=10
             )
             return
 
         # Registrar no log
-        QgsMessageLog.logMessage("Iniciando validação de GTFS no SIG-Bus...", 'SIG-Bus', Qgis.Info)
+        QgsMessageLog.logMessage("Iniciando validação de GTFS no SIG-Bus...", 'SIG-Bus', Qgis.MessageLevel.Info)
 
         # Logar cada erro
         for err in errors:
-            QgsMessageLog.logMessage("[Erro] {}".format(err), 'SIG-Bus', Qgis.Warning)
+            QgsMessageLog.logMessage("[Erro] {}".format(err), 'SIG-Bus', Qgis.MessageLevel.Warning)
 
         # Logar cada aviso
         for warn in warnings:
-            QgsMessageLog.logMessage("[Aviso] {}".format(warn), 'SIG-Bus', Qgis.Info)
+            QgsMessageLog.logMessage("[Aviso] {}".format(warn), 'SIG-Bus', Qgis.MessageLevel.Info)
 
         # Reportar resumo via messageBar
         if errors and warnings:
             msg = "Validação concluída com {} erro(s) e {} aviso(s). Veja o painel de log (SIG-Bus) para detalhes.".format(
                 len(errors), len(warnings)
             )
-            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.Critical, duration=10)
+            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.MessageLevel.Critical, duration=10)
         elif errors:
             msg = "Validação concluída com {} erro(s). Veja o painel de log (SIG-Bus) para detalhes.".format(
                 len(errors)
             )
-            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.Critical, duration=10)
+            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.MessageLevel.Critical, duration=10)
         elif warnings:
             msg = "Validação concluída com {} aviso(s). Veja o painel de log (SIG-Bus) para detalhes.".format(
                 len(warnings)
             )
-            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.Warning, duration=10)
+            iface.messageBar().pushMessage("Validação GTFS", msg, level=Qgis.MessageLevel.Warning, duration=10)
         else:
             iface.messageBar().pushMessage(
                 "Validação GTFS",
                 "GTFS validado com sucesso! Nenhum erro ou aviso encontrado.",
-                level=Qgis.Info, duration=8
+                level=Qgis.MessageLevel.Info, duration=8
             )
 
     def exportClicked(self):
@@ -2436,7 +2584,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             iface.messageBar().pushMessage(
                 "Aviso",
                 "GeoPackage não encontrado. Carregue ou reconecte o GTFS primeiro.",
-                level=Qgis.Warning, duration=8
+                level=Qgis.MessageLevel.Warning, duration=8
             )
             return
 
@@ -2445,18 +2593,18 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             errors, warnings = validator.validate()
         except Exception as e:
             msg = "Erro durante a validação pré-exportação: {}".format(e)
-            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.Critical)
+            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.MessageLevel.Critical)
             iface.messageBar().pushMessage(
                 "Erro",
                 msg,
-                level=Qgis.Critical, duration=10
+                level=Qgis.MessageLevel.Critical, duration=10
             )
             return
 
         if errors:
-            QgsMessageLog.logMessage("Erro de validação pré-exportação bloqueou a exportação.", 'SIG-Bus', Qgis.Critical)
+            QgsMessageLog.logMessage("Erro de validação pré-exportação bloqueou a exportação.", 'SIG-Bus', Qgis.MessageLevel.Critical)
             for err in errors:
-                QgsMessageLog.logMessage("[Erro Fatal] {}".format(err), 'SIG-Bus', Qgis.Warning)
+                QgsMessageLog.logMessage("[Erro Fatal] {}".format(err), 'SIG-Bus', Qgis.MessageLevel.Warning)
 
             msg_relatorio = "\n".join("- {}".format(err) for err in errors[:10])
             if len(errors) > 10:
@@ -2470,9 +2618,9 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             return
 
         if warnings:
-            QgsMessageLog.logMessage("Avisos de validação pré-exportação encontrados.", 'SIG-Bus', Qgis.Info)
+            QgsMessageLog.logMessage("Avisos de validação pré-exportação encontrados.", 'SIG-Bus', Qgis.MessageLevel.Info)
             for warn in warnings:
-                QgsMessageLog.logMessage("[Aviso] {}".format(warn), 'SIG-Bus', Qgis.Info)
+                QgsMessageLog.logMessage("[Aviso] {}".format(warn), 'SIG-Bus', Qgis.MessageLevel.Info)
 
             msg_avisos = "\n".join("- {}".format(warn) for warn in warnings[:5])
             if len(warnings) > 5:
@@ -2482,10 +2630,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 self,
                 "Avisos de Validação",
                 "A validação encontrou alguns avisos. Deseja prosseguir com a exportação mesmo assim?\n\n" + msg_avisos,
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
             )
-            if reply != QMessageBox.Yes:
+            if reply != QMessageBox.StandardButton.Yes:
                 return
 
         save_path, _ = QFileDialog.getSaveFileName(
@@ -2509,7 +2657,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         iface.messageBar().pushMessage(
             "Info",
             "Exportando GTFS em segundo plano...",
-            level=Qgis.Info, duration=8
+            level=Qgis.MessageLevel.Info, duration=8
         )
 
     def _refresh_edit_status(self):
@@ -2558,20 +2706,16 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 return
             
             paradas = []
+            sem_coordenada = []
             for row_data in self.stop_rows:
-                address = row_data["input_address"].text().strip()
+                address = self._stop_row_name(row_data)
                 if not address:
                     continue
-                lat_val = row_data["input_lat"].text().strip()
-                lon_val = row_data["input_lon"].text().strip()
-                try:
-                    lat = float(lat_val) if lat_val else 0.0
-                except ValueError:
-                    lat = 0.0
-                try:
-                    lon = float(lon_val) if lon_val else 0.0
-                except ValueError:
-                    lon = 0.0
+                lat = row_data["lat"]
+                lon = row_data["lon"]
+                if lat is None or lon is None:
+                    sem_coordenada.append(address)
+                    continue
 
                 stop_id = None
                 if row_data["checkbox_reuse"].isChecked() and row_data["stop_id"]:
@@ -2584,6 +2728,16 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     "stop_lat": lat,
                     "stop_lon": lon
                 })
+
+            if sem_coordenada:
+                QMessageBox.warning(
+                    self,
+                    "Parada sem coordenada",
+                    "Estas paradas ainda não têm coordenada — geocodifique o "
+                    "endereço ou marque o ponto no mapa antes de avançar:\n\n- "
+                    + "\n- ".join(sem_coordenada)
+                )
+                return
 
             if not paradas:
                 QMessageBox.warning(self, "Aviso", "Por favor, adicione pelo menos uma parada válida.")
@@ -2629,19 +2783,13 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self.list_widget_sequencia.clear()
             from sig_bus.gtfs_builder_core import find_existing_stop
             for row_data in self.stop_rows:
-                address = row_data["input_address"].text().strip()
+                address = self._stop_row_name(row_data)
                 if not address:
                     continue
-                lat_val = row_data["input_lat"].text().strip()
-                lon_val = row_data["input_lon"].text().strip()
-                try:
-                    lat = float(lat_val) if lat_val else 0.0
-                except ValueError:
-                    lat = 0.0
-                try:
-                    lon = float(lon_val) if lon_val else 0.0
-                except ValueError:
-                    lon = 0.0
+                lat = row_data["lat"]
+                lon = row_data["lon"]
+                if lat is None or lon is None:
+                    continue
 
                 stop_id = row_data["stop_id"]
                 if not stop_id:
@@ -2656,7 +2804,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     "stop_lat": lat,
                     "stop_lon": lon
                 }
-                item.setData(Qt.UserRole, stop_data)
+                item.setData(Qt.ItemDataRole.UserRole, stop_data)
                 item.stop_data = stop_data
                 self.list_widget_sequencia.addItem(item)
         elif current == 3:
@@ -2696,7 +2844,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self.sequenced_stops = []
             for i in range(self.list_widget_sequencia.count()):
                 item = self.list_widget_sequencia.item(i)
-                stop_data = item.data(Qt.UserRole)
+                stop_data = item.data(Qt.ItemDataRole.UserRole)
                 if not stop_data and hasattr(item, "stop_data"):
                     stop_data = item.stop_data
                 if stop_data:
@@ -2766,8 +2914,9 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 QMessageBox.warning(self, "Intervalo inválido", "O intervalo de frequência deve ser maior que 0.")
                 return
                 
-            # 3. Chama expand_frequency_to_stop_times
-            from sig_bus.gtfs_builder_core import expand_frequency_to_stop_times
+            duracao_min = self.spin_duration.value()
+
+            # 3. Grade de horários (gerada por _recalculate_draft_schedule)
             stop_ids = [stop.get("stop_id") for stop in self.sequenced_stops if stop.get("stop_id")]
             if not stop_ids:
                 QMessageBox.warning(self, "Paradas vazias", "A lista de paradas está vazia. Volte e adicione paradas.")
@@ -2776,31 +2925,58 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             hora_inicio = t_start.toString("HH:mm:ss")
             hora_fim = t_end.toString("HH:mm:ss")
             
-            trips_list, stop_times_list = expand_frequency_to_stop_times(
-                stop_ids=stop_ids,
-                hora_inicio=hora_inicio,
-                hora_fim=hora_fim,
-                intervalo_min=interval_min
-            )
-            
+            # A grade em memória só é regerada quando os parâmetros da página
+            # mudaram — senão o ajuste manual feito no diagrama seria descartado.
+            assinatura = self._draft_signature(stop_ids, hora_inicio, hora_fim,
+                                               interval_min, duracao_min)
+            if not getattr(self, 'build_stop_times', None) or \
+                    getattr(self, '_build_draft_signature', None) != assinatura:
+                self._recalculate_draft_schedule()
+
+            trips_list = getattr(self, 'build_trips', [])
+
+            from .schedule_edit_core import validate_draft_times
+            erros, avisos = validate_draft_times(getattr(self, 'build_stop_times', []))
+            if erros:
+                msg = "A grade de horários contém inconsistências e não pode avançar:\n\n- " + "\n- ".join(erros)
+                QMessageBox.warning(self, "Grade de horários inválida", msg)
+                return
+            if avisos:
+                msg = ("A grade de horários tem pontos a conferir:\n\n- "
+                       + "\n- ".join(avisos) + "\n\nAvançar assim mesmo?")
+                resposta = QMessageBox.question(
+                    self, "Confirmar grade de horários", msg,
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No)
+                if resposta != QMessageBox.StandardButton.Yes:
+                    return
+
             # Salva temporariamente na instância para uso pela próxima etapa (passo 51)
             self.build_service = calendar_data
-            self.build_frequencia = (hora_inicio, hora_fim, interval_min)
-            self.build_trips = trips_list
-            self.build_stop_times = stop_times_list
+            self.build_frequencia = {
+                "hora_inicio": hora_inicio,
+                "hora_fim": hora_fim,
+                "intervalo_min": interval_min,
+                "duracao_min": duracao_min,
+            }
             
             # Mostra o resumo na página de revisão (index 5)
             stops_summary = " -> ".join(stop.get("stop_name") for stop in self.sequenced_stops)
             cal_summary = "Calendário: {}".format(calendar_data if isinstance(calendar_data, str) else calendar_data['service_id'])
-            freq_summary = "Das {} às {} a cada {} min".format(t_start.toString('HH:mm'), t_end.toString('HH:mm'), interval_min)
+            freq_summary = "Das {} às {} a cada {} min (duração: {} min)".format(
+                t_start.toString('HH:mm'), t_end.toString('HH:mm'), interval_min, duracao_min
+            )
             trips_count_summary = "Total de viagens geradas: {}".format(len(trips_list))
-            
+            grade_summary = self._draft_summary()
+
             summary_text = (
                 "<b>RESUMO DA LINHA:</b><br/><br/>"
                 "<b>Paradas na sequência:</b><br/>{}<br/><br/>"
                 "<b>{}</b><br/>"
                 "<b>Janela de Horário:</b> {}<br/>"
-                "<b>Viagens:</b> {}".format(stops_summary, cal_summary, freq_summary, trips_count_summary)
+                "<b>Viagens:</b> {}<br/>"
+                "<b>Grade ajustada:</b> {}".format(stops_summary, cal_summary, freq_summary,
+                                                   trips_count_summary, grade_summary)
             )
             self.label_revisao_summary.setText(summary_text)
             
@@ -2896,17 +3072,25 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         except Exception:
             pass
 
+        from sig_bus.gtfs_builder_core import get_config
+        self.input_city.setText(get_config(gpkg_path, "build_city", ""))
+        self.input_state.setText(get_config(gpkg_path, "build_state", ""))
+        self.input_country.setText(get_config(gpkg_path, "build_country", "Brasil"))
+
     def _on_save_agency_clicked(self):
         name = self.input_agency_name.text().strip()
         url = self.input_agency_url.text().strip()
         timezone = self.input_agency_timezone.text().strip()
         lang = self.input_agency_lang.text().strip()
         phone = self.input_agency_phone.text().strip()
-        
-        if not name or not url or not timezone:
+        city = self.input_city.text().strip()
+        state = self.input_state.text().strip()
+        country = self.input_country.text().strip()
+
+        if not name or not url or not timezone or not city or not state:
             QMessageBox.warning(self, "Campos obrigatórios", "Por favor, preencha todos os campos obrigatórios (*).")
             return
-            
+
         agency_data = {
             "agency_name": name,
             "agency_url": url,
@@ -2914,10 +3098,11 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             "agency_lang": lang if lang else None,
             "agency_phone": phone if phone else None
         }
-        
+
         gpkg_path = self._working_copy.edit_path
-        
-        from sig_bus.gtfs_builder_core import save_route
+
+        from sig_bus.gtfs_builder_core import save_route, set_config, get_config
+        from sig_bus.geocoding import NominatimGeocoder
         try:
             save_route(
                 gpkg_path=gpkg_path,
@@ -2927,6 +3112,23 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 service=None,
                 frequencia=None
             )
+            old_city = get_config(gpkg_path, "build_city", "")
+            old_state = get_config(gpkg_path, "build_state", "")
+            old_viewbox = get_config(gpkg_path, "build_city_viewbox", None)
+
+            set_config(gpkg_path, "build_city", city)
+            set_config(gpkg_path, "build_state", state)
+            set_config(gpkg_path, "build_country", country)
+
+            if city != old_city or state != old_state or not old_viewbox:
+                # Falha de rede aqui nunca bloqueia o salvamento da agência: no
+                # máximo o feed fica sem bbox (a geocodificação segue sem ela).
+                try:
+                    new_viewbox = NominatimGeocoder.city_bbox(city, state)
+                except Exception:
+                    new_viewbox = None
+                set_config(gpkg_path, "build_city_viewbox", new_viewbox or "")
+
             self._update_build_progress()
             self.stacked_build.setCurrentIndex(1)
             self._update_build_nav_buttons()
@@ -3012,7 +3214,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 linha=linha,
                 paradas=self.sequenced_stops,
                 service=service,
-                frequencia=frequencia
+                frequencia=frequencia,
+                stop_times=getattr(self, 'build_stop_times', None)
             )
 
             # 2. Calcula o traçado via roteamento OSM com fallback por trecho e gera a camada shapes
@@ -3052,8 +3255,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         for row in self.stop_rows:
             stops_data.append({
                 "address": row["input_address"].text().strip(),
-                "lat": row["input_lat"].text().strip(),
-                "lon": row["input_lon"].text().strip(),
+                "lat": row["lat"],
+                "lon": row["lon"],
                 "reuse": row["checkbox_reuse"].isChecked(),
                 "reuse_visible": row["checkbox_reuse"].isVisible(),
                 "status": row["label_status"].text(),
@@ -3069,14 +3272,16 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self._add_stop_row()
             new_row = self.stop_rows[-1]
             new_row["input_address"].setText(data["address"])
-            new_row["input_lat"].setText(data["lat"])
-            new_row["input_lon"].setText(data["lon"])
+            new_row["lat"] = data["lat"]
+            new_row["lon"] = data["lon"]
             new_row["checkbox_reuse"].setChecked(data["reuse"])
             if data["reuse_visible"]:
                 new_row["checkbox_reuse"].show()
             else:
                 new_row["checkbox_reuse"].hide()
-            new_row["label_status"].setText(data["status"])
+            self._set_stop_row_status(
+                new_row, data["status"], data["lat"] is not None and data["lon"] is not None
+            )
             new_row["stop_id"] = data["stop_id"]
 
         # 4. Reseta os estados dos botões da revisão
@@ -3208,6 +3413,166 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             count = (end_sec - start_sec) // step_sec + 1
             
         self.label_trips_summary.setText("Número estimado de viagens: <b>{}</b>".format(count))
+        self._recalculate_draft_schedule()
+
+    def _draft_signature(self, stop_ids, hora_inicio, hora_fim, interval_min, duracao_min):
+        """Identidade dos parâmetros que geraram a grade em memória — muda
+        quando o usuário mexe na página de horários, e só então a grade
+        ajustada à mão é descartada."""
+        return (tuple(stop_ids), hora_inicio, hora_fim, interval_min, duracao_min,
+                self._build_trip_prefix())
+
+    def _build_trip_prefix(self):
+        short_name = ""
+        if hasattr(self, 'input_route_short_name'):
+            short_name = self.input_route_short_name.text().strip()
+        short_name = short_name or "route"
+        return "{}_{}".format(short_name, getattr(self, "build_direction_id", "0"))
+
+    def _recalculate_draft_schedule(self):
+        """(Re)gera a grade em memória a partir da frequência da página e
+        redesenha o diagrama. Descarta qualquer ajuste manual — é o caminho
+        de 'restaurar frequência regular'."""
+        if not hasattr(self, 'schedule_scene'):
+            return
+
+        stop_ids = [stop.get("stop_id") for stop in getattr(self, 'sequenced_stops', [])
+                    if stop.get("stop_id")]
+        if not stop_ids:
+            # Sem paradas sequenciadas não há grade real a mostrar — nunca
+            # inventar stop_ids, que iriam parar no feed_edit.gpkg.
+            self.build_trips = []
+            self.build_stop_times = []
+            self._build_draft_signature = None
+            self.schedule_scene.clear()
+            return
+
+        hora_inicio = self.time_start.time().toString("HH:mm:ss")
+        hora_fim = self.time_end.time().toString("HH:mm:ss")
+        interval_min = self.spin_interval.value()
+        duracao_min = self.spin_duration.value()
+
+        from .schedule_edit_core import expand_frequency_to_stop_times
+        trips_list, stop_times_list = expand_frequency_to_stop_times(
+            stop_ids=stop_ids,
+            hora_inicio=hora_inicio,
+            hora_fim=hora_fim,
+            intervalo_min=interval_min,
+            duracao_min=duracao_min,
+            prefix=self._build_trip_prefix()
+        )
+
+        self.build_trips = trips_list
+        self.build_stop_times = stop_times_list
+        self._build_draft_signature = self._draft_signature(
+            stop_ids, hora_inicio, hora_fim, interval_min, duracao_min)
+        self._render_schedule_diagram()
+
+    def _render_schedule_diagram(self):
+        if not hasattr(self, 'schedule_scene'):
+            return
+
+        stop_times_list = getattr(self, 'build_stop_times', [])
+        if not stop_times_list:
+            self.schedule_scene.clear()
+            return
+
+        from .schedule_edit_core import schedule_from_draft
+
+        short_name = ""
+        if hasattr(self, 'input_route_short_name'):
+            short_name = self.input_route_short_name.text().strip()
+        service = getattr(self, 'build_service', None)
+        if isinstance(service, dict):
+            service_id = service.get('service_id', '')
+        else:
+            service_id = service or ''
+
+        sched = schedule_from_draft(
+            stop_times_list,
+            route_short_name=short_name or "route",
+            direction_id=getattr(self, "build_direction_id", "0"),
+            service_id=service_id,
+            trip_headsign=self.sequenced_stops[-1].get("stop_name", "")
+            if getattr(self, 'sequenced_stops', None) else ''
+        )
+        self.schedule_scene.set_schedule(sched)
+        self.schedule_view.fit_all()
+        self._update_schedule_days_label(len(sched.trips))
+
+    def _update_schedule_days_label(self, n_viagens):
+        """Decisão 72: um conjunto de viagens vale para todos os dias do
+        calendário — a tela precisa dizer isso, para o ajuste não ser feito
+        no escuro."""
+        if not hasattr(self, 'label_schedule_dias'):
+            return
+        dias = [chk.text() for chk in getattr(self, 'chk_days', []) if chk.isChecked()]
+        if dias:
+            self.label_schedule_dias.setText(
+                "Estas {} viagens valem para: {}".format(n_viagens, ", ".join(dias)))
+        else:
+            self.label_schedule_dias.setText(
+                "Estas {} viagens ainda não têm dias de operação marcados.".format(n_viagens))
+
+    def _draft_summary(self):
+        """Primeira saída, última chegada e headway mínimo/máximo da grade
+        ajustada — usado no resumo da revisão."""
+        from .schedule_edit_core import trips_from_stop_times, headways, from_seconds
+        viagens = trips_from_stop_times(getattr(self, 'build_stop_times', []))
+        if not viagens:
+            return "sem viagens"
+        hw = [v for v in headways(getattr(self, 'build_stop_times', [])).values()
+              if v is not None]
+        texto = "primeira saída {} · última chegada {}".format(
+            from_seconds(viagens[0]["start_s"]),
+            from_seconds(max(v["end_s"] for v in viagens)))
+        if hw:
+            texto += " · headway de {} a {} min".format(
+                round(min(hw) / 60.0), round(max(hw) / 60.0))
+        return texto
+
+    def _on_schedule_nudge_key(self, tecla):
+        """'+'/'-' deslocam a viagem inteira; '>'/'<' só o extremo
+        selecionado (decisão 78). O passo vem do QSpinBox da página."""
+        if not hasattr(self, 'schedule_scene'):
+            return
+        trip_item = self.schedule_scene._selected_item
+        if trip_item is None:
+            self.label_schedule_status.setText("Selecione uma viagem no diagrama.")
+            return
+
+        selected_trip = trip_item.trip
+        endpoint = getattr(self.schedule_scene, 'selected_endpoint', None) or 'first'
+        passo_s = self.spin_schedule_step.value() * 60
+        delta_s = passo_s if tecla in ('>', '+') else -passo_s
+
+        from .schedule_edit_core import (shift_trip, shift_trip_endpoint,
+                                         trips_from_stop_times, headways, from_seconds)
+
+        if tecla in ('>', '<'):
+            self.build_stop_times = shift_trip_endpoint(
+                self.build_stop_times, selected_trip.trip_id, endpoint, delta_s)
+        else:
+            self.build_stop_times = shift_trip(
+                self.build_stop_times, selected_trip.trip_id, delta_s)
+
+        self._render_schedule_diagram()
+
+        # Restaura a seleção (viagem + extremo) depois do redesenho.
+        item = self.schedule_scene._trip_items.get(selected_trip.trip_id)
+        if item is not None:
+            self.schedule_scene.select_trip_item(item, endpoint=endpoint)
+
+        atual = next((v for v in trips_from_stop_times(self.build_stop_times)
+                      if v["trip_id"] == selected_trip.trip_id), None)
+        if atual is not None:
+            hw = headways(self.build_stop_times).get(selected_trip.trip_id)
+            texto = "Viagem {} · saída {} · chegada {}".format(
+                atual["trip_id"], from_seconds(atual["start_s"]), from_seconds(atual["end_s"]))
+            if hw is not None:
+                texto += " · headway {} min".format(round(hw / 60.0))
+            self.label_schedule_status.setText(texto)
+
 
     def _move_sequence_up(self):
         row = self.list_widget_sequencia.currentRow()
@@ -3226,43 +3591,21 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
     def _add_stop_row(self):
         # Create a container frame
         frame = QtWidgets.QFrame()
-        frame.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        frame.setFrameShadow(QtWidgets.QFrame.Raised)
+        frame.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        frame.setFrameShadow(QtWidgets.QFrame.Shadow.Raised)
         
         # Set a subtle border/padding stylesheet so it looks beautiful and grouped
-        frame.setStyleSheet("""
-            QFrame {
-                background-color: #fcfcfc;
-                border: 1px solid #e0e0e0;
-                border-radius: 6px;
-                padding: 6px;
-                margin-bottom: 4px;
-            }
-        """)
+        frame.setStyleSheet(QSS_CARD)
         
         row_layout = QtWidgets.QHBoxLayout(frame)
         row_layout.setContentsMargins(4, 4, 4, 4)
         
         # Address input
         input_address = QtWidgets.QLineEdit()
-        input_address.setPlaceholderText("Endereço da parada (ex: Av. Paulista, 1000)")
-        input_address.setStyleSheet("border: 1px solid #ccc; border-radius: 4px; padding: 4px;")
+        input_address.setPlaceholderText(ADDRESS_PLACEHOLDER)
+        input_address.setStyleSheet(QSS_INPUT)
         row_layout.addWidget(input_address, stretch=4)
-        
-        # Latitude input
-        input_lat = QtWidgets.QLineEdit()
-        input_lat.setPlaceholderText("Latitude")
-        input_lat.setFixedWidth(90)
-        input_lat.setStyleSheet("border: 1px solid #ccc; border-radius: 4px; padding: 4px;")
-        row_layout.addWidget(input_lat)
-        
-        # Longitude input
-        input_lon = QtWidgets.QLineEdit()
-        input_lon.setPlaceholderText("Longitude")
-        input_lon.setFixedWidth(90)
-        input_lon.setStyleSheet("border: 1px solid #ccc; border-radius: 4px; padding: 4px;")
-        row_layout.addWidget(input_lon)
-        
+
         # Checkbox for reuse
         checkbox_reuse = QtWidgets.QCheckBox("parada já existe — reaproveitar")
         checkbox_reuse.setStyleSheet("color: #2b6cb0; font-weight: bold; border: none; background: transparent;")
@@ -3271,9 +3614,26 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         
         # Status Label
         label_status = QtWidgets.QLabel("")
-        label_status.setStyleSheet("color: #e53e3e; font-style: italic; border: none; background: transparent;")
+        label_status.setStyleSheet(QSS_STATUS_ERR)
         row_layout.addWidget(label_status)
         
+        # Marcar no mapa (decisão 49): cadastra a parada só pelo canvas
+        button_pick = QtWidgets.QPushButton("Marcar no mapa")
+        button_pick.setStyleSheet("""
+            QPushButton {
+                background-color: #319795;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QPushButton:hover {
+                background-color: #2c7a7b;
+                color: white;
+            }
+        """)
+        row_layout.addWidget(button_pick)
+
         # Remove button
         button_remove = QtWidgets.QPushButton("Remover")
         button_remove.setStyleSheet("""
@@ -3286,6 +3646,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             }
             QPushButton:hover {
                 background-color: #c53030;
+                color: white;
             }
         """)
         row_layout.addWidget(button_remove)
@@ -3296,18 +3657,161 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         row_data = {
             "frame": frame,
             "input_address": input_address,
-            "input_lat": input_lat,
-            "input_lon": input_lon,
+            "lat": None,
+            "lon": None,
             "checkbox_reuse": checkbox_reuse,
             "label_status": label_status,
             "stop_id": None
         }
         
         # Connections
+        button_pick.clicked.connect(lambda: self._pick_stop_on_map(row_data))
         button_remove.clicked.connect(lambda: self._remove_stop_row(row_data))
         input_address.editingFinished.connect(lambda: self._check_existing_stop_for_row(row_data))
         
         self.stop_rows.append(row_data)
+
+    def _set_stop_row_status(self, row_data, texto, ok):
+        """Mostra o status legível da parada ("✓ localizado", "✗ não encontrado",
+        "📍 marcado no mapa") no lugar dos antigos campos de lat/lon."""
+        row_data["label_status"].setText(texto)
+        row_data["label_status"].setStyleSheet(QSS_STATUS_OK if ok else QSS_STATUS_ERR)
+
+    #: Rótulo de procedência por `provider` (decisão 70): com quatro fontes
+    #: possíveis, "✓ localizado" não diz mais de onde veio o ponto — um acerto
+    #: do Google (pago, nível-rooftop) e um centro de via adivinhado por
+    #: similaridade no Overpass não merecem o mesmo status.
+    _PROVIDER_LABELS = {
+        "google": "Google",
+        "nominatim": "Nominatim",
+        "photon": "Photon",
+        "osm-overpass": "OSM",
+    }
+
+    @staticmethod
+    def _candidate_road_name(candidate):
+        """Nome do logradouro do candidato aceito, para comparar com o
+        digitado (decisão 59). Nominatim traz `address.road`
+        (addressdetails=1); o Photon (e o degrau do Overpass, decisão 70)
+        trazem `properties.street`."""
+        address = candidate.get("address")
+        if isinstance(address, dict) and address.get("road"):
+            return address["road"]
+        properties = candidate.get("properties")
+        if isinstance(properties, dict) and properties.get("street"):
+            return properties["street"]
+        return None
+
+    @staticmethod
+    def _candidate_provider_label(candidate):
+        """Rótulo de procedência do candidato (decisão 70), ou None para os
+        provedores que não levam rótulo e para candidatos antigos sem o
+        campo `provider`."""
+        return SigBusDialog._PROVIDER_LABELS.get(candidate.get("provider"))
+
+    @staticmethod
+    def _candidate_item_label(candidate):
+        """Texto de um candidato na lista do `QInputDialog` de múltiplos
+        candidatos, com a procedência anexada (decisão 70)."""
+        display = candidate.get("display_name", str(candidate))
+        origem = SigBusDialog._candidate_provider_label(candidate)
+        return "{} ({})".format(display, origem) if origem else display
+
+    def _set_stop_row_localizado(self, row_data, address, candidate):
+        """Marca a parada como localizada, avisando quando a grafia aceita
+        difere da digitada (decisão 59) e mostrando a procedência do ponto
+        (decisão 70) em vez de corrigir o cadastro do usuário pelas costas
+        dele."""
+        digitado = parse_address(address).get("logradouro") or ""
+        via = self._candidate_road_name(candidate)
+        origem = self._candidate_provider_label(candidate)
+        if via and normalizar_logradouro(via) != normalizar_logradouro(digitado):
+            texto = "✓ localizado (via: {} — {})".format(via, origem) if origem \
+                else "✓ localizado (via: {})".format(via)
+            self._set_stop_row_status(row_data, texto, True)
+            QgsMessageLog.logMessage(
+                "Geocodificação: grafia corrigida — digitado={!r} aceito={!r}".format(digitado, via),
+                "SIG-Bus", Qgis.MessageLevel.Info)
+        else:
+            texto = "✓ localizado ({})".format(origem) if origem else "✓ localizado"
+            self._set_stop_row_status(row_data, texto, True)
+
+    def _stop_row_name(self, row_data):
+        """Nome da parada da linha: o endereço digitado ou, quando ela foi
+        cadastrada só pelo canvas (linha rural, decisão 49), um rótulo com a
+        coordenada marcada. Vazio = linha sem endereço e sem coordenada."""
+        address = row_data["input_address"].text().strip()
+        if address:
+            return address
+        lat = row_data["lat"]
+        lon = row_data["lon"]
+        if lat is None or lon is None:
+            return ""
+        return "Parada (%.5f, %.5f)" % (lat, lon)
+
+    def _pick_stop_on_map(self, row_data):
+        """Marca a parada clicando no canvas do QGIS (decisões 49 e 50).
+
+        O diálogo é modal (`SigBus.py`), então o canvas só recebe o clique com
+        ele escondido: `hide()` → ferramenta ativa → clique → `show()`. A
+        ferramenta de mapa anterior é sempre restaurada, inclusive quando o
+        usuário cancela com ESC ou com o botão direito.
+        """
+        from .map_tools import PickStopPointTool, ensure_osm_basemap
+
+        canvas = iface.mapCanvas()
+        ensure_osm_basemap()
+        previous_tool = canvas.mapTool()
+        tool = None
+
+        def finish(restore_tool=True):
+            # Idempotente: clique, ESC, botão direito e a própria troca de
+            # ferramenta passam todos por aqui.
+            if self._pick_tool is not tool:
+                return
+            self._pick_tool = None
+            try:
+                canvas.keyPressed.disconnect(on_key)
+            except TypeError:
+                pass
+            if restore_tool and canvas.mapTool() is tool:
+                if previous_tool is not None:
+                    canvas.setMapTool(previous_tool)
+                else:
+                    canvas.unsetMapTool(tool)
+            self.show()
+            self.raise_()
+            self.activateWindow()
+
+        def on_pick(lon, lat):
+            # A ferramenta já entrega a coordenada em EPSG:4326.
+            row_data["lat"] = lat
+            row_data["lon"] = lon
+            self._set_stop_row_status(row_data, "📍 marcado no mapa", True)
+            finish()
+
+        def on_click(point, button):
+            # Botão direito cancela: a ferramenta não chama o callback nesse
+            # caso, só devolvemos o diálogo e a ferramenta anterior.
+            if button == Qt.MouseButton.RightButton:
+                finish()
+
+        def on_key(event):
+            if event.key() == Qt.Key.Key_Escape:
+                finish()
+
+        tool = PickStopPointTool(canvas, on_pick)
+        tool.canvasClicked.connect(on_click)
+        # Outra ferramenta assumindo o canvas também devolve o diálogo.
+        tool.deactivated.connect(lambda: finish(restore_tool=False))
+        canvas.keyPressed.connect(on_key)
+        self._pick_tool = tool
+        canvas.setMapTool(tool)
+        iface.messageBar().pushMessage(
+            "SIG-Bus",
+            "Clique no mapa para posicionar a parada — ESC cancela",
+            level=Qgis.MessageLevel.Info, duration=8)
+        self.hide()
 
     def _remove_stop_row(self, row_data):
         self.layout_scroll_paradas.removeWidget(row_data["frame"])
@@ -3315,29 +3819,222 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if row_data in self.stop_rows:
             self.stop_rows.remove(row_data)
 
+    def _open_geocoding_config(self):
+        from sig_bus.geocoding_config import (
+            get_provider_mode,
+            set_provider_mode,
+            get_google_api_key,
+            set_google_api_key,
+        )
+
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Configuração de Geocodificação")
+        dialog.setMinimumWidth(400)
+
+        layout = QtWidgets.QVBoxLayout(dialog)
+
+        lbl_provider = QtWidgets.QLabel("Modo de Provedor:")
+        combo_provider = QtWidgets.QComboBox()
+        combo_provider.addItem("Automático (usa Google se houver chave)", "auto")
+        combo_provider.addItem("Somente OSM (Nominatim + Photon)", "osm")
+
+        current_mode = get_provider_mode()
+        idx = combo_provider.findData(current_mode)
+        if idx >= 0:
+            combo_provider.setCurrentIndex(idx)
+
+        lbl_key = QtWidgets.QLabel("Chave da API do Google Maps:")
+        input_key = QtWidgets.QLineEdit()
+        input_key.setPlaceholderText("Cole sua API Key do Google (opcional)")
+        # A chave é secreta: não fica legível na tela nem em captura de tela
+        # (enum qualificado, decisão 35).
+        input_key.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        input_key.setText(get_google_api_key())
+
+        lbl_aviso = QtWidgets.QLabel(
+            "A chave é <b>opcional</b>, é sua e é cobrada pelo Google. Sem ela o "
+            "plugin usa só as fontes gratuitas do OpenStreetMap. Crie a chave e "
+            "habilite a <i>Geocoding API</i> em "
+            "<a href=\"https://console.cloud.google.com/\">console.cloud.google.com</a>."
+        )
+        lbl_aviso.setWordWrap(True)
+        lbl_aviso.setOpenExternalLinks(True)
+
+        lbl_teste = QtWidgets.QLabel("")
+        lbl_teste.setWordWrap(True)
+
+        btn_testar = QtWidgets.QPushButton("Testar chave")
+        btn_testar.clicked.connect(
+            lambda: lbl_teste.setText(self._testar_chave_google(input_key.text().strip()))
+        )
+
+        layout.addWidget(lbl_provider)
+        layout.addWidget(combo_provider)
+        layout.addSpacing(10)
+        layout.addWidget(lbl_key)
+        layout.addWidget(input_key)
+        layout.addWidget(lbl_aviso)
+        layout.addWidget(btn_testar)
+        layout.addWidget(lbl_teste)
+        layout.addSpacing(15)
+
+        layout_botoes = QtWidgets.QHBoxLayout()
+        btn_ok = QtWidgets.QPushButton("OK")
+        btn_cancel = QtWidgets.QPushButton("Cancelar")
+        btn_ok.clicked.connect(dialog.accept)
+        btn_cancel.clicked.connect(dialog.reject)
+        layout_botoes.addWidget(btn_ok)
+        layout_botoes.addWidget(btn_cancel)
+        layout.addLayout(layout_botoes)
+
+        if dialog.exec():
+            selected_mode = combo_provider.currentData()
+            entered_key = input_key.text().strip()
+            set_provider_mode(selected_mode)
+            set_google_api_key(entered_key)
+
+    @staticmethod
+    def _testar_chave_google(chave):
+        """Geocodifica um endereço fixo e conhecido com a chave digitada e
+        devolve o texto do resultado — sucesso, ou o `status`/`error_message`
+        que o Google devolveu (passo 111). Não grava a chave: o teste roda com
+        o valor digitado, antes do OK."""
+        from sig_bus.geocoding import GoogleGeocoder
+
+        if not chave:
+            return "Digite uma chave antes de testar."
+
+        GoogleGeocoder.ultimo_erro = None
+        resultados = GoogleGeocoder.geocode(
+            "Praça da Sé", {"city": "São Paulo", "state": "SP"}, chave=chave)
+        if resultados:
+            return "Chave OK — {}".format(resultados[0].get("display_name", ""))
+        if GoogleGeocoder.ultimo_erro:
+            return "Falhou: {}".format(GoogleGeocoder.ultimo_erro)
+        return ("A chave respondeu sem erro, mas o endereço de teste não voltou "
+                "nenhum resultado. Veja o log SIG-Bus para o detalhe.")
+
     def _geocode_stops(self):
+        from sig_bus import geocoding
         from sig_bus.geocoding import NominatimGeocoder
-        from sig_bus.gtfs_builder_core import find_existing_stop
-        
+        from sig_bus.gtfs_builder_core import find_existing_stop, get_config, set_config
+
         gpkg_path = self._working_copy.edit_path if (self._working_copy and self._working_copy.edit_path) else None
+
+        city = self.input_city.text().strip() if hasattr(self, "input_city") and self.input_city.text() else ""
+        state = self.input_state.text().strip() if hasattr(self, "input_state") and self.input_state.text() else ""
+        country = self.input_country.text().strip() if hasattr(self, "input_country") and self.input_country.text() else ""
+
+        if gpkg_path:
+            if not city:
+                city = get_config(gpkg_path, "build_city", "") or ""
+            if not state:
+                state = get_config(gpkg_path, "build_state", "") or ""
+            if not country:
+                country = get_config(gpkg_path, "build_country", "Brasil") or "Brasil"
+        if not country:
+            country = "Brasil"
+
+        if not city or not state:
+            QMessageBox.warning(self, "Município não configurado", "Configure o município na página da agência antes de geocodificar")
+            if iface and iface.messageBar():
+                iface.messageBar().pushMessage(
+                    "Geocodificação",
+                    "Configure o município na página da agência antes de geocodificar",
+                    level=Qgis.MessageLevel.Warning,
+                    duration=5
+                )
+            return
+
+        viewbox = None
+        if gpkg_path:
+            viewbox = get_config(gpkg_path, "build_city_viewbox", None)
+
+        if not viewbox:
+            viewbox = NominatimGeocoder.city_bbox(city, state)
+            if viewbox and gpkg_path:
+                set_config(gpkg_path, "build_city_viewbox", viewbox)
+
+        contexto = {
+            "city": city,
+            "state": state,
+            "country": country,
+            "viewbox": viewbox,
+        }
+
+        localizadas = 0
+        nao_localizadas = 0
+        falharam = []
 
         for row_data in self.stop_rows:
             address = row_data["input_address"].text().strip()
             if not address:
                 continue
-            
-            # Call geocoder
-            results = NominatimGeocoder.geocode(address)
-            if results:
-                # Take the first candidate
+
+            # Parada que já tem coordenada (geocodificada antes ou marcada no
+            # mapa) não é refeita a cada clique: no pior caso são 7 requisições
+            # de 1 s por parada, e marcar no mapa não pode ser desfeito pela
+            # busca (passo 100).
+            if row_data.get("lat") is not None and row_data.get("lon") is not None:
+                localizadas += 1
+                continue
+
+            results = geocoding.geocode(address, contexto)
+            if not results:
+                row_data["lat"] = None
+                row_data["lon"] = None
+                self._set_stop_row_status(row_data, "✗ não encontrado", False)
+                nao_localizadas += 1
+                falharam.append(address)
+            elif len(results) == 1:
                 candidate = results[0]
-                lat = str(candidate.get("lat", ""))
-                lon = str(candidate.get("lon", ""))
-                row_data["input_lat"].setText(lat)
-                row_data["input_lon"].setText(lon)
-                row_data["label_status"].setText("")
+                try:
+                    row_data["lat"] = float(candidate.get("lat"))
+                    row_data["lon"] = float(candidate.get("lon"))
+                except (TypeError, ValueError):
+                    row_data["lat"] = None
+                    row_data["lon"] = None
+
+                if row_data["lat"] is None or row_data["lon"] is None:
+                    self._set_stop_row_status(row_data, "✗ não encontrado", False)
+                    nao_localizadas += 1
+                    falharam.append(address)
+                else:
+                    self._set_stop_row_localizado(row_data, address, candidate)
+                    localizadas += 1
             else:
-                row_data["label_status"].setText("não encontrado")
+                items = [self._candidate_item_label(c) for c in results]
+                item, ok = QInputDialog.getItem(
+                    self,
+                    "Selecionar Endereço",
+                    f"Múltiplos candidatos encontrados para '{address}':",
+                    items,
+                    0,
+                    False
+                )
+                if ok and item:
+                    try:
+                        idx = items.index(item)
+                        candidate = results[idx]
+                        row_data["lat"] = float(candidate.get("lat"))
+                        row_data["lon"] = float(candidate.get("lon"))
+                    except (ValueError, TypeError, IndexError):
+                        row_data["lat"] = None
+                        row_data["lon"] = None
+
+                    if row_data["lat"] is None or row_data["lon"] is None:
+                        self._set_stop_row_status(row_data, "✗ não encontrado", False)
+                        nao_localizadas += 1
+                        falharam.append(address)
+                    else:
+                        self._set_stop_row_localizado(row_data, address, candidate)
+                        localizadas += 1
+                else:
+                    row_data["lat"] = None
+                    row_data["lon"] = None
+                    self._set_stop_row_status(row_data, "✗ não encontrado", False)
+                    nao_localizadas += 1
+                    falharam.append(address)
 
             # Check existing stop too
             if gpkg_path:
@@ -3350,6 +4047,62 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     row_data["stop_id"] = None
                     row_data["checkbox_reuse"].hide()
                     row_data["checkbox_reuse"].setChecked(False)
+
+        if iface and iface.messageBar():
+            if localizadas == 0 and nao_localizadas > 0:
+                # A causa medida (decisão 56) é grafia do logradouro, não
+                # município errado — a mensagem cita os endereços que falharam
+                # e deixa "Marcar no mapa" como saída (decisões 19 e 60).
+                exemplos = "; ".join(f'"{e}"' for e in falharam[:3])
+                resto = f" (e mais {len(falharam) - 3})" if len(falharam) > 3 else ""
+                msg = (
+                    f"Nenhuma parada localizada: {exemplos}{resto}. A causa mais comum "
+                    f"é a grafia do logradouro — o buscador não corrige erro de "
+                    f"digitação no nome da rua. Contexto usado na busca: {city}/{state}. "
+                    f"Use \"Marcar no mapa\" para cadastrar a parada sem depender da "
+                    f"busca; o detalhe de cada tentativa está no log SIG-Bus "
+                    f"(painel \"Log Messages\")."
+                )
+                nivel = Qgis.MessageLevel.Warning
+            elif nao_localizadas > 0:
+                exemplos = "; ".join(f'"{e}"' for e in falharam[:3])
+                resto = f" (e mais {len(falharam) - 3})" if len(falharam) > 3 else ""
+                msg = (
+                    f"Geocodificação concluída ({city}/{state}): "
+                    f"{localizadas} parada(s) localizada(s), {nao_localizadas} não localizada(s) ({exemplos}{resto})."
+                )
+                nivel = Qgis.MessageLevel.Warning
+            else:
+                msg = (
+                    f"Geocodificação concluída ({city}/{state}): "
+                    f"{localizadas} parada(s) localizada(s), {nao_localizadas} não localizada(s)."
+                )
+                nivel = Qgis.MessageLevel.Info
+
+            if nao_localizadas > 0:
+                msg += self._pista_de_geocodificacao()
+
+            iface.messageBar().pushMessage("Geocodificação", msg, level=nivel, duration=8)
+
+    @staticmethod
+    def _pista_de_geocodificacao():
+        """Complemento da mensagem de fim de lote quando sobrou endereço não
+        localizado (passo 115, decisões 60 e 64).
+
+        Sem chave configurada, oferece a saída paga. Com chave e um erro do
+        Google no lote, mostra o `status`/`error_message` como causa provável —
+        uma chave quebrada não pode ficar indistinguível de erro de grafia."""
+        from sig_bus.geocoding import GoogleGeocoder
+        from sig_bus.geocoding_config import get_google_api_key
+
+        if not get_google_api_key():
+            return (" Uma chave do Google (botão \"Configurar geocodificação…\") costuma "
+                    "resolver endereço que o OpenStreetMap não indexa.")
+        if GoogleGeocoder.ultimo_erro:
+            return (f" O Google respondeu \"{GoogleGeocoder.ultimo_erro}\" — a causa "
+                    f"provável é a chave, não a grafia do endereço; confira em "
+                    f"\"Configurar geocodificação…\".")
+        return ""
 
     def _check_existing_stop_for_row(self, row_data):
         address = row_data["input_address"].text().strip()
@@ -3372,6 +4125,88 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             row_data["stop_id"] = None
             row_data["checkbox_reuse"].hide()
             row_data["checkbox_reuse"].setChecked(False)
+
+    def _download_csv_template(self):
+        """Baixa o arquivo modelo de CSV em lote de paradas (decisão 43 / passo 85)."""
+        from .stops_csv import write_template
+        caminho, _ = QFileDialog.getSaveFileName(
+            self,
+            "Salvar modelo CSV de paradas",
+            "modelo_paradas.csv",
+            "Arquivos CSV (*.csv)"
+        )
+        if caminho:
+            write_template(caminho)
+            QMessageBox.information(
+                self,
+                "Modelo CSV",
+                "Modelo de CSV salvo com sucesso em:\n{}".format(caminho)
+            )
+
+    def _import_stops_csv(self):
+        """Importa paradas em lote a partir de um arquivo CSV (decisão 43 / passo 85)."""
+        from .stops_csv import parse_stops_csv
+        caminho, _ = QFileDialog.getOpenFileName(
+            self,
+            "Importar CSV de paradas",
+            "",
+            "Arquivos CSV (*.csv)"
+        )
+        if not caminho:
+            return
+
+        linhas_ok, erros = parse_stops_csv(caminho)
+        if erros:
+            msg_erros = "\n".join("- {}".format(err) for err in erros[:10])
+            if len(erros) > 10:
+                msg_erros += "\n... e mais {} erro(s).".format(len(erros) - 10)
+            QMessageBox.warning(
+                self,
+                "Erros no CSV",
+                "Ocorreram erros ao ler o CSV de paradas:\n\n" + msg_erros
+            )
+
+        if not linhas_ok:
+            return
+
+        has_existing_content = False
+        for r in self.stop_rows:
+            if r["input_address"].text().strip() or r["lat"] is not None or r["lon"] is not None:
+                has_existing_content = True
+                break
+
+        if has_existing_content:
+            reply = QMessageBox.question(
+                self,
+                "Importar CSV",
+                "Já existem paradas listadas.\n\nDeseja substituir as paradas existentes?\n\nClique em 'Sim' para substituir ou 'Não' para acrescentar ao final.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
+            )
+            if reply == QMessageBox.StandardButton.Cancel:
+                return
+            elif reply == QMessageBox.StandardButton.Yes:
+                while self.stop_rows:
+                    self._remove_stop_row(self.stop_rows[0])
+
+        if len(self.stop_rows) == 1:
+            r = self.stop_rows[0]
+            if not r["input_address"].text().strip() and r["lat"] is None and r["lon"] is None:
+                self._remove_stop_row(r)
+
+        for item in linhas_ok:
+            self._add_stop_row()
+            row = self.stop_rows[-1]
+            endereco = item.get("endereco") or item.get("nome_parada") or ""
+            if endereco:
+                row["input_address"].setText(endereco)
+            lat = item.get("lat")
+            lon = item.get("lon")
+            if lat is not None and lon is not None:
+                row["lat"] = lat
+                row["lon"] = lon
+                self._set_stop_row_status(row, "✓ localizado", True)
+            elif endereco:
+                self._set_stop_row_status(row, "", False)
 
     def _on_edit_table_changed(self, table_name):
         self._update_stop_times_selectors()
@@ -3456,8 +4291,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         mem = QgsVectorLayer('Point?crs=EPSG:4326', '_km_tmp', 'memory')
         prov = mem.dataProvider()
         prov.addAttributes([
-            QgsField('emb', QVariant.Int),
-            QgsField('seq', QVariant.Int),
+            QgsField('emb', FIELD_INT),
+            QgsField('seq', FIELD_INT),
         ])
         mem.updateFields()
         fields = mem.fields()
@@ -3478,10 +4313,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             })['OUTPUT']
         except Exception as exc:
             msg = 'K-means falhou: {}'.format(exc)
-            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.Warning)
+            QgsMessageLog.logMessage(msg, 'SIG-Bus', Qgis.MessageLevel.Warning)
             iface.messageBar().pushMessage(
                 'Aviso', 'Clustering falhou — gráficos omitidos. ' + msg,
-                level=Qgis.Warning, duration=10)
+                level=Qgis.MessageLevel.Warning, duration=10)
             return empty
 
         # Agrega por cluster; ordena pelo seq médio para manter a
@@ -3522,7 +4357,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         fields = tramos_layer.fields()
         if fields.indexFromName('cluster_id') < 0:
             tramos_layer.dataProvider().addAttributes(
-                [QgsField('cluster_id', QVariant.String)])
+                [QgsField('cluster_id', FIELD_STRING)])
             tramos_layer.updateFields()
 
         cidx = tramos_layer.fields().indexFromName('cluster_id')
@@ -3567,10 +4402,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             W, H = 825, 669
             ML, MR, MT, MB = 80, 25, 55, 70  # margens esq/dir/topo/base
 
-            img = QImage(W, H, QImage.Format_RGB32)
-            img.fill(Qt.white)
+            img = QImage(W, H, QImage.Format.Format_RGB32)
+            img.fill(Qt.GlobalColor.white)
             p = QPainter(img)
-            p.setRenderHint(QPainter.Antialiasing)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
             cw = W - ML - MR   # largura da área do gráfico
             ch = H - MT - MB   # altura da área do gráfico
@@ -3579,7 +4414,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             bw = int(spacing * 0.65)
 
             # Barras — cor por cluster (igual ao mapa); fallback = cor do sentido
-            p.setPen(Qt.NoPen)
+            p.setPen(Qt.PenStyle.NoPen)
             for i, val in enumerate(values):
                 bh = max(1, int(ch * val / v_max))
                 x  = ML + int(i * spacing + (spacing - bw) / 2)
@@ -3594,7 +4429,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 bh = max(1, int(ch * val / v_max))
                 xc = ML + int(i * spacing + spacing / 2)
                 p.drawText(QRect(xc - 25, MT + ch - bh - 17, 50, 15),
-                           Qt.AlignCenter, str(val))
+                           Qt.AlignmentFlag.AlignCenter, str(val))
 
             # Eixos
             axis_pen = QPen(QColor('#555555'))
@@ -3605,7 +4440,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
             # Linha de grade no topo (valor máximo)
             grid_pen = QPen(QColor('#cccccc'))
-            grid_pen.setStyle(Qt.DotLine)
+            grid_pen.setStyle(Qt.PenStyle.DotLine)
             p.setPen(grid_pen)
             p.drawLine(ML, MT, ML + cw, MT)
             mid_y = MT + ch // 2
@@ -3616,21 +4451,21 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             p.setFont(QFont('Sans Serif', 7))
             for y_pos, y_val in [(MT + ch, 0), (mid_y, v_max // 2), (MT, v_max)]:
                 p.drawText(QRect(0, y_pos - 8, ML - 6, 16),
-                           Qt.AlignRight | Qt.AlignVCenter, str(y_val))
+                           Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(y_val))
 
             # Rótulos do eixo X
             p.setFont(QFont('Sans Serif', 8))
             for i, label in enumerate(labels):
                 xc = ML + int(i * spacing + spacing / 2)
                 p.drawText(QRect(xc - 20, MT + ch + 5, 40, 18),
-                           Qt.AlignCenter, label)
+                           Qt.AlignmentFlag.AlignCenter, label)
 
             # Título dos eixos
-            p.drawText(QRect(ML, MT + ch + 30, cw, 18), Qt.AlignCenter, 'Cluster')
+            p.drawText(QRect(ML, MT + ch + 30, cw, 18), Qt.AlignmentFlag.AlignCenter, 'Cluster')
             p.save()
             p.translate(14, MT + ch // 2)
             p.rotate(-90)
-            p.drawText(QRect(-50, -9, 100, 18), Qt.AlignCenter, 'Embarques')
+            p.drawText(QRect(-50, -9, 100, 18), Qt.AlignmentFlag.AlignCenter, 'Embarques')
             p.restore()
 
             # Título do gráfico
@@ -3639,7 +4474,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             p.setFont(title_font)
             p.setPen(QColor('#222222'))
             p.drawText(
-                QRect(0, 6, W, 30), Qt.AlignCenter,
+                QRect(0, 6, W, 30), Qt.AlignmentFlag.AlignCenter,
                 'Embarques por cluster — {} ({})'.format(dir_label, hora_str))
 
             p.end()
@@ -3652,5 +4487,5 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         except Exception as exc:
             QgsMessageLog.logMessage(
                 'Falha ao gerar gráfico: {}'.format(exc),
-                'SIG-Bus', Qgis.Warning)
+                'SIG-Bus', Qgis.MessageLevel.Warning)
             return None

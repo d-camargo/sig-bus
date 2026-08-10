@@ -69,7 +69,7 @@ class BlockDiagramDialog(QWidget):
     em segundo plano e permite clicar nas viagens para ver detalhes."""
 
     def __init__(self, gpkg_path, parent=None):
-        super().__init__(parent, Qt.Window)
+        super().__init__(parent, Qt.WindowType.Window)
         self.gpkg_path = gpkg_path
         self.reader = ScheduleReader(gpkg_path)
         self._task = None
@@ -84,7 +84,7 @@ class BlockDiagramDialog(QWidget):
     def _build_ui(self):
         root = QVBoxLayout(self)
 
-        splitter = QSplitter(Qt.Horizontal)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
         root.addWidget(splitter, 1)
 
         # --- Painel de controles (esquerda) ---------------------------
@@ -94,7 +94,7 @@ class BlockDiagramDialog(QWidget):
 
         cl.addWidget(QLabel('Linhas (seleção múltipla):'))
         self.route_list = QListWidget()
-        self.route_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.route_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.route_list.itemSelectionChanged.connect(self._on_routes_changed)
         cl.addWidget(self.route_list, 1)
 

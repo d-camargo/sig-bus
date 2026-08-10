@@ -34,7 +34,6 @@ import sqlite3
 from pathlib import Path
 from zipfile import ZipFile, BadZipFile
 
-from qgis.PyQt.QtCore import QVariant
 from qgis.core import (
     Qgis,
     QgsCoordinateTransformContext,
@@ -47,6 +46,31 @@ from qgis.core import (
     QgsVectorLayer,
     QgsVirtualLayerDefinition,
 )
+
+from qgis.PyQt.QtCore import QMetaType
+
+
+def _resolve_field_types():
+    """Tipo de campo do `QgsField` resolvido por **capacidade**, não pela versão
+    declarada (decisões 87-89).
+
+    `QgsField(nome, QMetaType.Type)` existe do QGIS 3.38 em diante e é a única
+    forma no QGIS 4 — `QVariant.Type` não existe mais no PyQt6. Abaixo do 3.38
+    (o LTR 3.34 do Ubuntu 24.04, que roda tudo o mais do plugin) o construtor
+    levanta `TypeError` e a única saída é o `QVariant` do Qt5. Sondar é mais
+    barato e mais honesto do que cravar um piso de versão no metadata."""
+    from qgis.core import QgsField
+    try:
+        QgsField('_probe', QMetaType.Type.QString)
+    except TypeError:
+        # Só chega aqui em QGIS < 3.38, que é sempre Qt5 — importar QVariant
+        # aqui dentro, nunca no topo: no PyQt6 ele não tem .String/.Int.
+        from qgis.PyQt.QtCore import QVariant  # qt6-compat: fallback QGIS<3.38
+        return QVariant.String, QVariant.Int  # qt6-compat: fallback QGIS<3.38
+    return QMetaType.Type.QString, QMetaType.Type.Int
+
+
+FIELD_STRING, FIELD_INT = _resolve_field_types()
 
 LOG_TAG = 'SIG-Bus'
 
@@ -160,7 +184,7 @@ class GtfsReader:
                 # deve abortar o feed inteiro — registra e segue.
                 QgsMessageLog.logMessage(
                     "Tabela ignorada ({}): {}".format(out_name, e),
-                    LOG_TAG, Qgis.Warning)
+                    LOG_TAG, Qgis.MessageLevel.Warning)
 
         if not created:
             raise GtfsError("Nenhuma tabela do GTFS pôde ser importada.")
@@ -210,11 +234,11 @@ class GtfsReader:
         if missing:
             QgsMessageLog.logMessage(
                 "Camadas GTFS obrigatórias ausentes: {}".format(missing),
-                LOG_TAG, Qgis.Warning)
+                LOG_TAG, Qgis.MessageLevel.Warning)
         else:
             QgsMessageLog.logMessage(
                 "Todas as camadas GTFS obrigatórias estão presentes.",
-                LOG_TAG, Qgis.Success)
+                LOG_TAG, Qgis.MessageLevel.Success)
 
     def build_shapes_line(self, gpkg_path):
         """Constrói as linhas (polilinhas) a partir da camada de pontos
@@ -229,7 +253,7 @@ class GtfsReader:
         if not points.isValid() or points.featureCount() == 0:
             QgsMessageLog.logMessage(
                 "Sem shapes_point; pulando construção das linhas.",
-                LOG_TAG, Qgis.Info)
+                LOG_TAG, Qgis.MessageLevel.Info)
             return None
 
         # Agrupa pontos por shape_id, guardando (sequência, ponto).
@@ -249,7 +273,7 @@ class GtfsReader:
         line_layer = QgsVectorLayer(
             "LineString?crs=epsg:4326", "shapes_line", "memory")
         provider = line_layer.dataProvider()
-        provider.addAttributes([QgsField("shape_id", QVariant.String)])
+        provider.addAttributes([QgsField("shape_id", FIELD_STRING)])
         line_layer.updateFields()
 
         for shape_id, pts in grouped.items():
@@ -267,10 +291,11 @@ class GtfsReader:
         options = QgsVectorFileWriter.SaveVectorOptions()
         options.driverName = 'GPKG'
         options.layerName = 'shapes'
-        options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+        options.actionOnExistingFile = (
+            QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteLayer)
         result = QgsVectorFileWriter.writeAsVectorFormatV3(
             line_layer, gpkg_path, ctx, options)
-        if result[0] != QgsVectorFileWriter.NoError:
+        if result[0] != QgsVectorFileWriter.WriterError.NoError:
             raise GtfsError(
                 "Falha ao gravar a camada de linhas (cód. {}: {})"
                 .format(result[0], result[1]))
@@ -309,10 +334,10 @@ def create_join_indexes(gpkg_path):
                     except sqlite3.OperationalError as e:
                         QgsMessageLog.logMessage(
                             "Índice ignorado ({}): {}".format(table, e),
-                            LOG_TAG, Qgis.Info)
+                            LOG_TAG, Qgis.MessageLevel.Info)
     except sqlite3.Error as e:
         QgsMessageLog.logMessage(
-            "Falha ao criar índices: {}".format(e), LOG_TAG, Qgis.Warning)
+            "Falha ao criar índices: {}".format(e), LOG_TAG, Qgis.MessageLevel.Warning)
 
 
 def stop_events_virtual_layer(gpkg_path, shape_id=None, name='horarios_paradas'):
