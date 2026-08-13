@@ -44,7 +44,7 @@ plugin by CTU GeoForAll Lab (GPL v2+). No external plugin is required.
   - **Batch Import:** load stops via CSV (see [sig_bus/MODELO_PARADAS_CSV.md](sig_bus/MODELO_PARADAS_CSV.md)).
   - **Mark on the Map:** click directly on the canvas to place a stop, for rural points without a geocodable address.
   - **Sequence:** arrange the stops in the correct visiting order.
-  - **Timetables:** generate trips from a frequency rule, then fine-tune them trip by trip (see *Block Diagram* below) before anything is written.
+  - **Timetables:** generate trips from up to 3 time bands (e.g. morning peak, off-peak, afternoon peak), each with its own start time, end time, headway and trip duration, then fine-tune them trip by trip on the diagram (see *Block Diagram* below) before anything is written; **Restore regular frequency** discards the manual tuning and regenerates the grid from the bands.
   - **Review and save:** the route is written to an isolated `feed_edit.gpkg`, then validated and exported by the same engine as *Edit GTFS*.
   - **OSM Routing:** route alignments (`shapes`) follow the real OpenStreetMap street network between consecutive stops; a straight line is used as a fallback only on the segments the fetched network does not cover or connect.
   - **Dual progress bar:** shows how far the feed is from a **minimum** GTFS (required files and fields) and, beyond that, from a **complete** one (optional fields, `shapes`, second direction), naming what is still missing at each step.
@@ -52,13 +52,14 @@ plugin by CTU GeoForAll Lab (GPL v2+). No external plugin is required.
 ### Edit and export GTFS
 
 - **Edit GTFS:** allows editing GTFS fields and geometry in an isolated working copy (`feed_edit.gpkg`), with built-in validation and normalized export (see [sig_bus/GUIA_EDICAO_GTFS.md](sig_bus/GUIA_EDICAO_GTFS.md)).
+- **Adjust schedules:** with a route selected, opens a schedule matrix for that route — one tab per direction, stops as rows and trips as columns — where the times are typed directly into the cells and *Apply to feed* writes them back into `feed_edit.gpkg`, leaving the shapes, the `trip_id`s and the number of trips untouched.
 
 ### Block Diagram
 
 - **Block Diagram:** a time × distance chart of the operation, in two modes — *Trips mode* (one bar per GTFS trip) and *Blocks mode*, in which the vehicle blocks are **inferred** by chaining trips, because the BHTrans feed carries no `trips.block_id`. See [sig_bus/DIAGRAMA_BLOCOS.md](sig_bus/DIAGRAMA_BLOCOS.md).
 - **Headway dimension line:** selecting a trip draws a technical-drawing dimension line between two consecutive departures of the same route and direction, labelled with the measure alone (e.g. `12 min`).
 - **Departure ruler:** one short tick per departure along the foot of the time axis — outbound on the upper band, inbound on the lower one — so peak and off-peak read straight from the density of ticks.
-- **Fine schedule tuning:** with a trip selected, `>` and `<` shift only the departure or only the arrival, while `+` and `-` shift the whole trip preserving its duration. In the *Build GTFS* wizard the adjustment happens in memory, before the route is written, and applies to every day covered by the `calendar` of that `service_id`.
+- **Fine schedule tuning:** with a trip selected, `>` and `<` shift only the departure or only the arrival, while `+` and `-` shift the whole trip preserving its duration; the framing is kept between redraws, and **Fit all** re-frames the whole grid on demand. In the *Build GTFS* wizard the adjustment happens on the diagram, in memory, before the route is written, and applies to every day covered by the `calendar` of that `service_id`; in the *Edit GTFS* tab the same times are adjusted in a matrix (one tab per direction), over a feed already saved in the working copy.
 - **PDF Report:** generates an A4 landscape print layout with the map of the filtered route, legend, header, and two bar charts (outbound and inbound) of boardings grouped by K-means cluster.
 
 ## Documentation
@@ -104,6 +105,8 @@ version is the one declared in `sig_bus/metadata.txt`.
     ├── map_tools.py         # place a stop by clicking the canvas
     ├── stops_csv.py         # batch stop import from CSV
     ├── schedule_edit_core.py # in-memory schedule fine tuning
+    ├── schedule_table_core.py # schedule matrix (stops × trips), no Qt
+    ├── schedule_grid_widget.py # the schedule table itself (stops × trips grid)
     ├── block_core.py        # Block Diagram model and block inference
     ├── block_scene.py       # Block Diagram drawing (bars, headway, ruler)
     ├── block_view.py        # Block Diagram view: zoom, pan, shortcuts
@@ -209,6 +212,11 @@ Besides the unit tests, the suite carries regression guards:
 halves staying in step). `sig_bus/scripts/check_qgis_compat.py` is a manual
 probe against an installed QGIS and does not run under pytest.
 
+Schedule editing is covered by `test_schedule_table_core.py` (schedule matrix),
+`test_gtfs_edit_stop_times.py` (reading and writing `stop_times` filtered by
+route, plus the out-of-order check in the validator) and
+`test_block_view_zoom.py` (zoom, and framing kept between redraws).
+
 ## Release Process
 
 To package and release a new version of the SIG-Bus plugin:
@@ -276,7 +284,7 @@ necessário.
   - **Importação em Lote:** carregue paradas via arquivo CSV (veja o guia do modelo em [sig_bus/MODELO_PARADAS_CSV.md](sig_bus/MODELO_PARADAS_CSV.md)).
   - **Marcação no Mapa:** clique diretamente no canvas para posicionar uma parada, para pontos rurais sem endereço geocodificável.
   - **Sequência:** ordene as paradas no trajeto da linha.
-  - **Horários:** gere viagens por regra de frequência e depois ajuste-as viagem a viagem (veja *Diagrama de Blocos* abaixo) antes de qualquer gravação.
+  - **Horários:** gere viagens a partir de até 3 faixas horárias (ex.: pico da manhã, entre-pico, pico da tarde), cada uma com hora de início, hora de fim, intervalo e duração da viagem, e depois ajuste-as viagem a viagem no diagrama (veja *Diagrama de Blocos* abaixo) antes de qualquer gravação; **Restaurar frequência regular** descarta os ajustes manuais e regera a grade a partir das faixas.
   - **Revisão e salvar:** a linha é gravada num `feed_edit.gpkg` isolado e segue para o mesmo validador e o mesmo exportador da *Edição GTFS*.
   - **Traçado via OSM:** o traçado (`shapes`) segue a rede viária real do OpenStreetMap entre paradas consecutivas; a linha reta é usada como fallback apenas nos trechos que a malha buscada não cobre ou não conecta.
   - **Barra de progresso dupla:** mostra o quanto falta para um GTFS **mínimo** (arquivos e campos obrigatórios) e, além dele, para um GTFS **completo** (campos opcionais, `shapes`, segundo sentido), nomeando o que ainda falta a cada etapa.
@@ -284,13 +292,14 @@ necessário.
 ### Editar e exportar GTFS
 
 - **Edição GTFS:** permite editar campos e geometria em uma cópia de trabalho isolada (`feed_edit.gpkg`), com validação integrada e exportação normalizada (veja [sig_bus/GUIA_EDICAO_GTFS.md](sig_bus/GUIA_EDICAO_GTFS.md)).
+- **Ajustar horários:** com uma linha escolhida, abre a matriz de horários daquela linha — uma aba por sentido, paradas nas linhas e viagens nas colunas — em que os horários são digitados direto nas células e o *Aplicar ao feed* os grava no `feed_edit.gpkg`, sem tocar nos traçados, nos `trip_id` nem no número de viagens.
 
 ### Diagrama de Blocos
 
 - **Diagrama de Blocos:** gráfico tempo × faixa da operação, em dois modos — *Modo Viagens* (uma barra por viagem do GTFS) e *Modo Blocos*, em que os blocos de veículo são **inferidos** encadeando viagens, porque o feed da BHTrans não traz `trips.block_id`. Veja [sig_bus/DIAGRAMA_BLOCOS.md](sig_bus/DIAGRAMA_BLOCOS.md).
 - **Cota de headway:** ao selecionar uma viagem, o intervalo até a saída seguinte da mesma linha e sentido é desenhado como cota de desenho técnico, rotulada só com a medida (ex.: `12 min`).
 - **Régua de saídas:** um traço curto por partida na base do eixo de tempo — ida na banda de cima, volta na de baixo —, de modo que o pico e o vale se leem pela densidade dos traços.
-- **Ajuste fino de horários:** com uma viagem selecionada, `>` e `<` deslocam só a saída ou só a chegada, enquanto `+` e `-` deslocam a viagem inteira preservando a duração. No assistente *Construir GTFS* o ajuste acontece em memória, antes de a linha ser gravada, e vale para todos os dias cobertos pelo `calendar` daquele `service_id`.
+- **Ajuste fino de horários:** com uma viagem selecionada, `>` e `<` deslocam só a saída ou só a chegada, enquanto `+` e `-` deslocam a viagem inteira preservando a duração; o enquadramento é preservado entre os redesenhos e o **Enquadrar tudo** reenquadra a grade toda quando se quer. No assistente *Construir GTFS* o ajuste acontece no diagrama, em memória, antes de a linha ser gravada, e vale para todos os dias cobertos pelo `calendar` daquele `service_id`; na aba *Edição GTFS* os mesmos horários são ajustados numa matriz (uma aba por sentido), sobre um feed já gravado na cópia de trabalho.
 - **Relatório PDF:** gera um layout de impressão A4 paisagem com o mapa da linha filtrada, legenda, cabeçalho e dois gráficos de barras (ida e volta) dos embarques agrupados por cluster K-means.
 
 ## Documentação
@@ -336,6 +345,8 @@ corrente é a declarada em `sig_bus/metadata.txt`.
     ├── map_tools.py         # marcação de parada por clique no canvas
     ├── stops_csv.py         # importação de paradas em lote via CSV
     ├── schedule_edit_core.py # ajuste fino de horários em memória
+    ├── schedule_table_core.py # matriz de horários (paradas × viagens), sem Qt
+    ├── schedule_grid_widget.py # a tabela de horários em si (grade paradas × viagens)
     ├── block_core.py        # modelo do Diagrama de Blocos e inferência
     ├── block_scene.py       # desenho do diagrama (barras, cota, régua)
     ├── block_view.py        # view do diagrama: zoom, pan, atalhos
@@ -441,6 +452,11 @@ Além dos testes de unidade, a suíte carrega guardas de regressão:
 o `metadata.txt`) e `test_readme.py` (links relativos deste arquivo e simetria
 entre as duas metades). O `sig_bus/scripts/check_qgis_compat.py` é sondagem
 manual contra um QGIS instalado e não roda no pytest.
+
+A edição de horários é coberta por `test_schedule_table_core.py` (matriz de
+horários), `test_gtfs_edit_stop_times.py` (leitura e gravação de `stop_times`
+filtrados por linha, mais a checagem de horário fora de ordem no validador) e
+`test_block_view_zoom.py` (zoom e enquadramento preservado entre redesenhos).
 
 ## Ritual de Release
 

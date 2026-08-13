@@ -977,6 +977,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.combo_edit_trip = QComboBox()
 
         self.button_edit_open = QPushButton("Abrir para edição")
+        self.button_edit_schedule = QPushButton("Ajustar horários")
         self.button_edit_validate = QPushButton("Validar")
         self.button_edit_export = QPushButton("Exportar .zip")
         self.button_edit_discard = QPushButton("Descartar edição")
@@ -989,6 +990,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         layout.addWidget(self.label_edit_trip)
         layout.addWidget(self.combo_edit_trip)
         layout.addWidget(self.button_edit_open)
+        layout.addWidget(self.button_edit_schedule)
         layout.addWidget(self.button_edit_validate)
         layout.addWidget(self.button_edit_export)
         layout.addWidget(self.button_edit_discard)
@@ -1402,31 +1404,35 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         
         # Grupo Frequência
         group_freq = QtWidgets.QGroupBox("Frequência de Viagens")
-        form_freq = QtWidgets.QFormLayout(group_freq)
-        
-        self.time_start = QtWidgets.QTimeEdit()
-        self.time_start.setDisplayFormat("HH:mm:ss")
-        self.time_start.setTime(QTime(6, 0, 0))
-        
-        self.time_end = QtWidgets.QTimeEdit()
-        self.time_end.setDisplayFormat("HH:mm:ss")
-        self.time_end.setTime(QTime(23, 0, 0))
-        
-        self.spin_interval = QtWidgets.QSpinBox()
-        self.spin_interval.setRange(1, 1440)
-        self.spin_interval.setValue(30)
-        self.spin_interval.setSuffix(" minutos")
-        
-        self.spin_duration = QtWidgets.QSpinBox()
-        self.spin_duration.setRange(1, 600)
-        self.spin_duration.setValue(30)
-        self.spin_duration.setSuffix(" minutos")
-        
-        form_freq.addRow("Hora de Início *:", self.time_start)
-        form_freq.addRow("Hora de Fim *:", self.time_end)
-        form_freq.addRow("Intervalo *:", self.spin_interval)
-        form_freq.addRow("Duração da Viagem *:", self.spin_duration)
-        
+        layout_group_freq = QtWidgets.QVBoxLayout(group_freq)
+
+        label_bands_info = QLabel("Cada faixa de frequência se aplica dentro do seu horário (ex.: pico manhã, entrepico, pico tarde).")
+        label_bands_info.setWordWrap(True)
+        label_bands_info.setStyleSheet("color: #555555; font-size: 11px;")
+        layout_group_freq.addWidget(label_bands_info)
+
+        self.table_bands = QtWidgets.QTableWidget()
+        self.table_bands.setColumnCount(4)
+        self.table_bands.setHorizontalHeaderLabels(["Início", "Fim", "Intervalo (min)", "Duração (min)"])
+        self.table_bands.horizontalHeader().setStretchLastSection(True)
+        self.table_bands.verticalHeader().setVisible(False)
+        self.table_bands.setMinimumHeight(120)
+        layout_group_freq.addWidget(self.table_bands)
+
+        layout_btns_bands = QtWidgets.QHBoxLayout()
+        self.btn_add_band = QtWidgets.QPushButton("Adicionar faixa")
+        self.btn_remove_band = QtWidgets.QPushButton("Remover faixa")
+        self.btn_add_band.clicked.connect(lambda: self._add_band_row())
+        self.btn_remove_band.clicked.connect(self._remove_band_row)
+
+        layout_btns_bands.addWidget(self.btn_add_band)
+        layout_btns_bands.addWidget(self.btn_remove_band)
+        layout_btns_bands.addStretch()
+        layout_group_freq.addLayout(layout_btns_bands)
+
+        # Preenche a primeira faixa padrão
+        self._add_band_row("06:00:00", "23:00:00", 30, 30)
+
         layout_horarios.addWidget(group_freq)
         
         # Resumo
@@ -1456,16 +1462,19 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.schedule_view.setMinimumHeight(200)
         self.schedule_view.nudgeKeyPressed.connect(self._on_schedule_nudge_key)
 
-        # Passo do deslocamento (decisão 77) + botão de restaurar a frequência
+        # Passo do deslocamento (decisão 77) + botão de enquadramento e restaurar a frequência
         linha_ajuste = QtWidgets.QHBoxLayout()
         self.spin_schedule_step = QtWidgets.QSpinBox()
         self.spin_schedule_step.setRange(1, 30)
         self.spin_schedule_step.setValue(15)
         self.spin_schedule_step.setSuffix(" minutos")
+        self.btn_fit_all = QtWidgets.QPushButton("Enquadrar tudo")
+        self.btn_fit_all.clicked.connect(self.schedule_view.fit_all)
         self.btn_restaurar_frequencia = QtWidgets.QPushButton("Restaurar frequência regular")
         self.btn_restaurar_frequencia.clicked.connect(self._recalculate_draft_schedule)
         linha_ajuste.addWidget(QLabel("Passo:"))
         linha_ajuste.addWidget(self.spin_schedule_step)
+        linha_ajuste.addWidget(self.btn_fit_all)
         linha_ajuste.addStretch()
         linha_ajuste.addWidget(self.btn_restaurar_frequencia)
         layout_group_diag.addLayout(linha_ajuste)
@@ -1554,11 +1563,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         
         # Conexões da página de horários
         self.combo_calendar.currentIndexChanged.connect(self._on_combo_calendar_changed)
-        self.time_start.timeChanged.connect(self._update_estimated_trips)
-        self.time_end.timeChanged.connect(self._update_estimated_trips)
-        self.spin_interval.valueChanged.connect(self._update_estimated_trips)
-        self.spin_duration.valueChanged.connect(self._update_estimated_trips)
-        
+        # Os campos de cada faixa conectam _update_estimated_trips em
+        # _add_band_row; os botões "Adicionar"/"Remover faixa" também.
         self._update_estimated_trips()
 
         layout_build.addWidget(self.stacked_build)
@@ -1578,6 +1584,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         # Conexões da Edição GTFS
         self.button_edit_enter.clicked.connect(self.editEnterClicked)
         self.button_edit_open.clicked.connect(self.editOpenClicked)
+        self.button_edit_schedule.clicked.connect(self.editScheduleClicked)
         self.button_edit_validate.clicked.connect(self.validateClicked)
         self.button_edit_export.clicked.connect(self.exportClicked)
         self.button_edit_discard.clicked.connect(self.editDiscardClicked)
@@ -2425,6 +2432,179 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     level=Qgis.MessageLevel.Critical, duration=10
                 )
 
+    def editScheduleClicked(self):
+        """
+        Abre o diálogo de ajuste de horários para a linha selecionada na aba
+        'Edição GTFS', carregando as viagens e horários via load_route_stop_times
+        organizadas por sentido (direction_id).
+        """
+        if self._working_copy is None or not self._working_copy.is_active():
+            iface.messageBar().pushMessage(
+                "Aviso",
+                "Entre no modo edição primeiro.",
+                level=Qgis.MessageLevel.Warning, duration=8
+            )
+            return
+
+        route_short_name = self.combo_edit_route.currentText().strip()
+        if not route_short_name:
+            iface.messageBar().pushMessage(
+                "Aviso",
+                "Selecione uma linha (route_short_name) para ajustar horários.",
+                level=Qgis.MessageLevel.Warning, duration=8
+            )
+            return
+
+        gpkg = self._working_copy.edit_path
+        from .gtfs_edit_core import load_route_stop_times
+        dirs_data = load_route_stop_times(gpkg, route_short_name)
+
+        if not dirs_data:
+            iface.messageBar().pushMessage(
+                "Aviso",
+                "Nenhum horário/viagem encontrado para a linha '{}'.".format(route_short_name),
+                level=Qgis.MessageLevel.Warning, duration=8
+            )
+            return
+
+        self._open_schedule_edit_dialog(route_short_name, dirs_data)
+
+    def _open_schedule_edit_dialog(self, route_short_name, dirs_data):
+        """
+        Abre o diálogo com as matrizes de horários da linha organizadas
+        por sentido (direction_id 0/1) com headsign e grade de paradas.
+        Permite editar horários diretamente na tabela e aplicar as alterações no feed.
+        """
+        from .schedule_edit_core import validate_draft_times
+        from .gtfs_edit_core import apply_stop_times
+        from .schedule_grid_widget import ScheduleGridWidget
+
+        def _aviso(texto):
+            if iface is not None and iface.messageBar():
+                iface.messageBar().pushMessage(
+                    "Aviso", texto, level=Qgis.MessageLevel.Warning, duration=8)
+
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Ajustar Horários — Linha {}".format(route_short_name))
+        dialog.resize(850, 520)
+
+        main_layout = QtWidgets.QVBoxLayout(dialog)
+
+        tabs = QtWidgets.QTabWidget(dialog)
+        main_layout.addWidget(tabs)
+
+        tables_data = []
+
+        for dir_id in sorted(dirs_data.keys(), key=lambda x: str(x)):
+            dir_info = dirs_data[dir_id]
+            headsign = dir_info.get("trip_headsign", "") or ""
+            stop_times = dir_info.get("stop_times", [])
+
+            tab_page = QtWidgets.QWidget()
+            tab_layout = QtWidgets.QVBoxLayout(tab_page)
+
+            try:
+                dir_id_int = int(dir_id)
+            except (ValueError, TypeError):
+                dir_id_int = -1
+
+            if dir_id_int == 0:
+                dir_title = "Ida"
+            elif dir_id_int == 1:
+                dir_title = "Volta"
+            else:
+                dir_title = "Sentido {}".format(dir_id)
+
+            if headsign:
+                tab_label = "{} ({})".format(dir_title, headsign)
+                info_text = "<b>{} — {}</b> ({} registros)".format(dir_title, headsign, len(stop_times))
+            else:
+                tab_label = dir_title
+                info_text = "<b>{}</b> ({} registros)".format(dir_title, len(stop_times))
+
+            lbl_headsign = QtWidgets.QLabel(info_text)
+            tab_layout.addWidget(lbl_headsign)
+
+            grid_widget = ScheduleGridWidget(
+                stop_times, route_short_name=route_short_name, direction_id=dir_id)
+
+            tab_layout.addWidget(grid_widget)
+            tabs.addTab(tab_page, tab_label)
+            tables_data.append(grid_widget)
+
+        def _on_apply(checked=False):
+            # Só as células realmente alteradas viram UPDATE (decisão 118):
+            # reescrever a grade inteira mexeria em horários que ninguém tocou.
+            # A comparação em si mora no widget (ScheduleGridWidget.collect_changes);
+            # o diálogo só agrega o que cada aba/sentido devolve.
+            alterados = []
+            grade_validacao = []
+            ilegiveis = []
+            for grid_widget in tables_data:
+                alt, gv, ileg = grid_widget.collect_changes()
+                alterados.extend(alt)
+                grade_validacao.extend(gv)
+                ilegiveis.extend(ileg)
+
+            gpkg = self._working_copy.edit_path if getattr(self, "_working_copy", None) else None
+            if not gpkg or not os.path.exists(gpkg):
+                _aviso("Cópia de trabalho (feed_edit.gpkg) não encontrada.")
+                return
+
+            if ilegiveis:
+                QMessageBox.warning(dialog, "Horário ilegível",
+                                    "Horário fora do formato HH:MM:SS:\n" + "\n".join(ilegiveis))
+                return
+
+            if not alterados:
+                _aviso("Nenhum horário alterado para aplicar.")
+                return
+
+            # Mesmo par validador do assistente (passo 182).
+            grade_validacao.sort(key=lambda st: (st["trip_id"], int(st["stop_sequence"] or 0)))
+            erros, avisos = validate_draft_times(grade_validacao)
+            if erros:
+                QMessageBox.warning(dialog, "Horários inválidos", "\n".join(erros[:10]))
+                return
+            if avisos:
+                resposta = QMessageBox.question(
+                    dialog, "Horários", "\n".join(avisos[:10]) + "\n\nAplicar assim mesmo?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if resposta != QMessageBox.StandardButton.Yes:
+                    return
+
+            try:
+                n_updated = apply_stop_times(gpkg, alterados)
+            except Exception as e:
+                if iface is not None and iface.messageBar():
+                    iface.messageBar().pushMessage(
+                        "Erro",
+                        "Falha ao aplicar horários ao feed: {}".format(e),
+                        level=Qgis.MessageLevel.Critical, duration=8
+                    )
+                return
+
+            if iface is not None and iface.messageBar():
+                iface.messageBar().pushMessage(
+                    "Sucesso",
+                    "{} horário(s) aplicados ao feed. Use 'Validar' ou 'Exportar .zip' para concluir o ciclo.".format(n_updated),
+                    level=Qgis.MessageLevel.Success, duration=8
+                )
+            self._refresh_edit_status()
+            dialog.accept()
+
+        layout_btns = QtWidgets.QHBoxLayout()
+        btn_apply = QtWidgets.QPushButton("Aplicar ao feed")
+        btn_apply.clicked.connect(_on_apply)
+        btn_close = QtWidgets.QPushButton("Cancelar")
+        btn_close.clicked.connect(dialog.reject)
+        layout_btns.addStretch()
+        layout_btns.addWidget(btn_apply)
+        layout_btns.addWidget(btn_close)
+        main_layout.addLayout(layout_btns)
+
+        dialog.exec()
+
     def editOpenClicked(self):
         """
         Carrega a tabela de atributos nativa do QGIS a partir do feed_edit.gpkg,
@@ -2684,6 +2864,14 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self.button_edit_discard.setEnabled(False)
 
         self._update_stop_times_selectors()
+        self._update_schedule_button_state()
+
+    def _update_schedule_button_state(self):
+        """O botão "Ajustar horários" precisa de edição ativa E de uma linha
+        escolhida — sem a linha não há o que carregar (passo 180)."""
+        active = self._working_copy is not None and self._working_copy.is_active()
+        self.button_edit_schedule.setEnabled(
+            active and bool(self.combo_edit_route.currentText()))
 
     def _on_build_back_clicked(self):
         current = self.stacked_build.currentIndex()
@@ -2900,35 +3088,32 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 # data is a tuple representing service
                 calendar_data = data[0] # The service_id
                 
-            # 2. Validações da Frequência
-            t_start = self.time_start.time()
-            t_end = self.time_end.time()
-            start_sec = t_start.hour() * 3600 + t_start.minute() * 60 + t_start.second()
-            end_sec = t_end.hour() * 3600 + t_end.minute() * 60 + t_end.second()
-            if start_sec > end_sec:
-                QMessageBox.warning(self, "Hora inválida", "A hora de início deve ser anterior ou igual à hora de fim.")
+            # 2. Validações das faixas horárias (decisão 123): sobreposição,
+            #    fim antes do início, intervalo e duração <= 0 bloqueiam.
+            bands = self._collect_bands()
+            from .schedule_edit_core import validate_bands
+            erros_faixa, avisos_faixa = validate_bands(bands)
+            if erros_faixa:
+                QMessageBox.warning(self, "Faixas horárias inválidas",
+                                    "\n".join(erros_faixa))
                 return
-                
-            interval_min = self.spin_interval.value()
-            if interval_min <= 0:
-                QMessageBox.warning(self, "Intervalo inválido", "O intervalo de frequência deve ser maior que 0.")
-                return
-                
-            duracao_min = self.spin_duration.value()
+            if avisos_faixa:
+                resposta = QMessageBox.question(
+                    self, "Faixas horárias",
+                    "\n".join(avisos_faixa) + "\n\nAvançar assim mesmo?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if resposta != QMessageBox.StandardButton.Yes:
+                    return
 
             # 3. Grade de horários (gerada por _recalculate_draft_schedule)
             stop_ids = [stop.get("stop_id") for stop in self.sequenced_stops if stop.get("stop_id")]
             if not stop_ids:
                 QMessageBox.warning(self, "Paradas vazias", "A lista de paradas está vazia. Volte e adicione paradas.")
                 return
-                
-            hora_inicio = t_start.toString("HH:mm:ss")
-            hora_fim = t_end.toString("HH:mm:ss")
-            
+
             # A grade em memória só é regerada quando os parâmetros da página
             # mudaram — senão o ajuste manual feito no diagrama seria descartado.
-            assinatura = self._draft_signature(stop_ids, hora_inicio, hora_fim,
-                                               interval_min, duracao_min)
+            assinatura = self._draft_signature(stop_ids, bands=bands)
             if not getattr(self, 'build_stop_times', None) or \
                     getattr(self, '_build_draft_signature', None) != assinatura:
                 self._recalculate_draft_schedule()
@@ -2953,18 +3138,17 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
             # Salva temporariamente na instância para uso pela próxima etapa (passo 51)
             self.build_service = calendar_data
-            self.build_frequencia = {
-                "hora_inicio": hora_inicio,
-                "hora_fim": hora_fim,
-                "intervalo_min": interval_min,
-                "duracao_min": duracao_min,
-            }
-            
+            self.build_frequencia = bands
+
             # Mostra o resumo na página de revisão (index 5)
             stops_summary = " -> ".join(stop.get("stop_name") for stop in self.sequenced_stops)
             cal_summary = "Calendário: {}".format(calendar_data if isinstance(calendar_data, str) else calendar_data['service_id'])
-            freq_summary = "Das {} às {} a cada {} min (duração: {} min)".format(
-                t_start.toString('HH:mm'), t_end.toString('HH:mm'), interval_min, duracao_min
+            freq_summary = "; ".join(
+                "Das {} às {} a cada {} min (duração: {} min)".format(
+                    b.get("hora_inicio", "")[:5], b.get("hora_fim", "")[:5],
+                    b.get("intervalo_min"), b.get("duracao_min")
+                )
+                for b in bands
             )
             trips_count_summary = "Total de viagens geradas: {}".format(len(trips_list))
             grade_summary = self._draft_summary()
@@ -3338,8 +3522,9 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 pass
             self._edit_layer = None
 
-        # 2. Navega para a aba "Edição GTFS" (index 0)
-        self.tabWidget.setCurrentIndex(0)
+        # 2. Navega para a aba "Edição GTFS".
+        self.tabWidget.setCurrentIndex(
+            self.tabWidget.indexOf(self.button_edit_enter.parentWidget()))
 
     def _load_calendars_for_build(self):
         self.combo_calendar.blockSignals(True)
@@ -3396,31 +3581,141 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self.date_end_date.setEnabled(False)
 
     def _update_estimated_trips(self):
-        t_start = self.time_start.time()
-        t_end = self.time_end.time()
-        
-        start_sec = t_start.hour() * 3600 + t_start.minute() * 60 + t_start.second()
-        end_sec = t_end.hour() * 3600 + t_end.minute() * 60 + t_end.second()
-        
-        interval_min = self.spin_interval.value()
-        step_sec = interval_min * 60
-        
-        if step_sec <= 0:
-            count = 0
-        elif end_sec < start_sec:
-            count = 0
+        """Soma as viagens de todas as faixas e mostra a amplitude do
+        intervalo — com faixas, um número só esconde a diferença entre o pico
+        e o entrepico."""
+        if not hasattr(self, 'label_trips_summary'):
+            return
+        bands = self._collect_bands()
+        from .schedule_edit_core import to_seconds
+        # Conta horários de saída distintos: duas faixas encostadas geram a
+        # saída da fronteira uma única vez (decisão 122), e somar faixa a
+        # faixa contaria essa saída duas vezes.
+        saidas = set()
+        intervalos = []
+        for b in bands:
+            start_sec = to_seconds(b.get("hora_inicio", "00:00:00"))
+            end_sec = to_seconds(b.get("hora_fim", "00:00:00"))
+            interval_min = b.get("intervalo_min", 0)
+            step_sec = interval_min * 60
+            if step_sec > 0 and end_sec >= start_sec:
+                saidas.update(range(start_sec, end_sec + 1, step_sec))
+                intervalos.append(interval_min)
+        count = len(saidas)
+
+        if len(set(intervalos)) > 1:
+            resumo = "Número estimado de viagens: <b>{}</b> · intervalo de {} a {} min".format(
+                count, min(intervalos), max(intervalos))
         else:
-            count = (end_sec - start_sec) // step_sec + 1
-            
-        self.label_trips_summary.setText("Número estimado de viagens: <b>{}</b>".format(count))
+            resumo = "Número estimado de viagens: <b>{}</b>".format(count)
+        self.label_trips_summary.setText(resumo)
         self._recalculate_draft_schedule()
 
-    def _draft_signature(self, stop_ids, hora_inicio, hora_fim, interval_min, duracao_min):
+    def _draft_signature(self, stop_ids, bands=None):
         """Identidade dos parâmetros que geraram a grade em memória — muda
-        quando o usuário mexe na página de horários, e só então a grade
-        ajustada à mão é descartada."""
-        return (tuple(stop_ids), hora_inicio, hora_fim, interval_min, duracao_min,
-                self._build_trip_prefix())
+        quando o usuário mexe na página de horários (inclusive nas faixas,
+        decisão 125), e só então a grade ajustada à mão é descartada."""
+        if bands is None:
+            bands = self._collect_bands()
+        bands_tuple = tuple(
+            (b.get("hora_inicio"), b.get("hora_fim"), b.get("intervalo_min"), b.get("duracao_min"))
+            for b in bands
+        )
+        return (tuple(stop_ids), bands_tuple, self._build_trip_prefix())
+
+    def _add_band_row(self, start_str=None, end_str="23:00:00", interval=30, duration=30):
+        if not hasattr(self, 'table_bands'):
+            return
+        if self.table_bands.rowCount() >= 3:
+            return
+        row = self.table_bands.rowCount()
+
+        if start_str is None:
+            if row > 0:
+                prev_end_widget = self.table_bands.cellWidget(row - 1, 1)
+                prev_int_widget = self.table_bands.cellWidget(row - 1, 2)
+                prev_dur_widget = self.table_bands.cellWidget(row - 1, 3)
+                if prev_end_widget:
+                    start_str = prev_end_widget.time().toString("HH:mm:ss")
+                else:
+                    start_str = "12:00:00"
+                if prev_int_widget:
+                    interval = prev_int_widget.value()
+                if prev_dur_widget:
+                    duration = prev_dur_widget.value()
+            else:
+                start_str = "06:00:00"
+
+        self.table_bands.insertRow(row)
+
+        t_start = QtWidgets.QTimeEdit()
+        t_start.setDisplayFormat("HH:mm:ss")
+        t_start.setTime(QTime.fromString(start_str, "HH:mm:ss"))
+
+        t_end = QtWidgets.QTimeEdit()
+        t_end.setDisplayFormat("HH:mm:ss")
+        t_end.setTime(QTime.fromString(end_str, "HH:mm:ss"))
+
+        spin_int = QtWidgets.QSpinBox()
+        spin_int.setRange(1, 1440)
+        spin_int.setValue(interval)
+        spin_int.setSuffix(" min")
+
+        spin_dur = QtWidgets.QSpinBox()
+        spin_dur.setRange(1, 600)
+        spin_dur.setValue(duration)
+        spin_dur.setSuffix(" min")
+
+        t_start.timeChanged.connect(self._update_estimated_trips)
+        t_end.timeChanged.connect(self._update_estimated_trips)
+        spin_int.valueChanged.connect(self._update_estimated_trips)
+        spin_dur.valueChanged.connect(self._update_estimated_trips)
+
+        self.table_bands.setCellWidget(row, 0, t_start)
+        self.table_bands.setCellWidget(row, 1, t_end)
+        self.table_bands.setCellWidget(row, 2, spin_int)
+        self.table_bands.setCellWidget(row, 3, spin_dur)
+
+        self._update_band_buttons_state()
+        self._update_estimated_trips()
+
+    def _remove_band_row(self):
+        if not hasattr(self, 'table_bands'):
+            return
+        count = self.table_bands.rowCount()
+        if count > 1:
+            self.table_bands.removeRow(count - 1)
+            self._update_band_buttons_state()
+            self._update_estimated_trips()
+
+    def _update_band_buttons_state(self):
+        if hasattr(self, 'table_bands') and hasattr(self, 'btn_add_band') and hasattr(self, 'btn_remove_band'):
+            count = self.table_bands.rowCount()
+            self.btn_add_band.setEnabled(count < 3)
+            self.btn_remove_band.setEnabled(count > 1)
+
+    def _collect_bands(self):
+        bands = []
+        if not hasattr(self, 'table_bands'):
+            return bands
+        for row in range(self.table_bands.rowCount()):
+            w_start = self.table_bands.cellWidget(row, 0)
+            w_end = self.table_bands.cellWidget(row, 1)
+            w_int = self.table_bands.cellWidget(row, 2)
+            w_dur = self.table_bands.cellWidget(row, 3)
+
+            h_start = w_start.time().toString("HH:mm:ss") if w_start else "06:00:00"
+            h_end = w_end.time().toString("HH:mm:ss") if w_end else "23:00:00"
+            intervalo = w_int.value() if w_int else 30
+            duracao = w_dur.value() if w_dur else 30
+
+            bands.append({
+                "hora_inicio": h_start,
+                "hora_fim": h_end,
+                "intervalo_min": intervalo,
+                "duracao_min": duracao,
+            })
+        return bands
 
     def _build_trip_prefix(self):
         short_name = ""
@@ -3447,28 +3742,20 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self.schedule_scene.clear()
             return
 
-        hora_inicio = self.time_start.time().toString("HH:mm:ss")
-        hora_fim = self.time_end.time().toString("HH:mm:ss")
-        interval_min = self.spin_interval.value()
-        duracao_min = self.spin_duration.value()
-
-        from .schedule_edit_core import expand_frequency_to_stop_times
-        trips_list, stop_times_list = expand_frequency_to_stop_times(
+        bands = self._collect_bands()
+        from .schedule_edit_core import expand_bands_to_stop_times
+        trips_list, stop_times_list = expand_bands_to_stop_times(
             stop_ids=stop_ids,
-            hora_inicio=hora_inicio,
-            hora_fim=hora_fim,
-            intervalo_min=interval_min,
-            duracao_min=duracao_min,
+            faixas=bands,
             prefix=self._build_trip_prefix()
         )
 
         self.build_trips = trips_list
         self.build_stop_times = stop_times_list
-        self._build_draft_signature = self._draft_signature(
-            stop_ids, hora_inicio, hora_fim, interval_min, duracao_min)
-        self._render_schedule_diagram()
+        self._build_draft_signature = self._draft_signature(stop_ids, bands=bands)
+        self._render_schedule_diagram(force_fit=True)
 
-    def _render_schedule_diagram(self):
+    def _render_schedule_diagram(self, force_fit=False):
         if not hasattr(self, 'schedule_scene'):
             return
 
@@ -3488,6 +3775,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         else:
             service_id = service or ''
 
+        view = getattr(self, 'schedule_view', None)
+        had_items = bool(self.schedule_scene.items()) if hasattr(self, 'schedule_scene') else False
+        state = view.viewport_state() if (view is not None and hasattr(view, 'viewport_state')) else None
+
         sched = schedule_from_draft(
             stop_times_list,
             route_short_name=short_name or "route",
@@ -3497,7 +3788,13 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             if getattr(self, 'sequenced_stops', None) else ''
         )
         self.schedule_scene.set_schedule(sched)
-        self.schedule_view.fit_all()
+
+        if view is not None:
+            if force_fit or not had_items or not state:
+                view.fit_all()
+            else:
+                view.restore_viewport(state)
+
         self._update_schedule_days_label(len(sched.trips))
 
     def _update_schedule_days_label(self, n_viagens):
@@ -4215,16 +4512,19 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         active = self._working_copy is not None and self._working_copy.is_active()
         table_selected = self.combo_edit_table.currentText()
         is_stop_times = (table_selected == "stop_times")
-        enable_filters = active and is_stop_times
 
-        self.label_edit_route.setEnabled(enable_filters)
-        self.combo_edit_route.setEnabled(enable_filters)
-        self.label_edit_trip.setEnabled(enable_filters)
-        self.combo_edit_trip.setEnabled(enable_filters)
+        # A linha alimenta tambem o "Ajustar horários", que vale para qualquer
+        # tabela aberta (passo 180); só o filtro de viagem é de stop_times.
+        self.label_edit_route.setEnabled(active)
+        self.combo_edit_route.setEnabled(active)
+        self.label_edit_trip.setEnabled(active and is_stop_times)
+        self.combo_edit_trip.setEnabled(active and is_stop_times)
 
-        if enable_filters:
+        if active:
             if self.combo_edit_route.count() == 0:
                 self._populate_edit_routes()
+            if not is_stop_times:
+                self.combo_edit_trip.clear()
         else:
             self.combo_edit_route.clear()
             self.combo_edit_trip.clear()
@@ -4253,6 +4553,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
     def _on_edit_route_changed(self, route_short_name):
         self.combo_edit_trip.clear()
+        self._update_schedule_button_state()
         if not route_short_name or not self._working_copy or not self._working_copy.edit_path:
             return
         gpkg = self._working_copy.edit_path

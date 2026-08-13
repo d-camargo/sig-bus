@@ -12,6 +12,132 @@ o **Diagrama de Blocos** (alocação de frota). Feed de referência nos testes: 
 
 ---
 
+## 0.7 — Ajuste de horários: zoom preservado, faixas horárias e edição no feed
+
+Versão focada no **ajuste de oferta**: o que a 0.5 abriu (deslocar viagem no
+Diagrama de Blocos com `>`/`<`/`+`/`-`) vira uma tela de trabalho de verdade —
+com o enquadramento que não se perde a cada tecla, faixas horárias por período
+do dia e o ajuste de horários disponível também para um feed **já carregado**,
+não só para o que o assistente acabou de criar.
+
+Do ponto de vista de **transporte público**, é a diferença entre desenhar uma
+oferta uniforme e desenhar a oferta real: intervalo e **duração de viagem**
+passam a variar por faixa (pico manhã / entrepico / pico tarde), que é o que o
+Diagrama de Blocos usa para estimar frota — manter a duração fixa no pico
+produz um `stop_times` que subestima o tempo de ciclo. E o ajuste fino deixa de
+ser exclusivo de feed novo: dá para abrir uma linha do feed em edição, mexer
+nos horários e gravar de volta.
+
+### O zoom não se perde a cada ajuste (decisões 109-111)
+
+- **A culpa era do redesenho, não do zoom.** `_render_schedule_diagram()`
+  terminava chamando `fit_all()` (`resetTransform()` + `fitInView()`), então
+  cada tecla de nudge reenquadrava o diagrama inteiro e jogava fora o zoom que
+  o usuário tinha acabado de dar na viagem que estava olhando. O redesenho
+  passa a **preservar** o enquadramento corrente; enquadrar tudo virou ação
+  explícita, no botão **"Enquadrar tudo"** ao lado do "Passo".
+- **Preserva transformação e posição, não só a escala (decisão 110)**:
+  `BlockView` ganhou `viewport_state()` / `restore_viewport()`, que guardam a
+  `QTransform` e o **centro em coordenadas de cena**. Guardar só o fator de
+  escala devolveria o zoom certo no lugar errado, já que a view usa
+  `AnchorUnderMouse` e uma viagem deslocada pode esticar o `sceneRect`.
+- **Primeiro desenho enquadra, os seguintes preservam (decisão 111)**: a regra
+  mora no chamador — sem estado anterior (cena vazia, primeira entrada na
+  página, "Restaurar frequência regular"), `fit_all()`; com estado anterior,
+  `restore_viewport()`. A `BlockView` continua sem conhecer o modelo.
+
+### Faixas horárias no "Construir GTFS" (decisões 119-125)
+
+- **Faixas substituem o par único de hora início/fim (decisão 119)**: a página
+  de horários agora tem uma tabela de faixas (`Início`, `Fim`, `Intervalo`,
+  `Duração`), que começa com **uma** linha preenchida com os valores de sempre
+  (06:00→23:00, 30 min de intervalo, 30 min de duração). Quem não quer
+  desagregar não muda nada no que faz, e uma faixa reproduz exatamente a grade
+  que a 0.6 gerava.
+- **A duração da viagem também é por faixa (decisão 120)**: no pico o mesmo
+  percurso demora mais, e é essa duração que vira tempo de ciclo no Diagrama de
+  Blocos.
+- **A UI oferece até 3 faixas; a função pura não impõe limite (decisão 121)**:
+  "Adicionar faixa" para no terceiro item — pico manhã / entrepico / pico tarde
+  —, mas `schedule_edit_core.expand_bands_to_stop_times()` aceita N faixas, em
+  `dict` ou tupla.
+- **Fronteira de faixa não duplica saída (decisão 122)**: com faixas
+  `06:00–09:00` e `09:00–16:00`, a saída das 09:00 seria gerada duas vezes —
+  fim inclusivo de uma, início da outra —, criando duas viagens no mesmo
+  horário. A expansão percorre as faixas em ordem cronológica e descarta a
+  saída já gerada; a faixa mais cedo é quem vence.
+- **Faixas sobrepostas são erro, não aviso (decisão 123)**:
+  `schedule_edit_core.validate_bands()` reprova sobreposição, `fim < início`,
+  intervalo ≤ 0 e duração ≤ 0 **antes** de expandir, com a mensagem nomeando a
+  faixa ("faixa 2 (09:00–16:00) sobrepõe a faixa 1"). Buraco entre faixas é
+  legítimo — linha que não opera no entrepico — e passa sem reclamar.
+- **`save_route` aceita as três formas de `frequencia` (decisão 124)**: lista
+  de faixas (nova), `dict` e tupla (as duas já suportadas) continuam
+  funcionando; o caminho normal do assistente nem passa por lá, porque manda
+  `stop_times` já ajustado.
+- **`_draft_signature` passa a enxergar as faixas (decisão 125)**: é essa
+  assinatura que decide se a grade em memória é regerada ou preservada — sem
+  as faixas, mexer numa faixa não regeraria nada e a tela mostraria a oferta
+  antiga. O resumo da página soma as viagens de todas as faixas e mostra a
+  amplitude do intervalo (ex.: "34 viagens · intervalo de 10 a 30 min").
+
+### Ajustar horários de um feed já carregado (decisões 117-118)
+
+- **Botão "Ajustar horários" na aba "Edição GTFS"** (habilitado só com edição
+  ativa e uma linha escolhida), que abre a **matriz de horários** daquela
+  linha: uma aba por sentido, paradas nas linhas, viagens nas colunas, os
+  horários digitados direto na célula. A matriz é montada pelo núcleo puro
+  `schedule_table_core.py` (`build_schedule_table`), sem Qt.
+- **Leitura sempre filtrada por linha (decisão 117)**:
+  `gtfs_edit_core.load_route_stop_times(gpkg, route_short_name, service_id=None)`
+  vai de `route_short_name` (+ `service_id` opcional) → `trips` → `stop_times`
+  daquelas viagens, e nada mais. A decisão 5 (nunca carregar `stop_times`
+  inteiro) vale igual aqui: num feed real como o da BHTrans essa tabela tem
+  milhões de linhas.
+- **Gravação é `UPDATE` por (`trip_id`, `stop_sequence`), em transação
+  (decisão 118)**: `gtfs_edit_core.apply_stop_times()` altera só
+  `arrival_time`/`departure_time`, **e só das células realmente editadas** — o
+  tempo parado de cada parada (`departure - arrival`) anda junto com a saída,
+  em vez de ser achatado. Nenhuma linha é apagada e nenhum id é reescrito — o
+  feed é de terceiros e as viagens carregam `shape_id`, `block_id` e o que mais
+  o feed trouxer —, e erro no meio faz `rollback`. Antes de gravar, a grade
+  ajustada passa pelo mesmo `validate_draft_times` do assistente: erro bloqueia,
+  aviso pergunta; "Cancelar" não toca no arquivo.
+- **O validador aprendeu horário fora de ordem**: `GtfsValidator` passa a
+  apontar, por SQL agregado, a viagem cuja chegada numa parada é anterior à
+  partida da parada anterior — a falha que um ajuste de horário pode introduzir
+  e que nenhuma das checagens de formato pegava (decisão 6: um validador só).
+
+### Ainda não entregue nesta versão
+
+O painel lateral de horários **por sentido** ao lado do diagrama (decisões
+112-115) e o widget único de edição compartilhado entre o assistente e a aba
+"Edição GTFS" (decisão 116) **não** entraram na 0.7: o ajuste no assistente
+continua sendo pelo diagrama e pelos atalhos, e na aba de edição é pela matriz
+descrita acima. Ficam para a versão seguinte.
+
+### Versão e documentação (decisões 103, 126)
+
+A versão sobe para **0.7** — a fase acrescenta funcionalidade nas duas abas, não
+é correção (mesmo critério das decisões 85 e 92). O `.zip` continua fora do
+plano (decisão 94): empacotar segue sendo ritual manual. `README.md` (nas duas
+metades, EN e PT-BR, no mesmo passo — decisão 103), `DIAGRAMA_BLOCOS.md`,
+`GUIA_CONSTRUIR_GTFS.md` e `GUIA_EDICAO_GTFS.md` foram atualizados junto.
+
+#### Arquivos tocados
+
+`schedule_table_core.py` (novo), `schedule_grid_widget.py` (novo),
+`schedule_edit_core.py`,
+`gtfs_edit_core.py`, `gtfs_validator.py`, `gtfs_builder_core.py`,
+`block_view.py`, `SigBus_dialog.py`, `metadata.txt`, `README.md`,
+`DIAGRAMA_BLOCOS.md`, `GUIA_CONSTRUIR_GTFS.md`, `GUIA_EDICAO_GTFS.md`,
+`CHANGELOG.md`, `test_block_view_zoom.py` (novo),
+`test_schedule_table_core.py` (novo), `test_gtfs_edit_stop_times.py` (novo),
+`test_schedule_edit_core.py`, `test_gtfs_builder_progress.py`,
+`test_block_scene_headway.py`.
+
+---
+
 ## 0.6 — Leitura do Diagrama de Blocos: cota enxuta e régua de saídas
 
 Duas mudanças de **leitura** no Diagrama de Blocos, pedidas depois de usar o

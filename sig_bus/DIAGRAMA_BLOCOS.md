@@ -88,9 +88,11 @@ Core (Model)             block_core.py   → leitura, modelo, inferência (QgsTa
 |---------|--------|------------------|
 | `block_core.py` | Core | `Trip`/`Block`/`BlockParams`/`Schedule`, `ScheduleReader`, `BlockBuilder`, `BlockDiagramTask` |
 | `schedule_edit_core.py` | Core | Manipulação de grade de horários temporária para o ajuste fino (reaproveitamento da engine) |
+| `schedule_table_core.py` | Core | Núcleo puro da tabela de horários (Stops x Trips), formatação e manipulação de matrizes de horários |
+| `schedule_grid_widget.py` | Interface | `ScheduleGridWidget`: a tabela de horários em si (`QTableWidget` paradas × viagens) e o `collect_changes()` que devolve só as células editadas |
 | `block_scene.py` | Engine | `BlockScene`, `TripItem`, layout, cores, headway, `departure_ticks` (régua de saídas) |
-| `block_view.py` | Engine | `BlockView`: zoom, pan, export PNG/SVG |
-| `block_diagram_dialog.py` | Interface | janela, controles, painel de detalhes |
+| `block_view.py` | Engine | `BlockView`: zoom, pan, export PNG/SVG, preservação de enquadramento pós-redesenho |
+| `block_diagram_dialog.py` | Interface | janela standalone, controles, painel de detalhes |
 | `SigBus_dialog.py` | Integração | botão “Diagrama de Blocos” + `diagramaClicked()` |
 
 ### 3.2 Por que `QGraphicsView`/`QGraphicsScene`
@@ -217,6 +219,7 @@ precisa saber qual ponta mover com `>`/`<`.
   horário é o diálogo.
 - `fit_all()` enquadra a cena inteira ao gerar — essencial porque uma faixa de ida muito
   alta (linha movimentada) escondia a faixa de volta abaixo da tela.
+- **Preservação de enquadramento (zoom/pan, decisões 109-111):** `viewport_state()` guarda a transformação e o centro em coordenadas de cena; `restore_viewport()` os reaplica depois de um redesenho. Quem decide entre preservar e enquadrar é o chamador — o primeiro desenho e o "Restaurar frequência regular" chamam `fit_all()`, os demais preservam, e o botão **Enquadrar tudo** reenquadra sob demanda.
 - Export **PNG** (`QImage`, 2×) e **SVG** (`QSvgGenerator`, se `QtSvg` presente).
 
 ### 5.5 Régua de saídas
@@ -309,5 +312,6 @@ A camada de dados e o algoritmo (puro Python/SQLite) foram validados fora do QGI
   banda por sentido, `direction_id` vazio caindo em `'ida'`, saída ordenada) e a cena
   (ida estritamente acima de volta, `sceneRect` crescendo `RUG_H`, rótulo `volta`
   ausente num diagrama só de ida).
+- Ajuste de horários e matriz (`test_schedule_edit_core.py`, `test_schedule_table_core.py`, `test_block_view_zoom.py`, `test_gtfs_edit_stop_times.py`): deslocamento de viagens e faixas horárias em memória, matriz paradas × viagens, preservação do enquadramento entre redesenhos e gravação de `stop_times` no GeoPackage.
 
 A camada Qt/GUI (cena, view, diálogo) é validada manualmente dentro do QGIS.

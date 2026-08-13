@@ -62,14 +62,24 @@ A aba **Edição GTFS** disponibiliza as seguintes ferramentas e controles:
   * Define os campos de ID e chaves estrangeiras como de leitura exclusiva (*read-only*) no formulário do QGIS para evitar que a integridade do banco de dados seja quebrada acidentalmente.
   * Fecha temporariamente a janela do plugin para liberar espaço de tela para o trabalho no QGIS.
 
-### 5. Botão "Validar"
+### 5. Botão "Ajustar horários"
+* **Função:** Abre a janela de edição matricial de horários para a linha selecionada.
+* **Funcionamento:**
+  * Requer a seleção prévia de uma linha no campo **Linha (route_short_name)**.
+  * Carrega todas as viagens e horários de parada (`stop_times`) associados a essa linha a partir de `feed_edit.gpkg`, organizados em abas por sentido de operação (`direction_id` 0 = Ida, 1 = Volta).
+  * Exibe uma grade matricial em que as linhas correspondem às paradas em sequência e as colunas correspondem às viagens (`trip_id`).
+  * **O que é editável:** a primeira coluna, **Parada**, é somente leitura (é o nome da parada, não um horário). Todas as demais colunas — uma por viagem, com o `trip_id` no cabeçalho — são editáveis, célula a célula, no formato `HH:MM:SS`. Horários acima de 24 h (ex.: `25:10:00`, viagem que vira o dia) são válidos e devem ser digitados assim mesmo.
+  * **Célula com `-`:** aquela viagem não passa por aquela parada. Continua editável, mas o que for digitado ali é ignorado — a janela só grava células que já existiam em `stop_times`, nunca cria parada nova numa viagem.
+  * **Aplicar ao feed** grava **apenas as células alteradas**, validando antes a grade inteira (erro bloqueia, aviso pergunta). Só `arrival_time` e `departure_time` mudam: o traçado (`shape_id`), os `trip_id`, o `block_id` e o número de viagens ficam como estavam, e o tempo parado em cada parada acompanha a saída. **Cancelar** fecha a janela sem tocar no arquivo.
+
+### 6. Botão "Validar"
 * **Função:** Executa verificações de integridade e consistência na cópia de trabalho `feed_edit.gpkg`.
 * **Funcionamento:** Aciona o validador interno que executa checagens por meio de consultas otimizadas no banco de dados. As validações incluem:
   * **Integridade Referencial:** Garante que todos os IDs informados (como `route_id`, `service_id` e `shape_id` em viagens, ou `trip_id` e `stop_id` em horários) correspondam a registros existentes nas respectivas tabelas de origem.
   * **Formato de Dados:** Verifica a formatação correta de horários (`HH:MM:SS`), datas (`YYYYMMDD`), coordenadas geográficas (latitudes e longitudes dentro de limites realistas) e códigos de enums (tipos de rotas, direções, tipos de exceção).
   * **Resultado:** Exibe a contagem de avisos e erros encontrados diretamente na barra de mensagens do QGIS e detalha cada falha encontrada no painel de logs do plugin (`SIG-Bus`).
 
-### 6. Botão "Exportar .zip"
+### 7. Botão "Exportar .zip"
 * **Função:** Gera o arquivo final compactado `.zip` com os arquivos de texto do GTFS atualizados.
 * **Funcionamento:**
   * Roda automaticamente o validador antes de iniciar.
@@ -78,7 +88,7 @@ A aba **Edição GTFS** disponibiliza as seguintes ferramentas e controles:
   * Caso a validação seja aceita, abre uma janela para escolha do local e nome do arquivo `.zip` de destino.
   * Cria uma tarefa em segundo plano (`GtfsExporter`) que exporta os dados de forma otimizada (*streaming*), garantindo que as coordenadas geográficas de `stops.txt` e `shapes.txt` sejam reconstruídas diretamente com base na geometria atualizada desenhada no mapa do QGIS, e ordena as colunas conforme o padrão oficial do GTFS.
 
-### 7. Botão "Descartar edição"
+### 8. Botão "Descartar edição"
 * **Função:** Cancela todas as modificações não exportadas e encerra a edição.
 * **Funcionamento:** Exibe um aviso de confirmação. Se confirmado pelo usuário, o plugin remove a camada do painel de controle do QGIS, exclui fisicamente o arquivo temporário `feed_edit.gpkg` do disco e retorna a aba ao seu estado desativado inicial.
 
@@ -104,11 +114,12 @@ Caso tenha escolhido a tabela `stop_times`, selecione obrigatoriamente a linha n
 ### 4. Abrir para edição
 Clique em **Abrir para edição**. A camada correspondente será carregada no painel do QGIS em modo de edição e a tabela de atributos nativa será aberta.
 
-### 5. Editar na grade de atributos ou nos vértices do canvas
+### 5. Editar na grade de atributos, nos vértices do canvas ou na janela "Ajustar Horários"
 Realize as alterações necessárias no QGIS:
 * **Edição de Atributos:** Modifique as colunas de dados diretamente na tabela de atributos (com exceção das colunas de chaves que estarão bloqueadas para leitura).
 * **Edição Geométrica:** Caso esteja editando `stops` ou `shapes`, use a ferramenta nativa de edição de vértices do QGIS para reposicionar paradas ou alterar o traçado das rotas diretamente no mapa (canvas).
-* **Salvar:** Salve as modificações na própria camada do QGIS ao concluir.
+* **Ajuste Matricial de Horários:** Para editar os horários de uma linha completa de forma integrada, selecione a linha no campo **Linha (route_short_name)** e clique em **Ajustar horários**. Edite as células na tabela matricial por sentido (Ida/Volta) — a coluna **Parada** é fixa, as colunas de viagem é que recebem os horários — e clique em **Aplicar ao feed** para gravar na cópia de trabalho. Só `arrival_time` e `departure_time` das células que você mexeu são regravados; nenhuma viagem é criada, apagada ou renomeada.
+* **Salvar:** Salve as modificações na própria camada do QGIS ou confirme na janela de ajuste ao concluir.
 
 ### 6. Validar as alterações
 Volte ao painel do plugin e clique em **Validar**.
@@ -154,6 +165,26 @@ Esta seção lista as principais mensagens de aviso e erro emitidas pela interfa
 * **"Selecione uma viagem para editar a tabela stop_times."** (Aviso)
   * **Causa:** O usuário escolheu a tabela `stop_times` no seletor, mas não definiu uma viagem específica para filtrar.
   * **Solução:** Nos seletores de filtro da interface, escolha primeiro a **Linha** e depois a **Viagem** (trip) desejada antes de clicar em "Abrir para edição".
+
+* **"Selecione uma linha (route_short_name) para ajustar horários."** (Aviso)
+  * **Causa:** O usuário clicou no botão "Ajustar horários" sem ter selecionado uma linha no seletor de filtro.
+  * **Solução:** Escolha a linha desejada no campo **Linha (route_short_name)** antes de clicar em "Ajustar horários".
+
+* **"Nenhum horário/viagem encontrado para a linha '{linha}'."** (Aviso)
+  * **Causa:** A linha selecionada não possui viagens ou horários de parada cadastrados na tabela `stop_times`.
+  * **Solução:** Verifique se as viagens desta linha estão registradas na tabela `trips` e se possuem horários associados.
+
+* **"Nenhum horário alterado para aplicar."** (Aviso)
+  * **Causa:** Clicou-se em "Aplicar ao feed" sem ter mudado nenhuma célula da janela "Ajustar Horários".
+  * **Solução:** Edite os horários desejados antes de aplicar — o que não foi tocado não é reescrito.
+
+* **"Horário fora do formato HH:MM:SS"** (Aviso, janela "Horário ilegível")
+  * **Causa:** Alguma célula editada ficou com um texto que não é um horário GTFS (`HH:MM:SS`, podendo passar de 24h).
+  * **Solução:** Corrija a célula apontada na mensagem e aplique de novo.
+
+* **"Viagem X: horário Y anterior ao da parada anterior."** (Erro, janela "Horários inválidos")
+  * **Causa:** O ajuste deixou uma parada com horário anterior ao da parada anterior da mesma viagem.
+  * **Solução:** Corrija o horário apontado — o mesmo defeito seria acusado pelo **Validar** e impediria a exportação.
 
 * **"Falha ao carregar a camada edit_{tabela}."** (Erro)
   * **Causa:** A tabela correspondente não pôde ser carregada a partir do `feed_edit.gpkg`, possivelmente por corrupção de dados ou inconsistência na estrutura do GeoPackage de rascunho.

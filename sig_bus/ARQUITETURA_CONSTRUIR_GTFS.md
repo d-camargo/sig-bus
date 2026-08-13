@@ -322,3 +322,66 @@ repassando `duracao_min` e o prefixo de `trip_id`). Com `stop_times`, grava
 distintos na ordem de saída — é o que impede o `DELETE` + reexpansão de apagar o
 ajuste manual no "Salvar Linha". O `DELETE` prévio das viagens da rota continua
 igual.
+
+---
+
+## 10. FAIXAS HORÁRIAS E AJUSTE NO FEED (Fase 17 — decisões 109-126)
+
+### 10.1 Novas funções puras de `schedule_edit_core.py`
+
+| Função | Papel |
+|---|---|
+| `validate_bands(faixas)` | `(erros, avisos)` das faixas horárias **antes** de expandir: `fim < início`, intervalo ≤ 0, duração ≤ 0 e **sobreposição** entre faixas são erro, com a mensagem nomeando a faixa (decisão 123). Vão entre faixas é legítimo e passa. |
+| `expand_bands_to_stop_times(stop_ids, faixas, prefix=None)` | Expande N faixas (`dict` ou tupla), cada uma com seu intervalo e sua **duração** (decisão 120), reusando `expand_frequency_to_stop_times` por faixa. Percorre em ordem cronológica e descarta a saída cujo horário já foi gerado, para a fronteira entre faixas não duplicar viagem (decisão 122). Uma faixa reproduz exatamente a grade da expansão simples. |
+
+`save_route` passa a aceitar `frequencia` como **lista de faixas**, além do
+`dict` e da tupla que já aceitava (decisão 124); o caminho com `stop_times`
+explícito continua com precedência sobre os três.
+
+### 10.2 Módulo `schedule_table_core.py` (Core, sem Qt)
+
+Monta a matriz de horários de uma linha — paradas nas linhas, viagens nas
+colunas — que a janela "Ajustar horários" da aba "Edição GTFS" exibe:
+
+| Função | Papel |
+|---|---|
+| `build_schedule_table(stop_times, stops=None, ...)` | Devolve um `ScheduleTable` com `stops` (ordenadas pela sequência média observada), `trips` (ordenadas pela saída) e `matrix[(stop_id, trip_id)]`. |
+| `ScheduleTable.to_grid(time_format, empty_cell)` | Converte em `(cabeçalhos, linhas)` de strings, prontos para a tabela da tela. |
+| `format_time_str(valor, fmt)` | Normaliza `HH:MM`/`HH:MM:SS`, preservando horário GTFS acima de 24 h. |
+
+### 10.3 Acesso ao `feed_edit.gpkg` em `gtfs_edit_core.py`
+
+| Função | Papel |
+|---|---|
+| `load_route_stop_times(gpkg_path, route_short_name, service_id=None)` | `{direction_id: {"trip_headsign", "stop_times"}}` por `routes` → `trips` → `stop_times`, **sempre filtrado por linha** (decisões 5 e 117). |
+| `apply_stop_times(gpkg_path, stop_times)` | `UPDATE stop_times SET arrival_time=?, departure_time=? WHERE trip_id=? AND stop_sequence=?` numa única transação, com `rollback` em erro (decisão 118). Nada é apagado nem inserido, nenhum id é reescrito. |
+
+A tela grava só as células realmente editadas e preserva o tempo parado
+(`departure - arrival`) de cada parada; antes de gravar, a grade passa pelo
+mesmo `validate_draft_times` do assistente, e o `GtfsValidator` ganhou a
+checagem de horário fora de ordem dentro da mesma viagem (decisão 6: um
+validador só, nunca um paralelo).
+
+### 10.3.1 A tabela de horários: `schedule_grid_widget.py` (UI)
+
+`ScheduleGridWidget` é um `QTableWidget` que **é** a tabela de horários da
+janela "Ajustar horários" — uma instância por sentido, cada uma numa aba. Monta
+a grade com `build_schedule_table()` + `to_grid(time_format="HH:MM:SS")`, trava
+a coluna 0 (`Parada`) como somente leitura e deixa editáveis as colunas de
+viagem, cujo cabeçalho é o `trip_id`.
+
+| Método | Papel |
+|---|---|
+| `collect_changes()` | Compara a grade na tela com a `matrix` original e devolve `(alterados, grade_validacao, ilegiveis)`: as linhas de `stop_times` a gravar, a grade completa para `validate_draft_times` e os horários fora do formato. Preserva o tempo parado da parada (`departure - arrival`), que anda junto com a saída (decisão 118). Célula sem par `(stop_id, trip_id)` na matriz — a que aparece como `-` — é ignorada, então digitar nela não cria parada nova na viagem. |
+
+`SigBus_dialog._open_schedule_edit_dialog()` só agrega o que cada aba devolve e
+faz o `validate_draft_times` → `apply_stop_times`: a comparação célula a célula
+mora no widget, não no diálogo.
+
+### 10.4 Fronteira UI × lógica pura
+
+`BlockView.viewport_state()` / `restore_viewport()` guardam e reaplicam a
+transformação e o centro de cena (decisão 110); quem decide entre preservar e
+enquadrar é o chamador em `SigBus_dialog.py` (decisão 111). A view continua sem
+conhecer o modelo, e o `fit_all()` do `block_diagram_dialog.py` fica como está
+(decisão 109).

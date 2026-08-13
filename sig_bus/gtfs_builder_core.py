@@ -23,16 +23,16 @@ import sqlite3
 try:
     from . import gtfs_schema
     from . import gtfs_reader
-    from .schedule_edit_core import expand_frequency_to_stop_times
+    from .schedule_edit_core import expand_frequency_to_stop_times, expand_bands_to_stop_times
 except ImportError:
     try:
         import gtfs_schema
         import gtfs_reader
-        from schedule_edit_core import expand_frequency_to_stop_times
+        from schedule_edit_core import expand_frequency_to_stop_times, expand_bands_to_stop_times
     except ImportError:
         from sig_bus import gtfs_schema
         from sig_bus import gtfs_reader
-        from sig_bus.schedule_edit_core import expand_frequency_to_stop_times
+        from sig_bus.schedule_edit_core import expand_frequency_to_stop_times, expand_bands_to_stop_times
 
 
 def compute_progress(gpkg_path):
@@ -511,20 +511,31 @@ def save_route(gpkg_path, agency, linha, paradas, service, frequencia, stop_time
                           for trip_id in sorted(saidas, key=lambda t: saidas[t])]
         else:
             # Expande frequência para viagens e tempos de parada
-            if isinstance(frequencia, dict):
+            prefix = f"{short_name}_{direction_id}" if direction_id is not None else str(short_name)
+
+            # Lista de faixas (decisão 124): uma sequência cujo primeiro item já
+            # é uma faixa. A tupla legada (hora_inicio, hora_fim, intervalo) cai
+            # no ramo de baixo.
+            if isinstance(frequencia, (list, tuple)) and frequencia and isinstance(frequencia[0], (dict, list, tuple)):
+                trips_list, stop_times_list = expand_bands_to_stop_times(
+                    stop_ids, frequencia, prefix=prefix
+                )
+            elif isinstance(frequencia, dict):
                 hora_inicio = frequencia.get("hora_inicio")
                 hora_fim = frequencia.get("hora_fim")
                 intervalo_min = frequencia.get("intervalo_min")
                 duracao_min = frequencia.get("duracao_min")
-            else:
+                trips_list, stop_times_list = expand_frequency_to_stop_times(
+                    stop_ids, hora_inicio, hora_fim, intervalo_min, duracao_min=duracao_min, prefix=prefix
+                )
+            elif frequencia:
                 duracao_min = frequencia[3] if len(frequencia) > 3 else None
                 hora_inicio, hora_fim, intervalo_min = frequencia[:3]
-
-            prefix = f"{short_name}_{direction_id}" if direction_id is not None else str(short_name)
-
-            trips_list, stop_times_list = expand_frequency_to_stop_times(
-                stop_ids, hora_inicio, hora_fim, intervalo_min, duracao_min=duracao_min, prefix=prefix
-            )
+                trips_list, stop_times_list = expand_frequency_to_stop_times(
+                    stop_ids, hora_inicio, hora_fim, intervalo_min, duracao_min=duracao_min, prefix=prefix
+                )
+            else:
+                trips_list, stop_times_list = [], []
 
         # Insere viagens
         physical_cols = get_physical_cols("trips")

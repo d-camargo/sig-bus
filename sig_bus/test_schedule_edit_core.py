@@ -6,6 +6,8 @@ from sig_bus.schedule_edit_core import (
     to_seconds,
     from_seconds,
     expand_frequency_to_stop_times,
+    expand_bands_to_stop_times,
+    validate_bands,
     trips_from_stop_times,
     headways,
     validate_draft_times,
@@ -69,6 +71,84 @@ class TestScheduleEditCore(unittest.TestCase):
         self.assertEqual(len(trips), 1)
         self.assertEqual([st["arrival_time"] for st in stop_times],
                          ["06:00:00", "06:15:00", "06:30:00"])
+
+    # --- passo 169: faixas horárias ----------------------------------
+    def test_uma_faixa_reproduz_expand_frequency(self):
+        faixas = [{"hora_inicio": "06:00:00", "hora_fim": "07:00:00",
+                   "intervalo_min": 30, "duracao_min": 30}]
+        trips_f, st_f = expand_bands_to_stop_times(["S1", "S2"], faixas, prefix="L1_0")
+        trips_r, st_r = expand_frequency_to_stop_times(
+            ["S1", "S2"], "06:00:00", "07:00:00", 30, duracao_min=30, prefix="L1_0")
+        self.assertEqual(trips_f, trips_r)
+        self.assertEqual(st_f, st_r)
+
+    def test_tres_faixas_geram_o_headway_de_cada_trecho(self):
+        faixas = [
+            {"hora_inicio": "06:00:00", "hora_fim": "07:00:00", "intervalo_min": 15, "duracao_min": 40},
+            {"hora_inicio": "07:15:00", "hora_fim": "09:15:00", "intervalo_min": 30, "duracao_min": 30},
+            {"hora_inicio": "09:45:00", "hora_fim": "10:45:00", "intervalo_min": 15, "duracao_min": 40},
+        ]
+        trips, stop_times = expand_bands_to_stop_times(["S1", "S2"], faixas, prefix="L1_0")
+        saidas = [v["start_s"] for v in trips_from_stop_times(stop_times)]
+        diffs = [b - a for a, b in zip(saidas, saidas[1:])]
+        self.assertEqual(len(trips), 5 + 5 + 5)
+        self.assertEqual(diffs[:4], [900, 900, 900, 900])
+        self.assertEqual(diffs[5:8], [1800, 1800, 1800])
+
+    def test_fronteira_entre_faixas_nao_duplica_saida(self):
+        faixas = [
+            {"hora_inicio": "06:00:00", "hora_fim": "09:00:00", "intervalo_min": 60, "duracao_min": 30},
+            {"hora_inicio": "09:00:00", "hora_fim": "11:00:00", "intervalo_min": 60, "duracao_min": 40},
+        ]
+        trips, stop_times = expand_bands_to_stop_times(["S1", "S2"], faixas, prefix="L1_0")
+        saidas = [v["start_s"] for v in trips_from_stop_times(stop_times)]
+        self.assertEqual(len(saidas), len(set(saidas)))
+        self.assertEqual(len(trips), 6)   # 06,07,08,09,10,11 — 09:00 uma única vez
+        self.assertEqual(len({t["trip_id"] for t in trips}), 6)
+
+    def test_duracao_por_faixa_aparece_na_chegada(self):
+        faixas = [
+            {"hora_inicio": "06:00:00", "hora_fim": "06:00:00", "intervalo_min": 60, "duracao_min": 30},
+            {"hora_inicio": "09:00:00", "hora_fim": "09:00:00", "intervalo_min": 60, "duracao_min": 50},
+        ]
+        _, stop_times = expand_bands_to_stop_times(["S1", "S2"], faixas)
+        chegadas = {st["trip_id"]: st["arrival_time"]
+                    for st in stop_times if st["stop_sequence"] == 2}
+        self.assertEqual(sorted(chegadas.values()), ["06:30:00", "09:50:00"])
+
+    def test_faixas_em_tupla(self):
+        faixas = [("06:00:00", "06:30:00", 30, 20), ("07:00:00", "07:30:00", 30, 20)]
+        trips, _ = expand_bands_to_stop_times(["S1", "S2"], faixas)
+        self.assertEqual(len(trips), 4)
+
+    def test_validate_bands(self):
+        erros, _ = validate_bands([])
+        self.assertTrue(erros)
+
+        erros, avisos = validate_bands([
+            {"hora_inicio": "06:00:00", "hora_fim": "09:00:00", "intervalo_min": 15, "duracao_min": 40},
+            {"hora_inicio": "09:00:00", "hora_fim": "16:00:00", "intervalo_min": 30, "duracao_min": 30},
+        ])
+        self.assertEqual((erros, avisos), ([], []))   # faixas encostadas passam
+
+        erros, _ = validate_bands([{"hora_inicio": "09:00:00", "hora_fim": "06:00:00",
+                                    "intervalo_min": 30, "duracao_min": 30}])
+        self.assertIn("fim é anterior", erros[0])
+
+        erros, _ = validate_bands([{"hora_inicio": "06:00:00", "hora_fim": "09:00:00",
+                                    "intervalo_min": 0, "duracao_min": 30}])
+        self.assertIn("intervalo", erros[0])
+
+        erros, _ = validate_bands([{"hora_inicio": "06:00:00", "hora_fim": "09:00:00",
+                                    "intervalo_min": 30, "duracao_min": 0}])
+        self.assertIn("duração", erros[0])
+
+        erros, _ = validate_bands([
+            {"hora_inicio": "06:00:00", "hora_fim": "10:00:00", "intervalo_min": 15, "duracao_min": 40},
+            {"hora_inicio": "09:00:00", "hora_fim": "16:00:00", "intervalo_min": 30, "duracao_min": 30},
+        ])
+        self.assertEqual(len(erros), 1)
+        self.assertIn("faixa 2 (09:00–16:00) sobrepõe a faixa 1", erros[0])
 
     # --- passo 120 ----------------------------------------------------
     def test_trips_from_stop_times(self):

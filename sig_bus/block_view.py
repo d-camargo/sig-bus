@@ -17,8 +17,8 @@
  ***************************************************************************/
 """
 
-from qgis.PyQt.QtCore import Qt, pyqtSignal
-from qgis.PyQt.QtGui import QImage, QPainter
+from qgis.PyQt.QtCore import Qt, QPointF, pyqtSignal
+from qgis.PyQt.QtGui import QImage, QPainter, QTransform
 from qgis.PyQt.QtWidgets import QGraphicsView
 
 
@@ -71,6 +71,25 @@ class BlockView(QGraphicsView):
         self.resetTransform()
         self.fitInView(scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
         # Registra a escala resultante para os limites de zoom funcionarem.
+        self._scale = self.transform().m11() or 1.0
+
+    # --- Preservação de enquadramento (decisão 110) ----------------------
+    def viewport_state(self):
+        """Enquadramento corrente: a transformação e o centro em coordenadas
+        de cena. Guardar só a escala devolveria o zoom certo no lugar errado —
+        um redesenho pode mudar o `sceneRect`."""
+        centro = self.mapToScene(self.viewport().rect().center())
+        return (QTransform(self.transform()), QPointF(centro))
+
+    def restore_viewport(self, state):
+        """Reaplica o enquadramento salvo por viewport_state(). Sem estado
+        (primeiro desenho), não faz nada — quem enquadra é o chamador."""
+        if not state:
+            return
+        transform, centro = state
+        self.setTransform(transform)
+        self.centerOn(centro)
+        # Mantém o fator de zoom coerente com os limites _MIN_SCALE/_MAX_SCALE.
         self._scale = self.transform().m11() or 1.0
 
     # --- Pan (botão do meio) -------------------------------------------

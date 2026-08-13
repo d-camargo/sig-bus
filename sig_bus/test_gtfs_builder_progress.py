@@ -466,6 +466,54 @@ class TestGtfsBuilderProgress(unittest.TestCase):
         self.assertEqual(st[0], ("06:00:00", "06:00:00"))
         self.assertEqual(st[1], ("06:30:00", "06:30:00"))
 
+    def test_save_route_com_frequencia_lista_de_dicts(self):
+        self.wc.enter_empty(overwrite=True)
+        from sig_bus.gtfs_builder_core import save_route
+
+        agency = {
+            "agency_name": "Empresa Teste",
+            "agency_url": "http://teste.com",
+            "agency_timezone": "America/Sao_Paulo",
+        }
+        linha = {
+            "route_short_name": "100",
+            "route_long_name": "Linha Teste 100",
+            "route_type": "3",
+            "direction_id": "0",
+            "trip_headsign": "Destino Teste",
+        }
+        paradas = [
+            {"stop_name": "Parada A", "stop_lat": -20.0, "stop_lon": -40.0},
+            {"stop_name": "Parada B", "stop_lat": -20.1, "stop_lon": -40.1},
+        ]
+        service = {
+            "service_id": "service_diario",
+            "monday": "1", "tuesday": "1", "wednesday": "1", "thursday": "1", "friday": "1",
+            "saturday": "1", "sunday": "1",
+            "start_date": "20260101", "end_date": "20261231",
+        }
+        frequencia = [
+            # Pico: uma saída a cada 15 min. Entrepico: a cada 60 min.
+            {"hora_inicio": "06:00:00", "hora_fim": "07:00:00", "intervalo_min": 15, "duracao_min": 40},
+            {"hora_inicio": "09:00:00", "hora_fim": "11:00:00", "intervalo_min": 60, "duracao_min": 30},
+        ]
+
+        save_route(self.gpkg_path, agency, linha, paradas, service, frequencia)
+
+        conn = sqlite3.connect(self.gpkg_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT trip_id FROM trips")
+        n_trips = len(cursor.fetchall())
+        cursor.execute("SELECT departure_time FROM stop_times "
+                       "WHERE stop_sequence = 1 ORDER BY departure_time")
+        saidas = [row[0] for row in cursor.fetchall()]
+        conn.close()
+
+        # 06:00..07:00 de 15 em 15 = 5 saídas; 09:00..11:00 de 60 em 60 = 3.
+        self.assertEqual(n_trips, 8)
+        self.assertEqual(saidas, ["06:00:00", "06:15:00", "06:30:00", "06:45:00",
+                                  "07:00:00", "09:00:00", "10:00:00", "11:00:00"])
+
     def test_save_route_com_stop_times_ajustados(self):
         self.wc.enter_empty(overwrite=True)
         from sig_bus.gtfs_builder_core import save_route

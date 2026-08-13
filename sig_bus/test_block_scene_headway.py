@@ -140,3 +140,11 @@ def test_nudge_key_emite_caracteres():
     view.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_A,
                                  Qt.KeyboardModifier.NoModifier, 'a'))
     assert emitidas == []
+
+
+# As páginas do assistente (tabela de faixas, botões da aba "Edição GTFS") não
+# são exercitadas aqui: instanciar o SigBusDialog inteiro no processo do pytest
+# derruba o interpretador nos testes que rodam depois (abort ao criar camada no
+# QgsProject). A fronteira UI × lógica pura do projeto vale igual para elas — o
+# que dá para verificar fora do QGIS está em test_schedule_edit_core.py e
+# test_schedule_table_core.py.

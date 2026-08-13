@@ -59,12 +59,22 @@ O assistente guia o usuário página por página (uma linha de cada vez) atravé
 * **Objetivo:** Definir a ordem exata em que o veículo percorre as paradas cadastradas.
 * **Navegação:** Uma lista visual que permite mover os itens para cima ou para baixo para ordenar a rota.
 
-### 5. Horários (Configuração de Frequência)
+### 5. Horários (Configuração de Frequência e Faixas Horárias)
 * **Objetivo:** Gerar as viagens e os horários em cada parada de forma automática, evitando digitação tabela a tabela.
 * **Configuração:**
   * **Calendário:** Reutilizar um calendário existente (ex: dias úteis, sábados, domingos) ou criar um novo definindo o identificador (`service_id`), os dias de operação e o período de vigência (datas de início e término).
-  * **Frequência:** Informar a hora de início da operação, a hora de término, o intervalo entre as viagens (em minutos) e a **duração da viagem (em minutos)**.
-* **Expansão Automática:** O plugin expande a frequência e distribui os horários de chegada (`arrival_time`) e partida (`departure_time`) linearmente entre as paradas na tabela `stop_times` com base na duração informada.
+  * **Faixas Horárias (Frequência Multi-Faixas):** É possível cadastrar até 3 faixas horárias distintas para a mesma operação. Para cada faixa, informe a **Hora de Início**, **Hora de Fim**, o **Intervalo (em minutos)** e a **Duração da viagem (em minutos)** — a duração é por faixa porque o mesmo percurso demora mais no pico. Utilize os botões **Adicionar faixa** e **Remover faixa** para gerenciar a tabela.
+
+    Exemplo realista de uma linha que opera das 6h às 20h:
+
+    | Início | Fim | Intervalo | Duração |
+    |---|---|---|---|
+    | 06:00:00 | 09:00:00 | 10 min | 55 min |
+    | 09:00:00 | 16:00:00 | 25 min | 40 min |
+    | 16:00:00 | 20:00:00 | 12 min | 55 min |
+
+    As faixas **não podem se sobrepor** (duas faixas cobrindo o mesmo horário não dizem qual intervalo vale ali) — encostar o fim de uma no início da outra é permitido, e a saída da fronteira é gerada uma única vez, pela faixa mais cedo. Deixar um vão entre faixas também é permitido: é a linha que não opera naquele período.
+* **Expansão Automática:** O plugin expande cada faixa horária configurada e distribui os horários de chegada (`arrival_time`) e partida (`departure_time`) linearmente entre as paradas na tabela `stop_times` com base na duração de cada faixa.
 
 ### 5.1 Ajuste de horários (diagrama, na mesma página)
 * **Objetivo:** Visualizar e refinar viagem a viagem o quadro gerado pela frequência — ainda em memória, antes de qualquer gravação. Na operação real o intervalo encurta no pico e alarga fora dele.
@@ -82,9 +92,10 @@ O assistente guia o usuário página por página (uma linha de cada vez) atravé
 
   Ao mover um extremo, as paradas intermediárias são redistribuídas linearmente entre a saída e a chegada resultantes. Um deslocamento que inverteria saída e chegada é recusado — a grade fica como estava.
 * **Indicador de headway (cota):** com uma viagem selecionada, uma cota de desenho técnico liga a saída da viagem anterior à da selecionada, com o valor `headway N min`.
-* **Restaurar frequência regular:** descarta os ajustes manuais e regera a grade a partir da hora de início/fim, intervalo e duração. Mudar qualquer um desses quatro campos também regera a grade.
+* **Restaurar frequência regular:** descarta os ajustes manuais e regera a grade a partir das faixas horárias configuradas. Mudar qualquer parâmetro das faixas horárias também regera a grade.
 * **Um ajuste vale para todos os dias do calendário.** No GTFS um único conjunto de viagens já atende os cinco dias úteis — quem diz "seg a sex" é o calendário (`service_id`), não uma cópia por dia. O rótulo acima do diagrama mostra para quais dias aquele conjunto vale.
 * **Validação ao avançar:** erro (chegada antes da partida, sequência decrescente, saída ≥ chegada) **bloqueia** o avanço; aviso (duas viagens saindo no mesmo horário, ordem trocada, headway muito acima do típico) pede confirmação.
+* **E se eu quiser digitar o horário em vez de deslocar a barra?** Nesta página o ajuste é só pelo diagrama e pelos atalhos acima — não há tabela de horários ao lado dele. A edição em **tabela** (matriz paradas × viagens, com o horário digitado direto na célula) existe na aba **Edição GTFS**, no botão **Ajustar horários**, e vale para qualquer feed já carregado — inclusive o que este assistente acabou de criar. Ver [GUIA_EDICAO_GTFS.md](GUIA_EDICAO_GTFS.md).
 
 ### 6. Revisão e Salvar
 * **Objetivo:** Revisar o resumo das configurações da linha e gravá-las definitivamente.
@@ -139,7 +150,7 @@ Um dos grandes diferenciais do SIG-Bus na criação do GTFS é a geração do tr
 4. **Adicionar Paradas:** Digite os endereços no padrão (ou importe um lote via **Importar CSV** / `modelo_paradas.csv`), clique em **Geocodificar** para encontrar as coordenadas automaticamente. Para paradas rurais ou sem endereço, use o botão **Marcar no mapa** para indicar a posição diretamente no canvas.
 5. **Confirmar no Mapa:** Clique em **Confirmar e avançar**. As paradas temporárias serão carregadas no canvas do QGIS. Use a ferramenta de vértices para arrastar as paradas para a posição correta na via, se necessário.
 6. **Ordenar Paradas:** Avance para a página "Sequência" (as coordenadas editadas no canvas serão salvas automaticamente). Ordene os pontos de parada usando os botões de mover para cima/baixo.
-7. **Definir Horários e Duração:** Configure ou selecione o calendário de operação, defina a hora de início, hora de término, o intervalo (ex: a cada 20 minutos) e a duração estimada da viagem (em minutos).
+7. **Definir Horários e Duração:** Configure ou selecione o calendário de operação, defina as faixas horárias (hora de início, término, intervalo e duração estimada da viagem para cada faixa, podendo cadastrar até 3 faixas horárias).
 8. **Ajustar Horários no Diagrama (opcional):** Ainda na página "Horários", use o diagrama para acertar viagem a viagem: clique numa barra e use `>`/`<` (só a saída ou a chegada) ou `+`/`-` (a viagem inteira), com o passo definido no campo **Passo**. Clique em **Avançar**.
 9. **Revisar e Salvar:** Verifique o resumo gerado e clique em **Salvar linha**. O plugin gravará as feições e calculará o traçado pelas ruas automaticamente.
 10. **Finalizar ou Cadastrar Mais:** Escolha entre criar o sentido de volta (segundo sentido), cadastrar outra linha ou clicar em **Ir para Edição GTFS** para validar e exportar o feed compactado `.zip` final.
@@ -192,13 +203,25 @@ Abaixo estão listadas as mensagens de aviso e de erro emitidas pelo assistente:
   * **Causa:** A opção de reaproveitar calendário foi selecionada, mas nenhum calendário existente foi escolhido na lista.
   * **Solução:** Selecione um calendário da lista ou mude a opção para cadastrar um novo calendário.
 
-* **"A hora de início deve ser anterior ou igual à hora de fim."** (Aviso)
-  * **Causa:** A janela de operação horária configurada possui a hora de início maior que a hora de término.
-  * **Solução:** Ajuste os seletores de horário.
+* **"Nenhuma faixa de horário definida."** (Aviso, janela "Faixas horárias inválidas")
+  * **Causa:** O usuário tentou avançar na etapa de Horários sem nenhuma faixa cadastrada na tabela de faixas horárias.
+  * **Solução:** Clique no botão **Adicionar faixa** e configure ao menos uma faixa horária.
 
-* **"O intervalo de frequência deve ser maior que 0."** (Aviso)
-  * **Causa:** O intervalo entre viagens foi configurado com valor zero ou negativo.
-  * **Solução:** Defina um intervalo de tempo maior que zero (ex: `15` minutos).
+* **"faixa N (HH:MM–HH:MM): a hora de fim é anterior à hora de início."** (Aviso, janela "Faixas horárias inválidas")
+  * **Causa:** A faixa indicada termina antes de começar.
+  * **Solução:** Corrija a hora de fim daquela linha da tabela de faixas.
+
+* **"faixa N (HH:MM–HH:MM): o intervalo entre viagens deve ser maior que 0."** (Aviso, janela "Faixas horárias inválidas")
+  * **Causa:** O intervalo entre viagens da faixa indicada ficou em zero ou negativo.
+  * **Solução:** Defina um intervalo maior que zero (ex.: `15` minutos).
+
+* **"faixa N (HH:MM–HH:MM): a duração da viagem deve ser maior que 0."** (Aviso, janela "Faixas horárias inválidas")
+  * **Causa:** A duração da viagem da faixa indicada ficou em zero ou negativa.
+  * **Solução:** Informe quanto tempo a viagem leva de ponta a ponta naquela faixa.
+
+* **"faixa 2 (09:00–16:00) sobrepõe a faixa 1."** (Aviso, janela "Faixas horárias inválidas")
+  * **Causa:** Duas faixas cobrem o mesmo horário — não há como saber qual intervalo vale ali.
+  * **Solução:** Encoste as faixas (o fim de uma igual ao início da outra: a saída da fronteira é gerada uma única vez, pela faixa mais cedo) ou deixe um intervalo sem operação entre elas, que é permitido.
 
 * **"A grade de horários contém inconsistências e não pode avançar: ..."** (Aviso)
   * **Causa:** O ajuste manual no diagrama deixou uma viagem inconsistente (chegada anterior à partida na mesma parada, sequência de paradas decrescente ou saída igual/posterior à chegada).

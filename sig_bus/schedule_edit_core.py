@@ -118,9 +118,116 @@ def expand_frequency_to_stop_times(stop_ids, hora_inicio, hora_fim, intervalo_mi
     return trips, stop_times
 
 
+def validate_bands(faixas):
+    """
+    Valida as faixas horárias antes de expandir (decisão 123).
+
+    Erro (bloqueia): fim anterior ao início, intervalo <= 0, duração <= 0 e
+    sobreposição entre faixas. Buraco entre faixas é legítimo (linha que não
+    opera no entrepico) e não gera nem aviso.
+
+    :param faixas: Lista de dicionários {"hora_inicio", "hora_fim",
+                   "intervalo_min", "duracao_min"}.
+    :return: Tupla (erros, avisos), duas listas de mensagens.
+    """
+    erros = []
+    avisos = []
+    if not faixas:
+        erros.append("Nenhuma faixa de horário definida.")
+        return erros, avisos
+
+    janelas = []
+    for idx, faixa in enumerate(faixas, start=1):
+        inicio = faixa.get("hora_inicio")
+        fim = faixa.get("hora_fim")
+        nome = "faixa {} ({}–{})".format(idx, (inicio or "?")[:5], (fim or "?")[:5])
+        try:
+            inicio_s = to_seconds(inicio)
+            fim_s = to_seconds(fim)
+        except (ValueError, AttributeError, IndexError):
+            erros.append("{}: horário ilegível.".format(nome))
+            continue
+
+        if fim_s < inicio_s:
+            erros.append("{}: a hora de fim é anterior à hora de início.".format(nome))
+            continue
+        if int(faixa.get("intervalo_min") or 0) <= 0:
+            erros.append("{}: o intervalo entre viagens deve ser maior que 0.".format(nome))
+            continue
+        if int(faixa.get("duracao_min") or 0) <= 0:
+            erros.append("{}: a duração da viagem deve ser maior que 0.".format(nome))
+            continue
+
+        janelas.append((inicio_s, fim_s, idx, nome))
+
+    # Sobreposição: comparada em ordem cronológica, apontando o par envolvido.
+    ordenadas = sorted(janelas)
+    for anterior, atual in zip(ordenadas, ordenadas[1:]):
+        if atual[0] < anterior[1]:
+            erros.append("{} sobrepõe a faixa {}.".format(atual[3], anterior[2]))
+
+    return erros, avisos
+
+
+def expand_bands_to_stop_times(stop_ids, faixas, prefix=None):
+    """
+    Função pura (sem I/O) que gera as viagens e stop_times de várias faixas
+    horárias, cada uma com seu intervalo e sua duração de viagem.
+
+    Percorre as faixas em ordem cronológica e descarta a saída cujo horário já
+    foi gerado por uma faixa anterior (decisão 122): com faixas 06:00–09:00 e
+    09:00–16:00 a saída das 09:00 é gerada uma única vez, pela primeira faixa.
+
+    :param stop_ids: Lista de IDs das paradas na ordem do itinerário.
+    :param faixas: Lista de faixas horárias, cada uma um dicionário com
+                   {"hora_inicio", "hora_fim", "intervalo_min", "duracao_min"}
+                   ou uma tupla (hora_inicio, hora_fim, intervalo_min[, duracao_min]).
+    :param prefix: Prefixo opcional para os trip_ids.
+    :return: Tupla (trips, stop_times) com todas as viagens das faixas.
+    """
+    if not stop_ids or not faixas:
+        return [], []
+
+    normalizadas = []
+    for faixa in faixas:
+        if isinstance(faixa, dict):
+            normalizadas.append((faixa.get("hora_inicio"), faixa.get("hora_fim"),
+                                 faixa.get("intervalo_min"), faixa.get("duracao_min")))
+        elif isinstance(faixa, (list, tuple)) and len(faixa) >= 3:
+            normalizadas.append((faixa[0], faixa[1], faixa[2],
+                                 faixa[3] if len(faixa) > 3 else None))
+
+    all_trips = []
+    all_stop_times = []
+    saidas_geradas = set()
+
+    for h_inicio, h_fim, intervalo, duracao in sorted(normalizadas, key=lambda f: to_seconds(f[0])):
+        if not h_inicio or not h_fim or int(intervalo or 0) <= 0:
+            continue
+
+        trips, stop_times = expand_frequency_to_stop_times(
+            stop_ids, h_inicio, h_fim, intervalo, duracao_min=duracao, prefix=prefix
+        )
+
+        # A fronteira entre duas faixas é o mesmo horário de saída nas duas —
+        # quem chega primeiro (a faixa mais cedo) fica.
+        repetidas = set()
+        for viagem in trips_from_stop_times(stop_times):
+            if viagem["start_s"] in saidas_geradas:
+                repetidas.add(viagem["trip_id"])
+            else:
+                saidas_geradas.add(viagem["start_s"])
+
+        all_trips.extend(t for t in trips if t["trip_id"] not in repetidas)
+        all_stop_times.extend(st for st in stop_times if st["trip_id"] not in repetidas)
+
+    return all_trips, all_stop_times
+
+
 # --------------------------------------------------------------------------
 # Leitura da grade
 # --------------------------------------------------------------------------
+
 def _group_by_trip(stop_times):
     """
     Agrupa a grade por trip_id, na ordem em que cada viagem aparece na lista,

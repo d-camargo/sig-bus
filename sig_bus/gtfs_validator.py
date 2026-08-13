@@ -331,6 +331,34 @@ class GtfsValidator(object):
                             )
                         )
 
+                # 1.1 Ordem dos horários dentro da mesma viagem (passo 183):
+                # a chegada de uma parada não pode ser anterior à partida da
+                # parada anterior da mesma viagem. SQL agregado, sem iterar
+                # feição a feição (decisão 7). A comparação é textual e por
+                # isso só vale sobre horários no formato acima — horário fora
+                # de formato já foi apontado no bloco 1.
+                if {"arrival_time", "departure_time", "trip_id", "stop_sequence"} <= cols:
+                    # Só horários com hora de dois dígitos ("06:00:00"): entre
+                    # eles a comparação textual equivale à cronológica.
+                    ordem_regex = r'^\d\d:[0-5]\d:[0-5]\d$'
+                    cursor.execute("""
+                        SELECT anterior.trip_id, COUNT(*)
+                        FROM stop_times AS anterior
+                        JOIN stop_times AS seguinte
+                          ON seguinte.trip_id = anterior.trip_id
+                         AND CAST(seguinte.stop_sequence AS INTEGER) =
+                             CAST(anterior.stop_sequence AS INTEGER) + 1
+                        WHERE anterior.departure_time REGEXP ?
+                          AND seguinte.arrival_time REGEXP ?
+                          AND seguinte.arrival_time < anterior.departure_time
+                        GROUP BY anterior.trip_id
+                    """, (ordem_regex, ordem_regex))
+                    for trip_id, count in cursor.fetchall():
+                        errors.append(
+                            "Erro de formato: viagem '{}' tem {} horário(s) fora de ordem em stop_times "
+                            "(chegada anterior à partida da parada anterior).".format(trip_id, count)
+                        )
+
             # 2. Datas (calendar.start_date, calendar.end_date, calendar_dates.date) -> YYYYMMDD
             date_regex = r'^\d{4}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$'
             

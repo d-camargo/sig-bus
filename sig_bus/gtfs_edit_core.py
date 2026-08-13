@@ -19,6 +19,7 @@
 
 import os
 import shutil
+import sqlite3
 
 
 class WorkingCopy(object):
@@ -156,3 +157,117 @@ class WorkingCopy(object):
             except Exception:
                 return False
         return False
+
+
+def load_route_stop_times(gpkg_path, route_short_name, service_id=None):
+    """
+    Carrega as viagens e tempos de parada de uma linha a partir do GeoPackage,
+    organizados por sentido (direction_id).
+
+    :param gpkg_path: Caminho para o arquivo GeoPackage (SQLite).
+    :param route_short_name: Nome curto da linha (routes.route_short_name).
+    :param service_id: ID de serviço opcional (trips.service_id) para filtragem.
+    :return: Dicionário {direction_id: {"trip_headsign": str, "stop_times": [dict, ...]}}
+    """
+    if not gpkg_path or not os.path.exists(gpkg_path) or not route_short_name:
+        return {}
+
+    conn = sqlite3.connect(gpkg_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT route_id FROM routes WHERE route_short_name = ?", (str(route_short_name),))
+        route_rows = cursor.fetchall()
+        if not route_rows:
+            return {}
+
+        route_ids = [r["route_id"] for r in route_rows]
+        placeholders = ",".join(["?"] * len(route_ids))
+        params = list(route_ids)
+
+        query = f"""
+            SELECT t.direction_id, t.trip_headsign, st.*
+            FROM trips t
+            JOIN stop_times st ON t.trip_id = st.trip_id
+            WHERE t.route_id IN ({placeholders})
+        """
+        if service_id is not None:
+            query += " AND t.service_id = ?"
+            params.append(str(service_id))
+
+        query += " ORDER BY t.direction_id, st.trip_id, CAST(st.stop_sequence AS INTEGER)"
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
+        result = {}
+        for row in rows:
+            row_dict = dict(row)
+            dir_id_raw = row_dict.pop("direction_id", 0)
+            headsign = row_dict.pop("trip_headsign", "") or ""
+
+            try:
+                dir_id = int(dir_id_raw) if dir_id_raw is not None else 0
+            except (ValueError, TypeError):
+                dir_id = 0
+
+            if dir_id not in result:
+                result[dir_id] = {
+                    "trip_headsign": headsign,
+                    "stop_times": []
+                }
+            elif not result[dir_id]["trip_headsign"] and headsign:
+                result[dir_id]["trip_headsign"] = headsign
+
+            result[dir_id]["stop_times"].append(row_dict)
+
+        return result
+    finally:
+        conn.close()
+
+
+def apply_stop_times(gpkg_path, stop_times):
+    """
+    Atualiza os horários de chegada e saída em stop_times numa única transação.
+
+    :param gpkg_path: Caminho para o arquivo GeoPackage (SQLite).
+    :param stop_times: Lista de dicionários (ou tuplas) contendo
+                       trip_id, stop_sequence, arrival_time e departure_time.
+    :return: Número total de linhas alteradas no banco de dados.
+    """
+    if not gpkg_path or not os.path.exists(gpkg_path) or not stop_times:
+        return 0
+
+    conn = sqlite3.connect(gpkg_path)
+    cursor = conn.cursor()
+    total_affected = 0
+
+    try:
+        query = """
+            UPDATE stop_times
+            SET arrival_time = ?, departure_time = ?
+            WHERE trip_id = ? AND stop_sequence = ?
+        """
+        for item in stop_times:
+            if isinstance(item, dict):
+                arr = item.get("arrival_time")
+                dep = item.get("departure_time")
+                tid = item.get("trip_id")
+                seq = item.get("stop_sequence")
+            elif isinstance(item, (list, tuple)) and len(item) >= 4:
+                tid, seq, arr, dep = item[0], item[1], item[2], item[3]
+            else:
+                continue
+
+            cursor.execute(query, (arr, dep, tid, seq))
+            total_affected += cursor.rowcount
+
+        conn.commit()
+        return total_affected
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
