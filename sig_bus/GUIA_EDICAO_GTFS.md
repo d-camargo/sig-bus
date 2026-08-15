@@ -60,17 +60,20 @@ A aba **Edição GTFS** disponibiliza as seguintes ferramentas e controles:
   * Abre a tabela de atributos nativa do QGIS para edição manual dos dados.
   * Se la tabela contiver dados espaciais (`stops` ou `shapes`), centraliza a visualização nela e ativa automaticamente a ferramenta de edição de vértices no canvas do mapa para que você possa mover pontos ou ajustar os traçados das linhas.
   * Define os campos de ID e chaves estrangeiras como de leitura exclusiva (*read-only*) no formulário do QGIS para evitar que a integridade do banco de dados seja quebrada acidentalmente.
-  * Fecha temporariamente a janela do plugin para liberar espaço de tela para o trabalho no QGIS.
+  * Apenas **esconde** a janela do plugin (não a fecha) para liberar espaço de tela para o trabalho no QGIS — e **a devolve sozinha** assim que você **fecha a tabela de atributos** do QGIS. Não é preciso reabrir o SIG-Bus pelo menu. Se a camada ainda tiver alterações não gravadas, o plugin pergunta se você quer gravá-las ou manter a camada em edição.
 
 ### 5. Botão "Ajustar horários"
-* **Função:** Abre a janela de edição matricial de horários para a linha selecionada.
+* **Função:** Abre a janela de edição de horários para a linha selecionada.
 * **Funcionamento:**
   * Requer a seleção prévia de uma linha no campo **Linha (route_short_name)**.
   * Carrega todas as viagens e horários de parada (`stop_times`) associados a essa linha a partir de `feed_edit.gpkg`, organizados em abas por sentido de operação (`direction_id` 0 = Ida, 1 = Volta).
-  * Exibe uma grade matricial em que as linhas correspondem às paradas em sequência e as colunas correspondem às viagens (`trip_id`).
-  * **O que é editável:** a primeira coluna, **Parada**, é somente leitura (é o nome da parada, não um horário). Todas as demais colunas — uma por viagem, com o `trip_id` no cabeçalho — são editáveis, célula a célula, no formato `HH:MM:SS`. Horários acima de 24 h (ex.: `25:10:00`, viagem que vira o dia) são válidos e devem ser digitados assim mesmo.
+  * A janela é o mesmo editor único (`ScheduleEditorWidget`) da página "Horários" do assistente **Construir GTFS**: **o diagrama de blocos aparece à esquerda e a matriz de horários à direita**, uma aba por sentido, e as duas metades andam juntas — mexer numa atualiza a outra, sobre o mesmo rascunho de horários em memória.
+  * **No diagrama**, com uma viagem selecionada: `>`/`<` deslocam só a saída ou a chegada daquela viagem; `+`/`-` deslocam a viagem inteira. O tamanho do passo, em minutos, vem do campo **Passo**. O botão **"Enquadrar tudo"** reenquadra a vista; fora isso, o zoom e a posição são preservados a cada ajuste.
+  * **Na matriz**, as linhas correspondem às paradas em sequência e as colunas correspondem às viagens.
+  * **Como ler o cabeçalho:** cada coluna de viagem mostra `V1`, `V2`, … na primeira linha e a **primeira saída** da viagem em `HH:MM` logo abaixo (ex.: `V1` / `06:10`); o tooltip do cabeçalho traz o `trip_id` completo. A primeira coluna, **Parada**, traz o nome da parada (`stop_name`; cai no `stop_id` quando o feed não tem nome), com o `stop_id` no tooltip.
+  * **O que é editável:** a coluna **Parada** é somente leitura (é o nome da parada, não um horário). Todas as demais colunas são editáveis, célula a célula, no formato `HH:MM:SS`. Horários acima de 24 h (ex.: `25:10:00`, viagem que vira o dia) são válidos e devem ser digitados assim mesmo. **Digitar um horário numa célula desloca a viagem inteira** — o resto dos horários daquela viagem acompanha, preservando os tempos de percurso entre paradas — e o diagrama é redesenhado sem reenquadrar.
   * **Célula com `-`:** aquela viagem não passa por aquela parada. Continua editável, mas o que for digitado ali é ignorado — a janela só grava células que já existiam em `stop_times`, nunca cria parada nova numa viagem.
-  * **Aplicar ao feed** grava **apenas as células alteradas**, validando antes a grade inteira (erro bloqueia, aviso pergunta). Só `arrival_time` e `departure_time` mudam: o traçado (`shape_id`), os `trip_id`, o `block_id` e o número de viagens ficam como estavam, e o tempo parado em cada parada acompanha a saída. **Cancelar** fecha a janela sem tocar no arquivo.
+  * **Aplicar ao feed** grava **apenas as viagens cujos horários mudaram**, validando antes a grade inteira (erro bloqueia, aviso pergunta). A comparação é contra os horários como vieram do feed: só `arrival_time` e `departure_time` mudam — o traçado (`shape_id`), os `trip_id`, o `block_id` e o número de viagens ficam como estavam, e o tempo parado em cada parada acompanha a saída. **Cancelar** fecha a janela sem tocar no arquivo.
 
 ### 6. Botão "Validar"
 * **Função:** Executa verificações de integridade e consistência na cópia de trabalho `feed_edit.gpkg`.
@@ -112,7 +115,7 @@ Caso tenha escolhido a tabela `stop_times`, selecione obrigatoriamente a linha n
 > Esta etapa é necessária para limitar a quantidade de dados carregados, garantindo a performance do QGIS.
 
 ### 4. Abrir para edição
-Clique em **Abrir para edição**. A camada correspondente será carregada no painel do QGIS em modo de edição e a tabela de atributos nativa será aberta.
+Clique em **Abrir para edição**. A camada correspondente será carregada no painel do QGIS em modo de edição e a tabela de atributos nativa será aberta. A janela do plugin some enquanto você trabalha e reaparece por conta própria quando você **fecha a tabela de atributos**. Se a camada ainda tiver alterações não gravadas, o plugin pergunta se você quer gravá-las ou manter a camada em edição.
 
 ### 5. Editar na grade de atributos, nos vértices do canvas ou na janela "Ajustar Horários"
 Realize as alterações necessárias no QGIS:
@@ -165,6 +168,10 @@ Esta seção lista as principais mensagens de aviso e erro emitidas pela interfa
 * **"Selecione uma viagem para editar a tabela stop_times."** (Aviso)
   * **Causa:** O usuário escolheu a tabela `stop_times` no seletor, mas não definiu uma viagem específica para filtrar.
   * **Solução:** Nos seletores de filtro da interface, escolha primeiro a **Linha** e depois a **Viagem** (trip) desejada antes de clicar em "Abrir para edição".
+
+* **"Já existe uma edição em andamento em feed_edit.gpkg. / Sim = recriar a partir do GTFS carregado (o que estiver na cópia atual e não tiver sido exportado se perde). / Não = retomar a edição atual."** (Pergunta, ao clicar em "Entrar no modo edição")
+  * **Causa:** Já há um `feed_edit.gpkg` ativo — inclusive quando ele foi criado pela aba **Construir GTFS**, que usa a mesma cópia de trabalho. Diferente de antes, o rótulo de status ao lado do botão **Entrar no modo edição** diz de onde a cópia ativa veio (nomeia o `.gpkg` de origem, ou avisa que é a cópia vazia criada pelo assistente) — e só espiar a aba "Construir GTFS" não cria mais cópia nenhuma; ela só nasce quando você salva a agência.
+  * **Solução:** Confira o rótulo de status antes de responder. Se você estava montando uma linha em "Construir GTFS", responda **Não** para retomar a edição atual. Responda **Sim** só quando quiser mesmo recriar a cópia a partir do GTFS carregado — o que ainda não tiver sido exportado se perde.
 
 * **"Selecione uma linha (route_short_name) para ajustar horários."** (Aviso)
   * **Causa:** O usuário clicou no botão "Ajustar horários" sem ter selecionado uma linha no seletor de filtro.

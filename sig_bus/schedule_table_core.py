@@ -87,10 +87,19 @@ class ScheduleTable:
         :param time_format: 'HH:MM' ou 'HH:MM:SS'.
         :param empty_cell: Caractere/string para células sem parada na viagem.
         :return: Tupla (headers, rows):
-                 - headers: ['Parada', 'Viagem 1', 'Viagem 2', ...]
+                 - headers: ['Parada', 'V1\n06:10', 'V2\n06:30', ...] — ordinal da
+                   coluna (ordem cronológica de self.trips) + primeira saída em
+                   HH:MM; sem a hora quando a viagem não tem 'start_time' legível.
+                   Use column_trip_ids() para casar cada coluna com seu trip_id.
                  - rows: [['Ponto A', '06:00', '06:15'], ['Ponto B', '06:20', '-']]
         """
-        headers = ["Parada"] + [t.get("trip_id", "") for t in self.trips]
+        headers = ["Parada"]
+        for i, t in enumerate(self.trips, start=1):
+            hora = format_time_str(t.get("start_time"), fmt="HH:MM")
+            if hora:
+                headers.append(f"V{i}\n{hora}")
+            else:
+                headers.append(f"V{i}")
         rows = []
 
         for stop in self.stops:
@@ -110,6 +119,14 @@ class ScheduleTable:
             rows.append(row)
 
         return headers, rows
+
+    def column_trip_ids(self):
+        """
+        Devolve o trip_id de cada coluna de viagem, na mesma ordem das colunas
+        de to_grid (sem a coluna "Parada"). Serve para casar coluna → viagem
+        sem depender do texto do cabeçalho (que agora é um rótulo "V<n>\\nHH:MM").
+        """
+        return [t.get("trip_id", "") for t in self.trips]
 
 
 def build_schedule_table(stop_times, stops=None, trips=None, route_short_name="", direction_id=""):
@@ -168,14 +185,18 @@ def build_schedule_table(stop_times, stops=None, trips=None, route_short_name=""
     # 2. Ordena paradas por menor sequência média observada
     stops_order.sort(key=lambda s: sum(stops_seq_acc[s]) / len(stops_seq_acc[s]))
 
-    # Enriquece lista de paradas com nomes se fornecidos
+    # Enriquece a lista de paradas com nomes: os passados em `stops` valem
+    # primeiro; na falta deles, o nome que veio junto das próprias linhas de
+    # stop_times (decisão 136 — load_route_stop_times traz stop_name no JOIN).
     stops_dict = {s.get("stop_id"): s for s in (stops or []) if s.get("stop_id")}
+    nomes_das_linhas = {st.get("stop_id"): st.get("stop_name") for st in stop_times
+                        if st.get("stop_id") and st.get("stop_name")}
     final_stops = []
     for sid in stops_order:
         sinfo = stops_dict.get(sid, {})
         final_stops.append({
             "stop_id": sid,
-            "stop_name": sinfo.get("stop_name") or sid,
+            "stop_name": sinfo.get("stop_name") or nomes_das_linhas.get(sid) or sid,
             "stop_sequence": round(sum(stops_seq_acc[sid]) / len(stops_seq_acc[sid]))
         })
 

@@ -14,6 +14,7 @@ from sig_bus.schedule_edit_core import (
     shift_trip,
     shift_trip_endpoint,
     schedule_from_draft,
+    diff_stop_times,
 )
 
 
@@ -268,6 +269,65 @@ class TestScheduleEditCore(unittest.TestCase):
 
     def test_schedule_from_draft_vazio(self):
         self.assertEqual(schedule_from_draft([], "100").trips, [])
+
+    # --- passo 199 ----------------------------------------------------
+    def test_diff_stop_times_sem_alteracoes(self):
+        self.assertEqual(diff_stop_times(GRADE_3X30, GRADE_3X30), [])
+
+    def test_diff_stop_times_com_alteracao(self):
+        atual = grade(
+            ("T1", ["06:05:00", "06:15:00", "06:30:00"]),
+            ("T2", ["06:30:00", "06:45:00", "07:00:00"]),
+            ("T3", ["07:00:00", "07:15:00", "07:30:00"]),
+        )
+        diff = diff_stop_times(GRADE_3X30, atual)
+        self.assertEqual(len(diff), 1)
+        self.assertEqual(diff[0]["trip_id"], "T1")
+        self.assertEqual(diff[0]["arrival_time"], "06:05:00")
+
+    def test_diff_stop_times_ignora_linha_nova(self):
+        # T4 não existe no original: viagem nova é ignorada (esta tela não
+        # cria viagem). T1 some no atual: também é ignorado (não apaga
+        # viagem) — nenhuma das duas entra no resultado.
+        atual = grade(
+            ("T4", ["08:00:00", "08:15:00"]),
+        )
+        atual += [st for st in GRADE_3X30 if st["trip_id"] in ("T2", "T3")]
+        diff = diff_stop_times(GRADE_3X30, atual)
+        self.assertEqual(diff, [])
+
+    def test_diff_stop_times_vazios(self):
+        self.assertEqual(diff_stop_times([], []), [])
+        self.assertEqual(diff_stop_times(GRADE_3X30, []), [])
+        self.assertEqual(diff_stop_times([], GRADE_3X30), [])
+
+    def test_diff_stop_times_viagem_inteira_deslocada(self):
+        atual = grade(
+            ("T1", ["06:15:00", "06:30:00", "06:45:00"]),
+            ("T2", ["06:30:00", "06:45:00", "07:00:00"]),
+            ("T3", ["07:00:00", "07:15:00", "07:30:00"]),
+        )
+        diff = diff_stop_times(GRADE_3X30, atual)
+        self.assertEqual([st["trip_id"] for st in diff], ["T1", "T1", "T1"])
+        self.assertEqual([st["arrival_time"] for st in diff],
+                          ["06:15:00", "06:30:00", "06:45:00"])
+
+    def test_diff_stop_times_ordem_de_entrada_nao_importa(self):
+        atual = grade(
+            ("T1", ["06:05:00", "06:15:00", "06:30:00"]),
+            ("T2", ["06:30:00", "06:45:00", "07:00:00"]),
+            ("T3", ["07:00:00", "07:15:00", "07:30:00"]),
+        )
+        original_embaralhado = list(reversed(GRADE_3X30))
+        atual_embaralhado = list(reversed(atual))
+
+        diff_normal = diff_stop_times(GRADE_3X30, atual)
+        diff_embaralhado = diff_stop_times(original_embaralhado, atual_embaralhado)
+
+        self.assertEqual(
+            {(st["trip_id"], st["arrival_time"]) for st in diff_normal},
+            {(st["trip_id"], st["arrival_time"]) for st in diff_embaralhado},
+        )
 
 
 if __name__ == "__main__":

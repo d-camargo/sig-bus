@@ -167,7 +167,9 @@ def load_route_stop_times(gpkg_path, route_short_name, service_id=None):
     :param gpkg_path: Caminho para o arquivo GeoPackage (SQLite).
     :param route_short_name: Nome curto da linha (routes.route_short_name).
     :param service_id: ID de serviço opcional (trips.service_id) para filtragem.
-    :return: Dicionário {direction_id: {"trip_headsign": str, "stop_times": [dict, ...]}}
+    :return: Dicionário {direction_id: {"trip_headsign": str, "stop_times": [dict, ...]}}.
+             Cada linha de stop_times traz também `stop_name` (decisão 136),
+             ausente só quando o feed não tem a tabela `stops`.
     """
     if not gpkg_path or not os.path.exists(gpkg_path) or not route_short_name:
         return {}
@@ -186,10 +188,22 @@ def load_route_stop_times(gpkg_path, route_short_name, service_id=None):
         placeholders = ",".join(["?"] * len(route_ids))
         params = list(route_ids)
 
+        # O nome da parada vem junto da própria consulta (decisão 136), para
+        # nenhuma tela ter que resolver stop_id na mão. Feed sem a tabela
+        # stops continua sendo lido, só sem o nome.
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='stops'")
+        if cursor.fetchone():
+            coluna_nome = ", s.stop_name"
+            join_stops = "LEFT JOIN stops s ON st.stop_id = s.stop_id"
+        else:
+            coluna_nome = ""
+            join_stops = ""
+
         query = f"""
-            SELECT t.direction_id, t.trip_headsign, st.*
+            SELECT t.direction_id, t.trip_headsign{coluna_nome}, st.*
             FROM trips t
             JOIN stop_times st ON t.trip_id = st.trip_id
+            {join_stops}
             WHERE t.route_id IN ({placeholders})
         """
         if service_id is not None:

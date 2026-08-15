@@ -1402,7 +1402,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         layout_group_cal.addWidget(self.widget_new_calendar)
         layout_horarios.addWidget(group_calendar)
         
-        # Grupo Frequência
+        # Grupo Frequência — é do assistente, não do editor (decisão 141).
         group_freq = QtWidgets.QGroupBox("Frequência de Viagens")
         layout_group_freq = QtWidgets.QVBoxLayout(group_freq)
 
@@ -1424,17 +1424,20 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self.btn_remove_band = QtWidgets.QPushButton("Remover faixa")
         self.btn_add_band.clicked.connect(lambda: self._add_band_row())
         self.btn_remove_band.clicked.connect(self._remove_band_row)
+        self.btn_restaurar_frequencia = QtWidgets.QPushButton("Restaurar frequência regular")
+        self.btn_restaurar_frequencia.clicked.connect(self._recalculate_draft_schedule)
 
         layout_btns_bands.addWidget(self.btn_add_band)
         layout_btns_bands.addWidget(self.btn_remove_band)
         layout_btns_bands.addStretch()
+        layout_btns_bands.addWidget(self.btn_restaurar_frequencia)
         layout_group_freq.addLayout(layout_btns_bands)
 
         # Preenche a primeira faixa padrão
         self._add_band_row("06:00:00", "23:00:00", 30, 30)
 
         layout_horarios.addWidget(group_freq)
-        
+
         # Resumo
         self.label_trips_summary = QLabel()
         self.label_trips_summary.setStyleSheet("""
@@ -1449,48 +1452,20 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         """)
         layout_horarios.addWidget(self.label_trips_summary)
 
-        # Grupo Diagrama de Horários (Visualização e Ajuste Manual)
-        group_diagram = QtWidgets.QGroupBox("Diagrama de Horários (Visualização e Ajuste)")
+        # Diagrama + matriz: o mesmo editor da aba "Edição GTFS" (decisão 141).
+        group_diagram = QtWidgets.QGroupBox("Diagrama e matriz de horários (visualização e ajuste)")
         layout_group_diag = QVBoxLayout(group_diagram)
 
-        from .block_scene import BlockScene
-        from .block_view import BlockView
+        from .schedule_editor_widget import ScheduleEditorWidget
+        self.schedule_editor = ScheduleEditorWidget()
+        self.schedule_editor.scheduleChanged.connect(self._on_schedule_editor_changed)
 
-        self.schedule_scene = BlockScene()
-        self.schedule_view = BlockView()
-        self.schedule_view.setScene(self.schedule_scene)
-        self.schedule_view.setMinimumHeight(200)
-        self.schedule_view.nudgeKeyPressed.connect(self._on_schedule_nudge_key)
-
-        # Passo do deslocamento (decisão 77) + botão de enquadramento e restaurar a frequência
-        linha_ajuste = QtWidgets.QHBoxLayout()
-        self.spin_schedule_step = QtWidgets.QSpinBox()
-        self.spin_schedule_step.setRange(1, 30)
-        self.spin_schedule_step.setValue(15)
-        self.spin_schedule_step.setSuffix(" minutos")
-        self.btn_fit_all = QtWidgets.QPushButton("Enquadrar tudo")
-        self.btn_fit_all.clicked.connect(self.schedule_view.fit_all)
-        self.btn_restaurar_frequencia = QtWidgets.QPushButton("Restaurar frequência regular")
-        self.btn_restaurar_frequencia.clicked.connect(self._recalculate_draft_schedule)
-        linha_ajuste.addWidget(QLabel("Passo:"))
-        linha_ajuste.addWidget(self.spin_schedule_step)
-        linha_ajuste.addWidget(self.btn_fit_all)
-        linha_ajuste.addStretch()
-        linha_ajuste.addWidget(self.btn_restaurar_frequencia)
-        layout_group_diag.addLayout(linha_ajuste)
-
-        layout_group_diag.addWidget(QLabel(
-            "Clique numa viagem (metade esquerda = saída, metade direita = chegada). "
-            "Atalhos: <b>&gt;</b>/<b>&lt;</b> movem só a saída ou a chegada; "
-            "<b>+</b>/<b>-</b> movem a viagem inteira."))
         # Decisão 72: um conjunto de viagens vale para todos os dias do calendário.
         self.label_schedule_dias = QLabel("")
         layout_group_diag.addWidget(self.label_schedule_dias)
-        layout_group_diag.addWidget(self.schedule_view)
-        self.label_schedule_status = QLabel("")
-        layout_group_diag.addWidget(self.label_schedule_status)
+        layout_group_diag.addWidget(self.schedule_editor)
         layout_horarios.addWidget(group_diagram)
-        
+
         layout_horarios.addStretch()
         self.stacked_build.addWidget(self.page_horarios)
 
@@ -2368,7 +2343,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             reply = QMessageBox.question(
                 self,
                 "Edição em andamento",
-                "Já existe uma edição em andamento. Recriar do zero? (Não = retomar a atual)",
+                "Já existe uma edição em andamento em {}.\n\n"
+                "Sim = recriar a partir do GTFS carregado (o que estiver na cópia "
+                "atual e não tiver sido exportado se perde).\n"
+                "Não = retomar a edição atual.".format(os.path.basename(wc.edit_path)),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No
             )
@@ -2477,7 +2455,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         """
         from .schedule_edit_core import validate_draft_times
         from .gtfs_edit_core import apply_stop_times
-        from .schedule_grid_widget import ScheduleGridWidget
+        from .schedule_editor_widget import ScheduleEditorWidget
 
         def _aviso(texto):
             if iface is not None and iface.messageBar():
@@ -2486,7 +2464,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("Ajustar Horários — Linha {}".format(route_short_name))
-        dialog.resize(850, 520)
+        dialog.resize(1180, 620)
 
         main_layout = QtWidgets.QVBoxLayout(dialog)
 
@@ -2525,26 +2503,30 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             lbl_headsign = QtWidgets.QLabel(info_text)
             tab_layout.addWidget(lbl_headsign)
 
-            grid_widget = ScheduleGridWidget(
-                stop_times, route_short_name=route_short_name, direction_id=dir_id)
+            editor_widget = ScheduleEditorWidget(
+                stop_times,
+                route_short_name=route_short_name,
+                direction_id=dir_id,
+                trip_headsign=headsign,
+                parent=tab_page)
+            tab_layout.addWidget(editor_widget)
 
-            tab_layout.addWidget(grid_widget)
             tabs.addTab(tab_page, tab_label)
-            tables_data.append(grid_widget)
+            tables_data.append(editor_widget)
 
         def _on_apply(checked=False):
             # Só as células realmente alteradas viram UPDATE (decisão 118):
             # reescrever a grade inteira mexeria em horários que ninguém tocou.
-            # A comparação em si mora no widget (ScheduleGridWidget.collect_changes);
-            # o diálogo só agrega o que cada aba/sentido devolve.
+            # A comparação em si mora no widget (ScheduleEditorWidget.changed_rows,
+            # sobre diff_stop_times); o diálogo só agrega o que cada aba/sentido
+            # devolve.
             alterados = []
             grade_validacao = []
             ilegiveis = []
-            for grid_widget in tables_data:
-                alt, gv, ileg = grid_widget.collect_changes()
-                alterados.extend(alt)
-                grade_validacao.extend(gv)
-                ilegiveis.extend(ileg)
+            for editor in tables_data:
+                alterados.extend(editor.changed_rows())
+                grade_validacao.extend(editor.validation_rows())
+                ilegiveis.extend(editor.illegible_times())
 
             gpkg = self._working_copy.edit_path if getattr(self, "_working_copy", None) else None
             if not gpkg or not os.path.exists(gpkg):
@@ -2605,10 +2587,46 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
         dialog.exec()
 
+    def _on_edit_table_closed(self, *args):
+        """
+        Devolve o diálogo do SIG-Bus quando a tabela de atributos fecha
+        (decisão 142) — o mesmo par show/raise/activateWindow que a marcação
+        de parada no canvas já usa.
+
+        Se a camada ainda tiver alterações no buffer de edição, pergunta antes:
+        até aqui, quem fechava a tabela sem salvar perdia o que digitou sem
+        nenhum aviso.
+        """
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+        layer = getattr(self, "_edit_layer", None)
+        try:
+            pendente = layer is not None and layer.isEditable() and layer.isModified()
+        except (AttributeError, RuntimeError):
+            pendente = False
+
+        if pendente:
+            resposta = QMessageBox.question(
+                self,
+                "Edições não gravadas",
+                "A camada {} tem alterações que ainda não foram gravadas na "
+                "cópia de trabalho.\n\nGravar agora? (Não = manter a camada em "
+                "edição no QGIS)".format(layer.name()),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+            )
+            if resposta == QMessageBox.StandardButton.Yes:
+                layer.commitChanges()
+
+        self._refresh_edit_status()
+
     def editOpenClicked(self):
         """
         Carrega a tabela de atributos nativa do QGIS a partir do feed_edit.gpkg,
-        aplica restrição de leitura nos campos de ID travados e fecha o diálogo do SIG-Bus.
+        aplica restrição de leitura nos campos de ID travados e esconde o diálogo do SIG-Bus.
+        O diálogo volta sozinho quando a tabela de atributos fecha (decisão 142).
         """
         if self._working_copy is None or not self._working_copy.is_active():
             iface.messageBar().pushMessage(
@@ -2661,8 +2679,19 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
         QgsProject.instance().addMapLayer(layer)
         layer.startEditing()
-        iface.showAttributeTable(layer)
+        janela_tabela = iface.showAttributeTable(layer)
         self._edit_layer = layer
+
+        # O plugin volta quando a tabela de atributos fecha (decisão 142). Se
+        # a API não devolver o diálogo, o sinal de fim de edição da camada é o
+        # gatilho que sobra.
+        try:
+            if janela_tabela is not None and hasattr(janela_tabela, "finished"):
+                janela_tabela.finished.connect(self._on_edit_table_closed)
+            elif hasattr(layer, "editingStopped"):
+                layer.editingStopped.connect(self._on_edit_table_closed)
+        except (AttributeError, TypeError):
+            pass
 
         if table in ["stops", "shapes"]:
             iface.setActiveLayer(layer)
@@ -2677,10 +2706,11 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
         iface.messageBar().pushMessage(
             "Info",
-            "Tabela edit_{} aberta para edição no QGIS. O diálogo foi fechado.".format(table),
+            "Tabela edit_{} aberta para edição no QGIS. O SIG-Bus volta "
+            "sozinho quando você fechar a tabela.".format(table),
             level=Qgis.MessageLevel.Info, duration=8
         )
-        self.close()
+        self.hide()
 
     def validateClicked(self):
         """
@@ -2846,9 +2876,20 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         """
         active = self._working_copy is not None and self._working_copy.is_active()
         if active:
+            # De qual arquivo veio a cópia (decisão 138): sem isso o usuário
+            # não tem como saber que está editando o rascunho do assistente,
+            # e não o feed que ele carregou.
             filename = os.path.basename(self._working_copy.edit_path)
-            self.label_edit_status.setText("Edição em andamento: {}".format(filename))
-            self.button_edit_enter.setEnabled(False)
+            origem = self._working_copy.source_path
+            if origem:
+                self.label_edit_status.setText(
+                    "Edição em andamento: {} (cópia de {})".format(
+                        filename, os.path.basename(origem)))
+            else:
+                self.label_edit_status.setText(
+                    "Edição em andamento: {} (cópia vazia criada pelo assistente "
+                    "\"Construir GTFS\")".format(filename))
+            self.button_edit_enter.setEnabled(True)
             self.combo_edit_table.setEnabled(True)
             self.button_edit_open.setEnabled(True)
             self.button_edit_validate.setEnabled(True)
@@ -2865,6 +2906,45 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
         self._update_stop_times_selectors()
         self._update_schedule_button_state()
+
+    def _ensure_build_working_copy(self):
+        """
+        Garante uma cópia de trabalho para o assistente "Construir GTFS",
+        criando a cópia vazia **sob demanda** (decisão 137).
+
+        Espiar o assistente não pode capturar o modo de edição: quem só passou
+        pela aba sairia com um `feed_edit.gpkg` vazio ocupando o lugar do feed
+        que ele carregou. Por isso a criação mora aqui, chamada pelo primeiro
+        ponto que realmente grava, e nunca na troca de aba.
+
+        Uma cópia já ativa (do feed carregado ou de uma sessão anterior do
+        assistente) é reaproveitada — `enter_empty` só roda quando não há
+        nenhuma.
+
+        :return: True se há cópia de trabalho utilizável, False caso contrário.
+        """
+        if self._working_copy is not None and self._working_copy.is_active():
+            return True
+
+        gpkg = self._resolve_gpkg(prompt_if_missing=False)
+        if not gpkg:
+            project_home = QgsProject.instance().homePath()
+            if project_home and os.path.isdir(project_home):
+                gpkg = os.path.join(project_home, "feed.gpkg")
+            else:
+                gpkg = os.path.join(os.path.expanduser('~'), "feed.gpkg")
+
+        wc = WorkingCopy(gpkg)
+        if not wc.is_active() and not wc.enter_empty():
+            QMessageBox.critical(
+                self, "Erro",
+                "Falha ao criar a cópia de trabalho (feed_edit.gpkg) do "
+                "assistente \"Construir GTFS\".")
+            return False
+
+        self._working_copy = wc
+        self._refresh_edit_status()
+        return True
 
     def _update_schedule_button_state(self):
         """O botão "Ajustar horários" precisa de edição ativa E de uma linha
@@ -2889,8 +2969,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 return
         elif current == 2:
             # Página Paradas (confirmação no mapa): "Confirmar e avançar"
-            if not self._working_copy or not self._working_copy.is_active() or not self._working_copy.edit_path:
-                QMessageBox.warning(self, "Erro", "Cópia de trabalho não está ativa.")
+            if not self._ensure_build_working_copy():
                 return
             
             paradas = []
@@ -3195,19 +3274,6 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
     def _on_tab_changed(self, index):
         if self.tabWidget.tabText(index) == "Construir GTFS":
-            active = self._working_copy is not None and self._working_copy.is_active()
-            if not active:
-                gpkg = self._resolve_gpkg(prompt_if_missing=False)
-                if not gpkg:
-                    project_home = QgsProject.instance().homePath()
-                    if project_home and os.path.isdir(project_home):
-                        gpkg = os.path.join(project_home, "feed.gpkg")
-                    else:
-                        gpkg = os.path.join(os.path.expanduser('~'), "feed.gpkg")
-                
-                self._working_copy = WorkingCopy(gpkg)
-                self._working_copy.enter_empty(overwrite=True)
-                self._refresh_edit_status()
             self._update_build_progress()
             self._load_agency_data()
             self._update_build_nav_buttons()
@@ -3273,6 +3339,11 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
         if not name or not url or not timezone or not city or not state:
             QMessageBox.warning(self, "Campos obrigatórios", "Por favor, preencha todos os campos obrigatórios (*).")
+            return
+
+        # É aqui que o assistente grava pela primeira vez — é aqui que a cópia
+        # de trabalho nasce (decisão 137).
+        if not self._ensure_build_working_copy():
             return
 
         agency_data = {
@@ -3728,7 +3799,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         """(Re)gera a grade em memória a partir da frequência da página e
         redesenha o diagrama. Descarta qualquer ajuste manual — é o caminho
         de 'restaurar frequência regular'."""
-        if not hasattr(self, 'schedule_scene'):
+        if not hasattr(self, 'schedule_editor'):
             return
 
         stop_ids = [stop.get("stop_id") for stop in getattr(self, 'sequenced_stops', [])
@@ -3739,7 +3810,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             self.build_trips = []
             self.build_stop_times = []
             self._build_draft_signature = None
-            self.schedule_scene.clear()
+            self.schedule_editor.set_stop_times([])
+            self._update_schedule_days_label(0)
             return
 
         bands = self._collect_bands()
@@ -3756,15 +3828,10 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         self._render_schedule_diagram(force_fit=True)
 
     def _render_schedule_diagram(self, force_fit=False):
-        if not hasattr(self, 'schedule_scene'):
+        """Repassa a grade em memória ao editor de horários — quem desenha o
+        diagrama e remonta a matriz é o widget (decisão 141)."""
+        if not hasattr(self, 'schedule_editor'):
             return
-
-        stop_times_list = getattr(self, 'build_stop_times', [])
-        if not stop_times_list:
-            self.schedule_scene.clear()
-            return
-
-        from .schedule_edit_core import schedule_from_draft
 
         short_name = ""
         if hasattr(self, 'input_route_short_name'):
@@ -3774,28 +3841,18 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             service_id = service.get('service_id', '')
         else:
             service_id = service or ''
+        headsign = self.sequenced_stops[-1].get("stop_name", "") \
+            if getattr(self, 'sequenced_stops', None) else ''
 
-        view = getattr(self, 'schedule_view', None)
-        had_items = bool(self.schedule_scene.items()) if hasattr(self, 'schedule_scene') else False
-        state = view.viewport_state() if (view is not None and hasattr(view, 'viewport_state')) else None
-
-        sched = schedule_from_draft(
-            stop_times_list,
+        self.schedule_editor.set_context(
             route_short_name=short_name or "route",
             direction_id=getattr(self, "build_direction_id", "0"),
             service_id=service_id,
-            trip_headsign=self.sequenced_stops[-1].get("stop_name", "")
-            if getattr(self, 'sequenced_stops', None) else ''
-        )
-        self.schedule_scene.set_schedule(sched)
+            trip_headsign=headsign)
 
-        if view is not None:
-            if force_fit or not had_items or not state:
-                view.fit_all()
-            else:
-                view.restore_viewport(state)
-
-        self._update_schedule_days_label(len(sched.trips))
+        stop_times_list = getattr(self, 'build_stop_times', [])
+        self.schedule_editor.set_stop_times(stop_times_list, force_fit=force_fit)
+        self._update_schedule_days_label(len(self.schedule_editor.trip_ids()))
 
     def _update_schedule_days_label(self, n_viagens):
         """Decisão 72: um conjunto de viagens vale para todos os dias do
@@ -3828,48 +3885,12 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 round(min(hw) / 60.0), round(max(hw) / 60.0))
         return texto
 
-    def _on_schedule_nudge_key(self, tecla):
-        """'+'/'-' deslocam a viagem inteira; '>'/'<' só o extremo
-        selecionado (decisão 78). O passo vem do QSpinBox da página."""
-        if not hasattr(self, 'schedule_scene'):
-            return
-        trip_item = self.schedule_scene._selected_item
-        if trip_item is None:
-            self.label_schedule_status.setText("Selecione uma viagem no diagrama.")
-            return
-
-        selected_trip = trip_item.trip
-        endpoint = getattr(self.schedule_scene, 'selected_endpoint', None) or 'first'
-        passo_s = self.spin_schedule_step.value() * 60
-        delta_s = passo_s if tecla in ('>', '+') else -passo_s
-
-        from .schedule_edit_core import (shift_trip, shift_trip_endpoint,
-                                         trips_from_stop_times, headways, from_seconds)
-
-        if tecla in ('>', '<'):
-            self.build_stop_times = shift_trip_endpoint(
-                self.build_stop_times, selected_trip.trip_id, endpoint, delta_s)
-        else:
-            self.build_stop_times = shift_trip(
-                self.build_stop_times, selected_trip.trip_id, delta_s)
-
-        self._render_schedule_diagram()
-
-        # Restaura a seleção (viagem + extremo) depois do redesenho.
-        item = self.schedule_scene._trip_items.get(selected_trip.trip_id)
-        if item is not None:
-            self.schedule_scene.select_trip_item(item, endpoint=endpoint)
-
-        atual = next((v for v in trips_from_stop_times(self.build_stop_times)
-                      if v["trip_id"] == selected_trip.trip_id), None)
-        if atual is not None:
-            hw = headways(self.build_stop_times).get(selected_trip.trip_id)
-            texto = "Viagem {} · saída {} · chegada {}".format(
-                atual["trip_id"], from_seconds(atual["start_s"]), from_seconds(atual["end_s"]))
-            if hw is not None:
-                texto += " · headway {} min".format(round(hw / 60.0))
-            self.label_schedule_status.setText(texto)
-
+    def _on_schedule_editor_changed(self):
+        """O editor de horários é a fonte do rascunho enquanto a página está
+        aberta; `build_stop_times` — que 'Salvar Linha' e o resumo leem —
+        acompanha, sem manter uma segunda cópia divergente."""
+        self.build_stop_times = self.schedule_editor.stop_times()
+        self._update_schedule_days_label(len(self.schedule_editor.trip_ids()))
 
     def _move_sequence_up(self):
         row = self.list_widget_sequencia.currentRow()

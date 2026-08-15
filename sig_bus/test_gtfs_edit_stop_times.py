@@ -42,6 +42,16 @@ class TestGtfsEditStopTimes(unittest.TestCase):
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE stops (
+                stop_id TEXT,
+                stop_name TEXT
+            )
+        """)
+        cursor.execute("INSERT INTO stops VALUES ('S1', 'Parada Central')")
+        cursor.execute("INSERT INTO stops VALUES ('S2', 'Estação Norte')")
+        cursor.execute("INSERT INTO stops VALUES ('S3', 'Terminal Sul')")
+
         cursor.execute("INSERT INTO routes VALUES ('R101', '101')")
         cursor.execute("INSERT INTO trips VALUES ('T101_0', 'R101', 'USD', 0, 'Sentido 0')")
         cursor.execute("INSERT INTO trips VALUES ('T101_1', 'R101', 'USD', 1, 'Sentido 1')")
@@ -74,6 +84,36 @@ class TestGtfsEditStopTimes(unittest.TestCase):
         self.assertIn("T101_1", trip_ids)
         self.assertNotIn("T102_0", trip_ids)
 
+    def test_load_route_stop_times_devolve_nome_da_parada(self):
+        res = load_route_stop_times(self.gpkg_path, "101")
+        st_0 = res[0]["stop_times"]
+        self.assertEqual(st_0[0]["stop_name"], "Parada Central")
+        self.assertEqual(st_0[1]["stop_name"], "Estação Norte")
+
+    def test_load_route_stop_times_sem_nome_preenchido_cai_no_stop_id(self):
+        conn = sqlite3.connect(self.gpkg_path)
+        conn.execute("UPDATE stops SET stop_name = NULL")
+        conn.commit()
+        conn.close()
+
+        res = load_route_stop_times(self.gpkg_path, "101")
+        st_0 = res[0]["stop_times"]
+        self.assertIsNone(st_0[0]["stop_name"])
+
+        from sig_bus.schedule_table_core import build_schedule_table
+        table = build_schedule_table(st_0)
+        self.assertEqual(table.stops[0]["stop_name"], "S1")
+
+    def test_load_route_stop_times_sem_tabela_stops_nao_quebra(self):
+        conn = sqlite3.connect(self.gpkg_path)
+        conn.execute("DROP TABLE stops")
+        conn.commit()
+        conn.close()
+
+        res = load_route_stop_times(self.gpkg_path, "101")
+        self.assertEqual(len(res[0]["stop_times"]), 2)
+        self.assertNotIn("stop_name", res[0]["stop_times"][0])
+
     def test_load_route_stop_times_service_id(self):
         res = load_route_stop_times(self.gpkg_path, "101", service_id="INEXISTENTE")
         self.assertEqual(res, {})
@@ -91,8 +131,10 @@ class TestGtfsEditStopTimes(unittest.TestCase):
         headers_0, rows_0 = table_0.to_grid()
         headers_1, rows_1 = table_1.to_grid()
 
-        self.assertIn("T101_0", headers_0)
-        self.assertIn("T101_1", headers_1)
+        # O cabeçalho é rótulo legível; o trip_id vem de column_trip_ids().
+        self.assertEqual(headers_0, ["Parada", "V1\n08:00"])
+        self.assertEqual(table_0.column_trip_ids(), ["T101_0"])
+        self.assertEqual(table_1.column_trip_ids(), ["T101_1"])
         self.assertEqual(len(rows_0), 2)
         self.assertEqual(len(rows_1), 2)
 
@@ -147,8 +189,12 @@ class TestGtfsEditStopTimes(unittest.TestCase):
             d_self.show()
             btn_apply = next(b for b in d_self.findChildren(QPushButton)
                              if b.text() == "Aplicar ao feed")
-            tabela = d_self.findChildren(QTableWidget)[0]
-            editado["trip_id"] = tabela.horizontalHeaderItem(1).text()
+            # O trip_id não está mais no rótulo do cabeçalho: vem do tooltip
+            # — é por ele que a aba do sentido 0 é localizada.
+            tabela = next(t for t in d_self.findChildren(QTableWidget)
+                          if t.horizontalHeaderItem(1)
+                          and t.horizontalHeaderItem(1).toolTip() == "T101_0")
+            editado["trip_id"] = tabela.horizontalHeaderItem(1).toolTip()
             editado["antes"] = tabela.item(1, 1).text()
             tabela.item(0, 1).setText("08:12:00")
             btn_apply.click()
@@ -168,10 +214,16 @@ class TestGtfsEditStopTimes(unittest.TestCase):
         cursor.execute("SELECT arrival_time, departure_time FROM stop_times "
                        "WHERE trip_id=? AND stop_sequence=1", (editado["trip_id"],))
         self.assertEqual(cursor.fetchone(), ("08:12:00", "08:12:00"))
-        # A segunda parada da mesma viagem não foi tocada.
+        # Decisão 112: a célula editada desloca a VIAGEM INTEIRA — os 12 min
+        # da primeira parada valem também para a segunda, que era 08:30.
+        self.assertEqual(editado["antes"], "08:30:00")
         cursor.execute("SELECT departure_time FROM stop_times "
                        "WHERE trip_id=? AND stop_sequence=2", (editado["trip_id"],))
-        self.assertEqual(cursor.fetchone()[0], editado["antes"])
+        self.assertEqual(cursor.fetchone()[0], "08:42:00")
+        # O outro sentido da mesma linha não foi tocado.
+        cursor.execute("SELECT departure_time FROM stop_times "
+                       "WHERE trip_id='T101_1' AND stop_sequence=1")
+        self.assertEqual(cursor.fetchone()[0], "09:00:00")
         # A outra linha do feed continua intacta.
         cursor.execute("SELECT arrival_time FROM stop_times WHERE trip_id='T102_0'")
         self.assertEqual(cursor.fetchone()[0], "10:00:00")
@@ -267,7 +319,56 @@ class TestGtfsEditStopTimes(unittest.TestCase):
             content = zf.read("stop_times.txt").decode("utf-8")
             self.assertIn("08:15:00", content)
 
+    def test_schedule_grid_widget_cabecalho_legivel(self):
+        """Passo 197 / Decisão 135: verifica se o cabeçalho da matriz de horários possui tooltips e formatação legível."""
+        from qgis.PyQt.QtWidgets import QApplication
+        from sig_bus.schedule_grid_widget import ScheduleGridWidget
+
+        self._app = QApplication.instance() or QApplication([])
+
+        stop_times = [
+            {"trip_id": "T101_0", "stop_id": "S1", "stop_sequence": 1, "departure_time": "08:00:00"},
+            {"trip_id": "T101_0", "stop_id": "S2", "stop_sequence": 2, "departure_time": "08:15:00"},
+        ]
+        grid = ScheduleGridWidget(stop_times, route_short_name="101", direction_id="0")
+
+        # Cabeçalho legível: ordinal + primeira saída (decisão 135)
+        self.assertEqual(grid.columnCount(), 2)
+        self.assertEqual(grid.horizontalHeaderItem(0).text(), "Parada")
+        self.assertEqual(grid.horizontalHeaderItem(1).text(), "V1\n08:00")
+
+        # O trip_id sai do rótulo e vira tooltip, para casar com o feed.
+        self.assertEqual(grid.horizontalHeaderItem(1).toolTip(), "T101_0")
+        # A primeira coluna traz o stop_id no tooltip (decisão 136).
+        self.assertEqual(grid.item(0, 0).toolTip(), "S1")
+
+    def test_schedule_grid_widget_nao_le_trip_id_do_cabecalho(self):
+        """Passo 198: ScheduleGridWidget deixa de ler o trip_id do cabeçalho."""
+        from qgis.PyQt.QtWidgets import QApplication, QTableWidgetItem
+        from sig_bus.schedule_grid_widget import ScheduleGridWidget
+
+        self._app = QApplication.instance() or QApplication([])
+
+        stop_times = [
+            {"trip_id": "T101_0", "stop_id": "S1", "stop_sequence": 1, "departure_time": "08:00:00"},
+            {"trip_id": "T101_0", "stop_id": "S2", "stop_sequence": 2, "departure_time": "08:15:00"},
+        ]
+        grid = ScheduleGridWidget(stop_times, route_short_name="101", direction_id="0")
+
+        # Altera o texto do cabeçalho da coluna 1 para um rótulo customizado
+        grid.headers[1] = "Rotulo_Modificado"
+        grid.setHorizontalHeaderItem(1, QTableWidgetItem("Rotulo_Modificado"))
+
+        # Modifica célula (linha 0, coluna 1)
+        grid.item(0, 1).setText("08:05:00")
+
+        alterados, grade_val, ilegiveis = grid.collect_changes()
+
+        # O trip_id retornado em alterados deve ser o original T101_0 do table_obj.trips, não o do cabeçalho
+        self.assertEqual(len(alterados), 1)
+        self.assertEqual(alterados[0]["trip_id"], "T101_0")
+        self.assertEqual(alterados[0]["departure_time"], "08:05:00")
+
 
 if __name__ == "__main__":
     unittest.main()
-

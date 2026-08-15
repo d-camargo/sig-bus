@@ -35,25 +35,52 @@ class ScheduleGridWidget(QTableWidget):
     grade original célula a célula.
     """
 
-    def __init__(self, stop_times, route_short_name="", direction_id="", parent=None):
+    def __init__(self, stop_times, route_short_name="", direction_id="",
+                 stops=None, parent=None):
         super().__init__(parent)
+        self._route_short_name = route_short_name
+        self._direction_id = direction_id
+        self.set_stop_times(stop_times, stops=stops)
+
+    def set_stop_times(self, stop_times, stops=None):
+        """Remonta a grade inteira a partir de uma lista de stop_times."""
         self.table_obj = build_schedule_table(
-            stop_times, route_short_name=route_short_name, direction_id=direction_id)
+            stop_times, stops=stops,
+            route_short_name=self._route_short_name,
+            direction_id=self._direction_id)
         self._build_grid()
 
     def _build_grid(self):
         headers, rows = self.table_obj.to_grid(time_format="HH:MM:SS")
         self.headers = headers
+        self.clear()
         self.setColumnCount(len(headers))
         self.setHorizontalHeaderLabels(headers)
         self.setRowCount(len(rows))
 
+        # O cabeçalho é rótulo legível (V<n> + primeira saída, decisão 135):
+        # o trip_id, que o usuário precisa para casar com o feed, vai no
+        # tooltip — e é de table_obj.trips, nunca do texto, que o widget lê a
+        # identidade da coluna.
+        trip_ids = self.table_obj.column_trip_ids()
+        for c_idx, trip_id in enumerate(trip_ids, start=1):
+            item_h = self.horizontalHeaderItem(c_idx)
+            if item_h is not None:
+                item_h.setToolTip(trip_id)
+
         for r_idx, row_vals in enumerate(rows):
+            stop_id = self.table_obj.stops[r_idx].get("stop_id", "") \
+                if r_idx < len(self.table_obj.stops) else ""
             for c_idx, val in enumerate(row_vals):
                 item = QTableWidgetItem(str(val))
                 if c_idx == 0:
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    item.setToolTip(stop_id)
+                else:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.setItem(r_idx, c_idx, item)
+
+        self.resizeColumnsToContents()
 
     def collect_changes(self):
         """
@@ -73,16 +100,17 @@ class ScheduleGridWidget(QTableWidget):
         grade_validacao = []
         ilegiveis = []
         table_obj = self.table_obj
-        headers = self.headers
+        trip_ids = table_obj.column_trip_ids()
 
         for r_idx in range(self.rowCount()):
             if r_idx >= len(table_obj.stops):
                 continue
             stop_id = table_obj.stops[r_idx]["stop_id"]
             for c_idx in range(1, self.columnCount()):
-                if c_idx >= len(headers):
+                trip_idx = c_idx - 1
+                if trip_idx >= len(trip_ids):
                     continue
-                trip_id = headers[c_idx]
+                trip_id = trip_ids[trip_idx]
                 item = self.item(r_idx, c_idx)
                 celula = table_obj.matrix.get((stop_id, trip_id))
                 if not item or not celula:

@@ -290,6 +290,43 @@ def headways(stop_times):
     return resultado
 
 
+def diff_stop_times(original, atual):
+    """
+    Compara a lista de stop_times original com a atual e devolve apenas as
+    linhas em que arrival_time ou departure_time mudaram, no formato que
+    apply_stop_times já consome.
+
+    Linha casa por (trip_id, stop_sequence). Linha nova ou ausente no atual
+    é ignorada: esta tela só ajusta horário de viagem existente, não cria
+    nem apaga viagem.
+
+    :param original: Lista de dicionários de stop_times originais.
+    :param atual: Lista de dicionários de stop_times atuais.
+    :return: Lista de dicionários (do `atual`) cujo horário mudou, na ordem
+        em que aparecem em `atual`.
+    """
+    orig_map = {}
+    for item in original:
+        if not isinstance(item, dict):
+            continue
+        key = (str(item.get("trip_id")), str(item.get("stop_sequence")))
+        orig_map[key] = item
+
+    diffs = []
+    for item in atual:
+        if not isinstance(item, dict):
+            continue
+        key = (str(item.get("trip_id")), str(item.get("stop_sequence")))
+        orig_item = orig_map.get(key)
+        if orig_item is None:
+            continue
+        if (item.get("arrival_time") != orig_item.get("arrival_time")
+                or item.get("departure_time") != orig_item.get("departure_time")):
+            diffs.append(item)
+
+    return diffs
+
+
 # --------------------------------------------------------------------------
 # Edição da grade (atalhos + / - e > / <)
 # --------------------------------------------------------------------------

@@ -333,6 +333,7 @@ igual.
 |---|---|
 | `validate_bands(faixas)` | `(erros, avisos)` das faixas horárias **antes** de expandir: `fim < início`, intervalo ≤ 0, duração ≤ 0 e **sobreposição** entre faixas são erro, com a mensagem nomeando a faixa (decisão 123). Vão entre faixas é legítimo e passa. |
 | `expand_bands_to_stop_times(stop_ids, faixas, prefix=None)` | Expande N faixas (`dict` ou tupla), cada uma com seu intervalo e sua **duração** (decisão 120), reusando `expand_frequency_to_stop_times` por faixa. Percorre em ordem cronológica e descarta a saída cujo horário já foi gerado, para a fronteira entre faixas não duplicar viagem (decisão 122). Uma faixa reproduz exatamente a grade da expansão simples. |
+| `diff_stop_times(original, atual)` | Compara duas grades de `stop_times` casando as linhas por `(trip_id, stop_sequence)` e devolve **só as linhas alteradas** (`arrival_time`/`departure_time` diferentes) — linha nova ou ausente é ignorada, porque a tela não cria nem apaga viagem. Diferença pura, sem I/O, que isola "o que gravar" do widget que exibe a grade. Recebe listas de `dict`. |
 
 `save_route` passa a aceitar `frequencia` como **lista de faixas**, além do
 `dict` e da tupla que já aceitava (decisão 124); o caminho com `stop_times`
@@ -364,19 +365,51 @@ validador só, nunca um paralelo).
 
 ### 10.3.1 A tabela de horários: `schedule_grid_widget.py` (UI)
 
-`ScheduleGridWidget` é um `QTableWidget` que **é** a tabela de horários da
-janela "Ajustar horários" — uma instância por sentido, cada uma numa aba. Monta
-a grade com `build_schedule_table()` + `to_grid(time_format="HH:MM:SS")`, trava
+`ScheduleGridWidget` é um `QTableWidget` que **é** a matriz de horários — a
+metade direita do `ScheduleEditorWidget` (§10.3.2), uma instância por sentido.
+Monta a grade com `build_schedule_table()` + `to_grid(time_format="HH:MM:SS")`, trava
 a coluna 0 (`Parada`) como somente leitura e deixa editáveis as colunas de
-viagem, cujo cabeçalho é o `trip_id`.
+viagem, cujo cabeçalho mostra `V<n>` na primeira linha e a primeira saída da
+viagem em `HH:MM` na segunda, com o `trip_id` completo no tooltip.
 
 | Método | Papel |
 |---|---|
 | `collect_changes()` | Compara a grade na tela com a `matrix` original e devolve `(alterados, grade_validacao, ilegiveis)`: as linhas de `stop_times` a gravar, a grade completa para `validate_draft_times` e os horários fora do formato. Preserva o tempo parado da parada (`departure - arrival`), que anda junto com a saída (decisão 118). Célula sem par `(stop_id, trip_id)` na matriz — a que aparece como `-` — é ignorada, então digitar nela não cria parada nova na viagem. |
 
-`SigBus_dialog._open_schedule_edit_dialog()` só agrega o que cada aba devolve e
-faz o `validate_draft_times` → `apply_stop_times`: a comparação célula a célula
-mora no widget, não no diálogo.
+`collect_changes()` é a comparação célula a célula do próprio
+`ScheduleGridWidget`, usada por quem monta a matriz sozinha. Quem hoje agrega
+para o "Aplicar ao feed" é o `ScheduleEditorWidget` (§10.3.2), por
+`changed_rows()`/`validation_rows()`;
+`SigBus_dialog._open_schedule_edit_dialog()` só soma o que cada aba devolve e
+faz o `validate_draft_times` → `apply_stop_times`.
+
+### 10.3.2 O editor de horários: `schedule_editor_widget.py` (UI)
+
+`ScheduleEditorWidget` é o **editor único das duas telas**: a página
+"Horários" do assistente "Construir GTFS" e a janela "Ajustar horários" da
+aba "Edição GTFS" instanciam o **mesmo** widget, em vez de cada tela manter
+sua própria implementação. Monta num `QSplitter` horizontal, à esquerda, o
+diagrama de blocos (`BlockView`/`BlockScene`) com o `QSpinBox` de passo, o
+botão "Enquadrar tudo" e um rótulo de status; à direita, a matriz paradas ×
+viagens (`ScheduleGridWidget`). Os dois lados são vistas do **mesmo** rascunho
+de `stop_times` em memória, e há um caminho de escrita só: os atalhos do
+diagrama (`>`/`<` movem a saída ou a chegada da viagem selecionada; `+`/`-`
+movem a viagem inteira) e a célula editada na matriz desembocam nas mesmas
+`shift_trip`/`shift_trip_endpoint` de `schedule_edit_core.py`. Depois de cada
+mudança o diagrama é redesenhado preservando o enquadramento
+(`viewport_state`/`restore_viewport`, §10.4) e a matriz é remontada a partir
+do rascunho.
+
+**As faixas de frequência não estão no widget (decisão 141):** a tabela de
+faixas, "Adicionar faixa"/"Remover faixa" e "Restaurar frequência regular"
+continuam só na página "Horários" do assistente — são do assistente, que gera
+oferta do zero, e não do editor, que ajusta uma oferta que já existe.
+
+Quem decide o que gravar é `changed_rows()`, que usa a função pura
+`diff_stop_times(original, atual)` (§10.1) — casa as linhas por `(trip_id,
+stop_sequence)` e devolve só as que tiveram `arrival_time`/`departure_time`
+alterados frente ao `stop_times` como veio do `feed_edit.gpkg`; linha nova ou
+ausente é ignorada, porque esta tela não cria nem apaga viagem.
 
 ### 10.4 Fronteira UI × lógica pura
 

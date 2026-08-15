@@ -12,6 +12,37 @@ o **Diagrama de Blocos** (alocação de frota). Feed de referência nos testes: 
 
 ---
 
+## 0.8 — Editor único de horários (diagrama + matriz), retorno automático da janela e guardas na edição
+
+Esta versão entrega, de fato, o `ScheduleEditorWidget`: o ciclo da 0.7 deu a peça como pronta sem que ela existisse no repositório — nenhum arquivo, nenhuma menção (decisão 133). Aqui ela é escrita, e vira o editor de horários único das duas telas: a página "Horários" do assistente **Construir GTFS** e a janela "Ajustar horários" da aba **Edição GTFS** passam a compartilhar o mesmo componente, em vez de duas implementações paralelas. Além disso, o fluxo de edição no QGIS fica mais seguro contra descarte acidental de trabalho, e a matriz de horários fica mais legível para quem não decorou o `trip_id`.
+
+### O editor único: diagrama e matriz sobre o mesmo rascunho (decisões 139 e 141)
+
+- **Um widget, duas telas.** `sig_bus/schedule_editor_widget.py` monta num `QSplitter` horizontal o diagrama de blocos (`BlockView`/`BlockScene`, com o `QSpinBox` de passo, o botão "Enquadrar tudo" e um rótulo de status) à esquerda e a matriz paradas × viagens (`ScheduleGridWidget`) à direita. Os dois lados são vistas do mesmo rascunho de `stop_times` em memória, e há um caminho de escrita só: os atalhos do diagrama (`>`/`<` movem a saída ou a chegada da viagem selecionada; `+`/`-` movem a viagem inteira) e a célula editada na matriz desembocam nas mesmas `shift_trip`/`shift_trip_endpoint` de `schedule_edit_core.py`. Depois de cada mudança o diagrama é redesenhado preservando o enquadramento (`viewport_state`/`restore_viewport`, decisões 109-111 da 0.7) e a matriz é remontada a partir do rascunho.
+- **As faixas de frequência não migraram (decisão 141).** A tabela de faixas horárias, "Adicionar faixa"/"Remover faixa" e "Restaurar frequência regular" continuam só na página "Horários" do assistente — são do assistente, que gera oferta do zero, e não do editor, que ajusta uma oferta que já existe.
+
+### O que grava é o diff, nunca a grade inteira (decisões 140 e 118)
+
+- `changed_rows()` usa a função pura `diff_stop_times(original, atual)` de `schedule_edit_core.py`, que casa as linhas por `(trip_id, stop_sequence)` e devolve só aquelas em que `arrival_time` ou `departure_time` mudaram frente ao `stop_times` como veio do `feed_edit.gpkg`. Linha nova ou ausente é ignorada — esta tela não cria nem apaga viagem. Grade sem edição nenhuma não gera nenhum `UPDATE`.
+- **Mudança de comportamento na matriz (decisão 112):** editar uma célula agora desloca a viagem inteira — o usuário digita o horário que quer naquela parada e o resto da viagem acompanha, preservando os tempos de percurso entre paradas — em vez de gravar aquela célula isolada, como fazia a versão anterior.
+
+### Cabeçalho legível da matriz (decisões 135 e 136)
+
+- Cada coluna de viagem passa a se chamar `V<n>` na primeira linha do cabeçalho e traz a primeira saída da viagem em `HH:MM` na segunda (ex.: `"V1\n06:10"`), com o `trip_id` completo só no tooltip — ninguém precisa mais decorar um `trip_id` para achar a viagem certa.
+- A primeira coluna, "Parada", passa a trazer o nome da parada (`stop_name`, caindo no `stop_id` quando o feed não tem nome) em vez do `stop_id` cru, com o `stop_id` no tooltip. O nome vem de um `LEFT JOIN stops` acrescentado na própria consulta que monta a matriz.
+
+### Guardas contra perda de trabalho no fluxo de edição (decisões 137, 138 e 142)
+
+- **A cópia de trabalho do assistente nasce sob demanda (decisão 137).** Antes, só entrar na aba "Construir GTFS" já criava `feed_edit.gpkg`. Agora a criação foi movida para `_ensure_build_working_copy()`, em `SigBus_dialog.py`, chamado só no primeiro ponto que de fato grava algo (salvar a agência) e no guarda da página "Paradas" — espiar a aba não cria mais cópia nenhuma.
+- **"Entrar no modo edição" nunca fica desabilitado (decisão 138).** Com uma edição ativa, o rótulo de status passa a dizer de qual arquivo a cópia veio (por exemplo, "Edição em andamento: feed_edit.gpkg (cópia de bhtrans.gpkg)") ou avisa que é a cópia vazia criada pelo assistente, e a pergunta ao reentrar explicita o que cada resposta faz: "Sim" recria a partir do GTFS carregado (o que não tiver sido exportado se perde), "Não" retoma a edição atual.
+- **"Abrir para edição" devolve o plugin sozinho (decisão 142).** A janela do SIG-Bus passa a se esconder (`hide()`, não `close()`) em vez de fechar, e volta (`show()`/`raise_()`/`activateWindow()`) quando a tabela de atributos do QGIS fecha (e, se a API do QGIS não devolver esse diálogo, quando a edição da camada termina). Na volta, se a camada ainda tiver alterações não gravadas no buffer de edição, o plugin pergunta se grava (`commitChanges()`) ou mantém a camada em edição.
+
+#### Arquivos tocados
+
+`schedule_editor_widget.py` (novo), `test_schedule_editor_widget.py` (novo), `test_edit_tab_guards.py` (novo), `SigBus_dialog.py`, `gtfs_edit_core.py`, `schedule_edit_core.py`, `schedule_grid_widget.py`, `schedule_table_core.py`, `test_gtfs_edit_stop_times.py`, `test_schedule_edit_core.py`, `test_schedule_table_core.py`, `metadata.txt`, `CHANGELOG.md`, `GUIA_EDICAO_GTFS.md`, `ARQUITETURA_CONSTRUIR_GTFS.md`, `DIAGRAMA_BLOCOS.md`.
+
+---
+
 ## 0.7 — Ajuste de horários: zoom preservado, faixas horárias e edição no feed
 
 Versão focada no **ajuste de oferta**: o que a 0.5 abriu (deslocar viagem no
