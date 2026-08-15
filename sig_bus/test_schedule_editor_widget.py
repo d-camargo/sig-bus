@@ -6,6 +6,7 @@ QT_QPA_PLATFORM=offscreen.
 """
 import unittest
 
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QApplication
 
 from sig_bus.schedule_editor_widget import ScheduleEditorWidget
@@ -61,21 +62,23 @@ class TestScheduleEditorWidget(unittest.TestCase):
         # O diagrama nasce com as duas viagens.
         self.assertEqual(set(self.widget.schedule_scene._trip_items), {"T1", "T2"})
 
-    def test_painel_do_diagrama_nao_sufoca_a_matriz(self):
-        """Passo 214: a frase quebra linha, nenhum painel colapsa a zero e a
-        matriz continua visível numa janela estreita (decisões 150 e 151)."""
-        self.assertTrue(self.widget.label_instrucoes.wordWrap())
-        self.assertFalse(self.widget.splitter.childrenCollapsible())
-        self.assertLessEqual(
-            self.widget.painel_diagrama.minimumSizeHint().width(), 420)
+    def test_matriz_em_cima_e_diagrama_embaixo_sem_colapsar(self):
+        widget = self.widget
+        splitter = widget.splitter
+        self.assertEqual(splitter.orientation(), Qt.Orientation.Vertical)
+        self.assertIs(splitter.widget(0), widget.grid)
+        self.assertIs(splitter.widget(1), widget.painel_diagrama)
+        self.assertTrue(widget.label_instrucoes.wordWrap())
+        self.assertFalse(splitter.childrenCollapsible())
 
-        self.widget.resize(780, 500)
-        self.widget.show()
+        widget.resize(780, 560)
+        widget.show()
         self.app.processEvents()
         try:
-            self.assertGreater(self.widget.grid.width(), 0)
+            self.assertGreater(widget.grid.height(), 0)
+            self.assertGreater(widget.schedule_view.height(), 0)
         finally:
-            self.widget.hide()
+            widget.hide()
 
     # --- escrita pelo diagrama ---------------------------------------
     def test_nudge_maior_move_so_o_extremo_e_a_celula_acompanha(self):
@@ -147,6 +150,73 @@ class TestScheduleEditorWidget(unittest.TestCase):
 
         self.assertAlmostEqual(
             self.widget.schedule_view.transform().m11(), escala_antes, places=5)
+
+    # --- preservação de seleção ----------------------------------------
+    def test_selecao_sobrevive_a_nudge_no_diagrama_e_na_tabela(self):
+        self._seleciona("T1", endpoint='last')
+        self.widget.schedule_view.nudgeKeyPressed.emit('+')
+
+        self.assertEqual(self.widget._trip_selecionada, "T1")
+        self.assertEqual(self.widget._endpoint_selecionado, 'last')
+        self.assertIsNotNone(self.widget.schedule_scene._selected_item)
+        self.assertEqual(self.widget.schedule_scene._selected_item.trip.trip_id, "T1")
+        self.assertEqual(self.widget.schedule_scene.selected_endpoint, 'last')
+        self.assertEqual(self.widget.grid.currentColumn(), 1)
+
+    def test_selecao_tolerante_a_set_stop_times_que_remove_viagem_selecionada(self):
+        self._seleciona("T1", endpoint='first')
+        nova = [st for st in grade() if st["trip_id"] == "T2"]
+        self.widget.set_stop_times(nova)
+
+        self.assertIsNone(self.widget._trip_selecionada)
+        self.assertIsNone(self.widget._endpoint_selecionado)
+        self.assertIsNone(self.widget.schedule_scene._selected_item)
+        self.assertEqual(self.widget.trip_ids(), ["T2"])
+
+    def test_trip_clicked_no_diagrama_sincroniza_coluna_da_tabela(self):
+        item = self.widget.schedule_scene._trip_items["T2"]
+        self.widget.schedule_scene.tripClicked.emit(item.trip)
+
+        self.assertEqual(self.widget.grid.currentColumn(), 2)
+        self.assertEqual(self.widget._trip_selecionada, "T2")
+
+    def test_set_current_cell_na_tabela_sincroniza_diagrama(self):
+        self.widget.grid.setCurrentCell(0, 2)
+
+        self.assertIsNotNone(self.widget.schedule_scene._selected_item)
+        self.assertEqual(self.widget.schedule_scene._selected_item.trip.trip_id, "T2")
+        self.assertEqual(self.widget._trip_selecionada, "T2")
+        self.assertEqual(self.widget._endpoint_selecionado, "first")
+
+    def test_set_current_cell_na_coluna_zero_ignora(self):
+        self.widget.grid.setCurrentCell(0, 2)
+        self.assertEqual(self.widget._trip_selecionada, "T2")
+
+        self.widget.grid.setCurrentCell(0, 0)
+        self.assertEqual(self.widget._trip_selecionada, "T2")
+        self.assertEqual(self.widget.schedule_scene._selected_item.trip.trip_id, "T2")
+
+    def test_sincronizacao_bidirecional_nao_entra_em_laco(self):
+        item1 = self.widget.schedule_scene._trip_items["T1"]
+        self._seleciona("T1")
+        self.widget.schedule_scene.tripClicked.emit(item1.trip)
+
+        self.assertEqual(self.widget.grid.currentColumn(), 1)
+        self.assertEqual(self.widget._trip_selecionada, "T1")
+        self.assertEqual(self.widget.schedule_scene._selected_item.trip.trip_id, "T1")
+
+        self.widget.grid.setCurrentCell(0, 2)
+
+        self.assertEqual(self.widget.grid.currentColumn(), 2)
+        self.assertEqual(self.widget._trip_selecionada, "T2")
+        self.assertEqual(self.widget.schedule_scene._selected_item.trip.trip_id, "T2")
+
+        self._seleciona("T1")
+        self.widget.schedule_scene.tripClicked.emit(item1.trip)
+
+        self.assertEqual(self.widget.grid.currentColumn(), 1)
+        self.assertEqual(self.widget._trip_selecionada, "T1")
+        self.assertEqual(self.widget.schedule_scene._selected_item.trip.trip_id, "T1")
 
 
 if __name__ == "__main__":

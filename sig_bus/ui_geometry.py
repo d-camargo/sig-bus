@@ -66,6 +66,14 @@ def divisao_splitter(largura_total, fracao=0.55, min_esq=340, min_dir=280):
     return [esq, total - esq]
 
 
+def divisao_vertical(altura_total, fracao=0.45, min_topo=170, min_base=230):
+    """Divide `altura_total` entre os dois painéis verticais do splitter (decisão 156).
+
+    Devolve `[topo, base]` somando exatamente a altura total, delegando a
+    `divisao_splitter` para garantir a mesma regra do irmão horizontal."""
+    return divisao_splitter(altura_total, fracao=fracao, min_esq=min_topo, min_dir=min_base)
+
+
 def cabe_na_tela(x, y, w, h, ax, ay, aw, ah):
     """Diz se o retângulo da janela está contido na área útil (decisão 152).
 

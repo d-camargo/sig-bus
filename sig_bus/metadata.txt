@@ -12,7 +12,7 @@ qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 supportsQt6=True
 description=Carrega dados GTFS e dados de demanda no QGIS para análise de transporte público.
-version=0.8.2
+version=0.8.3
 author=Diego Camargo
 email=diegocamargo.bft@gmail.com
 

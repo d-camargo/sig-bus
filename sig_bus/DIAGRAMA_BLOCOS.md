@@ -90,7 +90,7 @@ Core (Model)             block_core.py   → leitura, modelo, inferência (QgsTa
 | `schedule_edit_core.py` | Core | Manipulação de grade de horários temporária para o ajuste fino (reaproveitamento da engine) |
 | `schedule_table_core.py` | Core | Núcleo puro da tabela de horários (Stops x Trips), formatação e manipulação de matrizes de horários |
 | `schedule_grid_widget.py` | Interface | `ScheduleGridWidget`: a tabela de horários em si (`QTableWidget` paradas × viagens) e o `collect_changes()` que devolve só as células editadas |
-| `schedule_editor_widget.py` | Interface | `ScheduleEditorWidget`: o editor de horários das duas telas — a página "Horários" do assistente e a janela "Ajustar horários" da aba "Edição GTFS" — com o diagrama (`BlockView`/`BlockScene`) e a matriz (`ScheduleGridWidget`) lado a lado sobre o mesmo rascunho de `stop_times`; `changed_rows()`/`diff_stop_times` decide o que grava |
+| `schedule_editor_widget.py` | Interface | `ScheduleEditorWidget`: o editor de horários das duas telas — a página "Horários" do assistente e a janela "Ajustar horários" da aba "Edição GTFS" — com a matriz (`ScheduleGridWidget`) e o diagrama (`BlockView`/`BlockScene`) empilhados num `QSplitter` vertical (decisões 155-157) sobre o mesmo rascunho de `stop_times`; `changed_rows()`/`diff_stop_times` decide o que grava |
 | `block_scene.py` | Engine | `BlockScene`, `TripItem`, layout, cores, headway, `departure_ticks` (régua de saídas) |
 | `block_view.py` | Engine | `BlockView`: zoom, pan, export PNG/SVG, preservação de enquadramento pós-redesenho |
 | `block_diagram_dialog.py` | Interface | janela standalone, controles, painel de detalhes |

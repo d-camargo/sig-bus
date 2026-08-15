@@ -388,10 +388,10 @@ faz o `validate_draft_times` → `apply_stop_times`.
 `ScheduleEditorWidget` é o **editor único das duas telas**: a página
 "Horários" do assistente "Construir GTFS" e a janela "Ajustar horários" da
 aba "Edição GTFS" instanciam o **mesmo** widget, em vez de cada tela manter
-sua própria implementação. Monta num `QSplitter` horizontal, à esquerda, o
-diagrama de blocos (`BlockView`/`BlockScene`) com o `QSpinBox` de passo, o
-botão "Enquadrar tudo" e um rótulo de status; à direita, a matriz paradas ×
-viagens (`ScheduleGridWidget`). Os dois lados são vistas do **mesmo** rascunho
+sua própria implementação. Monta num `QSplitter` vertical (decisões 155-157),
+na parte superior, a matriz paradas × viagens (`ScheduleGridWidget`); na parte
+inferior, o diagrama de blocos (`BlockView`/`BlockScene`) com o `QSpinBox` de
+passo, o botão "Enquadrar tudo" e um rótulo de status. Os dois painéis são vistas do **mesmo** rascunho
 de `stop_times` em memória, e há um caminho de escrita só: os atalhos do
 diagrama (`>`/`<` movem a saída ou a chegada da viagem selecionada; `+`/`-`
 movem a viagem inteira) e a célula editada na matriz desembocam nas mesmas

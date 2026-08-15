@@ -3,8 +3,8 @@
 /***************************************************************************
  schedule_editor_widget — Editor de horários do SIG-Bus
                                   A QGIS plugin
- Editor único das duas telas de horário: o diagrama de blocos de um lado e a
- matriz paradas × viagens do outro, sobre a mesma lista de stop_times em
+ Editor único das duas telas de horário: a matriz paradas × viagens em cima e
+ o diagrama de blocos embaixo, sobre a mesma lista de stop_times em
  memória. Usado pela página "Horários" do assistente "Construir GTFS" e pela
  janela "Ajustar horários" da aba "Edição GTFS".
  ***************************************************************************/
@@ -33,7 +33,7 @@ from qgis.PyQt.QtWidgets import (
 from .block_view import BlockView
 from .block_scene import BlockScene
 from .schedule_grid_widget import ScheduleGridWidget
-from .ui_geometry import divisao_splitter
+from .ui_geometry import divisao_vertical
 from .schedule_edit_core import (
     diff_stop_times,
     from_seconds,
@@ -48,9 +48,10 @@ from .schedule_edit_core import (
 
 class ScheduleEditorWidget(QWidget):
     """
-    Editor de horários: diagrama (`BlockScene`/`BlockView`) e matriz
-    (`ScheduleGridWidget`) do mesmo sentido, lado a lado, sobre um único
-    rascunho de `stop_times` em memória.
+    Editor de horários: a matriz (`ScheduleGridWidget`) em cima e o diagrama
+    (`BlockScene`/`BlockView`) embaixo, empilhados num `QSplitter` vertical
+    (decisão 155), do mesmo sentido, sobre um único rascunho de `stop_times`
+    em memória.
 
     Há um caminho de escrita só: tanto os atalhos do diagrama ('>'/'<'/'+'/'-')
     quanto a célula editada na matriz desembocam em `shift_trip` /
@@ -76,7 +77,10 @@ class ScheduleEditorWidget(QWidget):
         self._draft = [dict(st) for st in (stop_times or [])]
         self._ilegiveis = {}
         self._rebuilding = False
+        self._syncing = False
         self._desenhou = False
+        self._trip_selecionada = None
+        self._endpoint_selecionado = None
 
         self._build_ui()
         self._redraw(force_fit=True)
@@ -88,7 +92,7 @@ class ScheduleEditorWidget(QWidget):
         layout_main = QVBoxLayout(self)
         layout_main.setContentsMargins(0, 0, 0, 0)
 
-        self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.splitter = QSplitter(Qt.Orientation.Vertical, self)
         self.splitter.setChildrenCollapsible(False)
         layout_main.addWidget(self.splitter)
 
@@ -109,7 +113,7 @@ class ScheduleEditorWidget(QWidget):
         layout_diagrama.addLayout(linha_ajuste)
 
         # Sem quebra de linha, é esta frase que dita a largura mínima do painel
-        # e sufoca a matriz ao lado (decisão 150).
+        # e alargaria a janela inteira (decisão 150).
         self.label_instrucoes = QLabel(
             "Clique numa viagem (metade esquerda = saída, metade direita = chegada). "
             "Atalhos: <b>&gt;</b>/<b>&lt;</b> movem só a saída ou a chegada; "
@@ -129,6 +133,7 @@ class ScheduleEditorWidget(QWidget):
 
         self.btn_fit_all.clicked.connect(self.schedule_view.fit_all)
         self.schedule_view.nudgeKeyPressed.connect(self._on_nudge_key)
+        self.schedule_scene.tripClicked.connect(self._on_trip_clicked)
 
         self.grid = ScheduleGridWidget(
             self._draft,
@@ -136,14 +141,15 @@ class ScheduleEditorWidget(QWidget):
             direction_id=self._direction_id,
             stops=self._stops)
         self.grid.itemChanged.connect(self._on_cell_edited)
+        self.grid.currentCellChanged.connect(self._on_grid_current_cell_changed)
 
-        self.grid.setMinimumWidth(280)
+        self.grid.setMinimumHeight(140)
 
-        self.splitter.addWidget(self.painel_diagrama)
         self.splitter.addWidget(self.grid)
-        self.splitter.setStretchFactor(0, 3)
-        self.splitter.setStretchFactor(1, 2)
-        self.splitter.setSizes(divisao_splitter(900))
+        self.splitter.addWidget(self.painel_diagrama)
+        self.splitter.setStretchFactor(0, 2)
+        self.splitter.setStretchFactor(1, 3)
+        self.splitter.setSizes(divisao_vertical(620))
 
     # ------------------------------------------------------------------
     # API pública
@@ -216,13 +222,51 @@ class ScheduleEditorWidget(QWidget):
 
         self._redraw()
 
-        # Restaura a seleção (viagem + extremo) depois do redesenho.
-        item = self.schedule_scene._trip_items.get(trip_id)
-        if item is not None:
-            self.schedule_scene.select_trip_item(item, endpoint=endpoint)
-
         self._update_status(trip_id)
         self.scheduleChanged.emit()
+
+    def _on_trip_clicked(self, trip):
+        """Sincroniza a seleção do diagrama para a tabela (decisão 157)."""
+        if self._rebuilding or self._syncing:
+            return
+
+        self._syncing = True
+        try:
+            trip_id = trip.trip_id
+            trip_ids = self.grid.table_obj.column_trip_ids()
+            if trip_id in trip_ids:
+                coluna = trip_ids.index(trip_id) + 1
+                linha_atual_ou_0 = max(0, self.grid.currentRow()) if self.grid.rowCount() > 0 else 0
+                self.grid.setCurrentCell(linha_atual_ou_0, coluna)
+                self._trip_selecionada = trip_id
+                self._endpoint_selecionado = self.schedule_scene.selected_endpoint
+                self._update_status(trip_id)
+        finally:
+            self._syncing = False
+
+    def _on_grid_current_cell_changed(self, row, col, prev_row, prev_col):
+        """Sincroniza a seleção da tabela para o diagrama (decisão 157)."""
+        if self._rebuilding or self._syncing:
+            return
+
+        if col < 1:
+            return
+
+        self._syncing = True
+        try:
+            trip_ids = self.grid.table_obj.column_trip_ids()
+            c_idx = col - 1
+            if 0 <= c_idx < len(trip_ids):
+                trip_id = trip_ids[c_idx]
+                item = self.schedule_scene._trip_items.get(trip_id)
+                if item is not None:
+                    endpoint = self.schedule_scene.selected_endpoint or self._endpoint_selecionado or 'first'
+                    self.schedule_scene.select_trip_item(item, endpoint=endpoint)
+                    self._trip_selecionada = trip_id
+                    self._endpoint_selecionado = self.schedule_scene.selected_endpoint
+                    self._update_status(trip_id)
+        finally:
+            self._syncing = False
 
     def _on_cell_edited(self, item):
         """
@@ -277,6 +321,13 @@ class ScheduleEditorWidget(QWidget):
 
         O enquadramento é preservado (decisões 109-111): `fit_all()` só no
         primeiro desenho e quando o chamador pede."""
+        # A cena é a fonte da verdade da seleção: os dois slots de sincronia
+        # (decisão 157) já deixam diagrama e matriz apontando para a mesma
+        # viagem antes de qualquer redesenho.
+        if self.schedule_scene._selected_item is not None:
+            self._trip_selecionada = self.schedule_scene._selected_item.trip.trip_id
+            self._endpoint_selecionado = self.schedule_scene.selected_endpoint
+
         self._rebuilding = True
         try:
             self._ilegiveis.clear()
@@ -285,6 +336,8 @@ class ScheduleEditorWidget(QWidget):
             if not self._draft:
                 self.schedule_scene.clear()
                 self._desenhou = False
+                self._trip_selecionada = None
+                self._endpoint_selecionado = None
                 return
 
             state = self.schedule_view.viewport_state()
@@ -302,6 +355,21 @@ class ScheduleEditorWidget(QWidget):
             else:
                 self.schedule_view.restore_viewport(state)
             self._desenhou = True
+
+            if self._trip_selecionada:
+                item = self.schedule_scene._trip_items.get(self._trip_selecionada)
+                if item is not None:
+                    endpoint = self._endpoint_selecionado or 'first'
+                    self.schedule_scene.select_trip_item(item, endpoint=endpoint)
+                else:
+                    self._trip_selecionada = None
+                    self._endpoint_selecionado = None
+
+                trip_ids = self.grid.table_obj.column_trip_ids()
+                if self._trip_selecionada and self._trip_selecionada in trip_ids:
+                    col_idx = trip_ids.index(self._trip_selecionada) + 1
+                    row_idx = max(0, self.grid.currentRow()) if self.grid.rowCount() > 0 else 0
+                    self.grid.setCurrentCell(row_idx, col_idx)
         finally:
             self._rebuilding = False
 

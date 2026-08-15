@@ -11,6 +11,7 @@ from sig_bus.ui_geometry import (
     ajustar_ao_disponivel,
     cabe_na_tela,
     divisao_splitter,
+    divisao_vertical,
 )
 
 
@@ -56,6 +57,25 @@ class TestDivisaoSplitter(unittest.TestCase):
     def test_largura_no_limite_dos_minimos(self):
         esq, dir_ = divisao_splitter(620)   # exatamente 340 + 280
         self.assertEqual([esq, dir_], [340, 280])
+
+
+class TestDivisaoVertical(unittest.TestCase):
+    def test_divisao_folgada_respeita_a_fracao_e_soma_o_total(self):
+        topo, base = divisao_vertical(1000)
+        self.assertEqual(topo + base, 1000)
+        self.assertEqual(topo, 450)         # 45% de 1000
+        self.assertGreaterEqual(topo, 170)
+        self.assertGreaterEqual(base, 230)
+
+    def test_altura_no_limite_dos_minimos(self):
+        topo, base = divisao_vertical(400)  # exatamente 170 + 230
+        self.assertEqual([topo, base], [170, 230])
+
+    def test_divisao_apertada_divide_em_vez_de_zerar_um_lado(self):
+        topo, base = divisao_vertical(300)  # não comporta 170 + 230
+        self.assertEqual(topo + base, 300)
+        self.assertGreater(topo, 0)
+        self.assertGreater(base, 0)
 
 
 class TestCabeNaTela(unittest.TestCase):

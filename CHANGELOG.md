@@ -12,6 +12,34 @@ o **Diagrama de Blocos** (alocação de frota). Feed de referência nos testes: 
 
 ---
 
+## 0.8.3 — A matriz de horários sobe para cima do diagrama, e a seleção anda junto nos dois
+
+Esta versão não muda nada no dado nem no cálculo: o feed **GTFS**, a alocação de embarques nos tramos, o **Diagrama de Blocos** e os relatórios em PDF saem exatamente iguais aos da 0.8.2. O que muda é o arranjo do editor único de horários — a matriz deixa de ficar ao lado do diagrama e passa a ficar **acima** dele — e o fato de a viagem selecionada num painel passar a ficar selecionada também no outro (decisões 155-157).
+
+### Do lado de transporte público: a tabela ganha a largura inteira e conversa com o diagrama
+
+- **Matriz em cima, diagrama embaixo (decisão 155).** Lado a lado, os dois painéis disputavam a mesma largura, e é a largura que a matriz precisa: cada viagem é uma coluna, e uma linha com dezenas de partidas ficava espremida num painel de 280 px enquanto o diagrama, que cresce no tempo (eixo horizontal) e não no número de viagens, usava o resto. Empilhados num divisor vertical, a matriz ocupa a largura toda da janela e mostra muito mais colunas de viagem sem rolagem lateral, e o diagrama continua legível na faixa de baixo. A janela "Ajustar Horários" nasce, por isso, mais alta e menos larga (1060×780 no lugar de 1180×620), sempre ajustada à tela de quem abre.
+- **O divisor agora é arrastado para cima ou para baixo.** Puxar para baixo dá mais espaço à tabela; para cima, ao diagrama. Nenhum dos dois colapsa a zero — a matriz nunca fica com menos de 140 px de altura.
+- **Achar na tabela a viagem que se viu no diagrama (decisão 157).** Clicar numa barra do diagrama põe o cursor na coluna daquela viagem na matriz; clicar numa célula da matriz seleciona a viagem correspondente no diagrama. Antes, quem via no diagrama a viagem que estava atrasada tinha de procurar coluna por coluna na matriz pelo `trip_id` do tooltip. A seleção também sobrevive ao redesenho: depois de um `>`/`<`/`+`/`-` ou de uma célula editada, a viagem continua selecionada nos dois painéis, com o mesmo extremo (saída ou chegada) que estava ativo.
+
+### Do lado de código
+
+- **`ui_geometry.py` ganha `divisao_vertical(altura_total, fracao=0.45, min_topo=170, min_base=230)` (decisão 156)**, que delega a `divisao_splitter` em vez de reimplementar a regra: a mesma garantia de soma exata e de divisão proporcional quando os dois mínimos não cabem vale para o eixo vertical. Continua sem depender de Qt.
+- **`schedule_editor_widget.py`** troca `QSplitter(Qt.Orientation.Horizontal)` por `Qt.Orientation.Vertical`, adiciona a matriz antes do painel do diagrama (índice 0 = topo), usa `setMinimumHeight(140)` no lugar de `setMinimumWidth(280)` e `divisao_vertical(620)` no lugar de `divisao_splitter(900)`.
+- **A sincronização é bidirecional e não entra em laço.** `_on_trip_clicked` (sinal `tripClicked` da `BlockScene`) e `_on_grid_current_cell_changed` (sinal `currentCellChanged` da tabela) são guardados por um único sinalizador `_syncing`, além do `_rebuilding` que já existia; a coluna 0 (**Parada**) é ignorada, porque não corresponde a viagem nenhuma. `_trip_selecionada`/`_endpoint_selecionado` guardam a seleção antes do redesenho e a restauram depois — e são zerados quando a viagem some do rascunho, em vez de tentar selecionar um item inexistente. O caminho de escrita continua único: nada disso toca `stop_times`, é só seleção.
+- **`SigBus_dialog.py`** ajusta a chamada de `preparar_janela` da janela de horários para 1060×780. A geometria salva no `QSettings` do QGIS continua na mesma chave e sob a mesma regra da 0.8.2 (só volta a valer se ainda couber na tela).
+
+### Testes
+
+- `sig_bus/test_ui_geometry.py` cobre `divisao_vertical` nos três casos do irmão horizontal: divisão folgada, altura exatamente igual à soma dos mínimos e altura apertada que teria de zerar um lado.
+- `sig_bus/test_schedule_editor_widget.py` ganha regressão da ordem dos painéis (matriz em cima, sem colapsar), da sincronização nos dois sentidos, da coluna 0 ignorada, da ausência de laço entre os dois sinais e da seleção que sobrevive ao redesenho — inclusive quando `set_stop_times` remove a viagem que estava selecionada.
+
+#### Arquivos tocados
+
+`schedule_editor_widget.py`, `ui_geometry.py`, `SigBus_dialog.py`, `test_schedule_editor_widget.py`, `test_ui_geometry.py`, `metadata.txt`, `CHANGELOG.md`, `README.md`, `GUIA_EDICAO_GTFS.md`, `DIAGRAMA_BLOCOS.md`, `ARQUITETURA_CONSTRUIR_GTFS.md`.
+
+---
+
 ## 0.8.2 — A janela "Ajustar horários" cabe na tela do notebook
 
 Esta versão não muda nada no dado nem no cálculo: o feed **GTFS**, a alocação de embarques nos tramos, o **Diagrama de Blocos** e os relatórios em PDF saem exatamente iguais aos da 0.8.1. O que muda é a ergonomia das janelas grandes do plugin em telas menores e a matriz de horários que sumia sufocada pelo texto de instruções (decisões 148-154).

@@ -2468,7 +2468,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("Ajustar Horários — Linha {}".format(route_short_name))
-        preparar_janela(dialog, 1180, 620)
+        preparar_janela(dialog, 1060, 780)
 
         # Geometria escolhida pelo usuário: fica no QSettings do QGIS (nunca no
         # projeto, nunca no feed — decisão 152) e só volta a valer se ainda
