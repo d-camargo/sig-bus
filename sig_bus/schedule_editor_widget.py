@@ -33,6 +33,7 @@ from qgis.PyQt.QtWidgets import (
 from .block_view import BlockView
 from .block_scene import BlockScene
 from .schedule_grid_widget import ScheduleGridWidget
+from .ui_geometry import divisao_splitter
 from .schedule_edit_core import (
     diff_stop_times,
     from_seconds,
@@ -88,10 +89,11 @@ class ScheduleEditorWidget(QWidget):
         layout_main.setContentsMargins(0, 0, 0, 0)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.splitter.setChildrenCollapsible(False)
         layout_main.addWidget(self.splitter)
 
-        painel_diagrama = QWidget()
-        layout_diagrama = QVBoxLayout(painel_diagrama)
+        self.painel_diagrama = QWidget()
+        layout_diagrama = QVBoxLayout(self.painel_diagrama)
         layout_diagrama.setContentsMargins(0, 0, 4, 0)
 
         linha_ajuste = QHBoxLayout()
@@ -106,15 +108,20 @@ class ScheduleEditorWidget(QWidget):
         linha_ajuste.addStretch()
         layout_diagrama.addLayout(linha_ajuste)
 
-        layout_diagrama.addWidget(QLabel(
+        # Sem quebra de linha, é esta frase que dita a largura mínima do painel
+        # e sufoca a matriz ao lado (decisão 150).
+        self.label_instrucoes = QLabel(
             "Clique numa viagem (metade esquerda = saída, metade direita = chegada). "
             "Atalhos: <b>&gt;</b>/<b>&lt;</b> movem só a saída ou a chegada; "
-            "<b>+</b>/<b>-</b> movem a viagem inteira."))
+            "<b>+</b>/<b>-</b> movem a viagem inteira.")
+        self.label_instrucoes.setWordWrap(True)
+        layout_diagrama.addWidget(self.label_instrucoes)
 
         self.schedule_scene = BlockScene()
         self.schedule_view = BlockView()
         self.schedule_view.setScene(self.schedule_scene)
         self.schedule_view.setMinimumHeight(200)
+        self.schedule_view.setMinimumWidth(320)
         layout_diagrama.addWidget(self.schedule_view, 1)
 
         self.label_schedule_status = QLabel("")
@@ -130,9 +137,13 @@ class ScheduleEditorWidget(QWidget):
             stops=self._stops)
         self.grid.itemChanged.connect(self._on_cell_edited)
 
-        self.splitter.addWidget(painel_diagrama)
+        self.grid.setMinimumWidth(280)
+
+        self.splitter.addWidget(self.painel_diagrama)
         self.splitter.addWidget(self.grid)
-        self.splitter.setSizes([500, 400])
+        self.splitter.setStretchFactor(0, 3)
+        self.splitter.setStretchFactor(1, 2)
+        self.splitter.setSizes(divisao_splitter(900))
 
     # ------------------------------------------------------------------
     # API pública

@@ -229,6 +229,59 @@ class TestGtfsEditStopTimes(unittest.TestCase):
         self.assertEqual(cursor.fetchone()[0], "10:00:00")
         conn.close()
 
+    def test_janela_de_horarios_cabe_na_tela_e_lembra_a_geometria(self):
+        """Passos 213/215: a janela nasce clampada à área útil e grava a
+        geometria no QSettings ao terminar (decisões 148 e 152)."""
+        from qgis.PyQt.QtCore import QSettings
+        from qgis.PyQt.QtWidgets import QApplication, QDialog, QWidget
+        from sig_bus.SigBus_dialog import SigBusDialog, _SCHEDULE_DIALOG_GEOM_KEY
+
+        self._app = QApplication.instance() or QApplication([])
+        dirs_data = load_route_stop_times(self.gpkg_path, "101")
+
+        class _DonoFalso(QWidget):
+            def __init__(self, gpkg):
+                super().__init__()
+                self._working_copy = type("WC", (), {"edit_path": gpkg})()
+
+            def _refresh_edit_status(self):
+                pass
+
+        dono = _DonoFalso(self.gpkg_path)
+        abrir = SigBusDialog._open_schedule_edit_dialog.__get__(dono, SigBusDialog)
+
+        settings = QSettings()
+        settings.remove(_SCHEDULE_DIALOG_GEOM_KEY)
+
+        aberto = {}
+
+        def mock_exec(d_self):
+            aberto["dialog"] = d_self
+            d_self.finished.emit(0)       # o usuário fecha a janela
+            return 0
+
+        old_exec = QDialog.exec
+        QDialog.exec = mock_exec
+        try:
+            abrir("101", dirs_data)
+        finally:
+            QDialog.exec = old_exec
+
+        dialog = aberto.get("dialog")
+        self.assertIsNotNone(dialog)
+
+        # Nunca maior que a tela em que abriu (o padrão pedido é 1180x620).
+        area = QApplication.primaryScreen().availableGeometry()
+        self.assertLessEqual(dialog.width(), area.width())
+        self.assertLessEqual(dialog.height(), area.height())
+        self.assertGreater(dialog.width(), 0)
+
+        # A geometria foi para o QSettings — e só para lá.
+        try:
+            self.assertIsNotNone(settings.value(_SCHEDULE_DIALOG_GEOM_KEY))
+        finally:
+            settings.remove(_SCHEDULE_DIALOG_GEOM_KEY)
+
     def test_gtfs_edit_stop_times_validacao_e_exportacao_ciclo_completo(self):
         from osgeo import ogr
         from sig_bus.gtfs_validator import GtfsValidator

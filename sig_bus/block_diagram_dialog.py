@@ -52,6 +52,7 @@ from .block_core import (
 )
 from .block_scene import BlockScene, _DIR_LABEL
 from .block_view import BlockView
+from .ui_geometry import preparar_janela
 
 
 def _terminal_dest(scene, trip):
@@ -76,7 +77,7 @@ class BlockDiagramDialog(QWidget):
         self._schedule = None
 
         self.setWindowTitle('SIG-Bus — Diagrama de Blocos')
-        self.resize(1100, 640)
+        preparar_janela(self, 1100, 640)
         self._build_ui()
         self._populate_routes()
 

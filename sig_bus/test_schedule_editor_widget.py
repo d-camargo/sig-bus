@@ -61,6 +61,22 @@ class TestScheduleEditorWidget(unittest.TestCase):
         # O diagrama nasce com as duas viagens.
         self.assertEqual(set(self.widget.schedule_scene._trip_items), {"T1", "T2"})
 
+    def test_painel_do_diagrama_nao_sufoca_a_matriz(self):
+        """Passo 214: a frase quebra linha, nenhum painel colapsa a zero e a
+        matriz continua visível numa janela estreita (decisões 150 e 151)."""
+        self.assertTrue(self.widget.label_instrucoes.wordWrap())
+        self.assertFalse(self.widget.splitter.childrenCollapsible())
+        self.assertLessEqual(
+            self.widget.painel_diagrama.minimumSizeHint().width(), 420)
+
+        self.widget.resize(780, 500)
+        self.widget.show()
+        self.app.processEvents()
+        try:
+            self.assertGreater(self.widget.grid.width(), 0)
+        finally:
+            self.widget.hide()
+
     # --- escrita pelo diagrama ---------------------------------------
     def test_nudge_maior_move_so_o_extremo_e_a_celula_acompanha(self):
         self._seleciona("T1", endpoint='first')

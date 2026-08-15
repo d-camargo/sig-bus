@@ -32,7 +32,7 @@ from datetime import datetime
 from zipfile import ZipFile
 
 from qgis.PyQt import uic, QtWidgets
-from qgis.PyQt.QtCore import Qt, QDate, QTime
+from qgis.PyQt.QtCore import Qt, QDate, QTime, QSettings
 from qgis.PyQt.QtGui import QFont
 from qgis.PyQt.QtWidgets import (
     QFileDialog,
@@ -102,6 +102,9 @@ QSS_CARD = "background-color: #fcfcfc; color: #2d3748; border: 1px solid #e0e0e0
 QSS_HINT = "color: #4a5568; background-color: transparent; margin-bottom: 8px;"
 QSS_STATUS_OK = "color: #276749; background-color: transparent; font-weight: bold; border: none;"
 QSS_STATUS_ERR = "color: #e53e3e; background-color: transparent; font-style: italic; border: none;"
+
+# Onde a geometria da janela "Ajustar horários" é lembrada (decisão 152).
+_SCHEDULE_DIALOG_GEOM_KEY = "SIG-Bus/schedule_dialog/geometry"
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 
@@ -2456,6 +2459,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         from .schedule_edit_core import validate_draft_times
         from .gtfs_edit_core import apply_stop_times
         from .schedule_editor_widget import ScheduleEditorWidget
+        from .ui_geometry import preparar_janela, restaurar_se_couber
 
         def _aviso(texto):
             if iface is not None and iface.messageBar():
@@ -2464,7 +2468,16 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("Ajustar Horários — Linha {}".format(route_short_name))
-        dialog.resize(1180, 620)
+        preparar_janela(dialog, 1180, 620)
+
+        # Geometria escolhida pelo usuário: fica no QSettings do QGIS (nunca no
+        # projeto, nunca no feed — decisão 152) e só volta a valer se ainda
+        # couber na tela de agora.
+        settings = QSettings()
+        restaurar_se_couber(dialog, settings.value(_SCHEDULE_DIALOG_GEOM_KEY))
+        dialog.finished.connect(
+            lambda _r: settings.setValue(_SCHEDULE_DIALOG_GEOM_KEY,
+                                         dialog.saveGeometry()))
 
         main_layout = QtWidgets.QVBoxLayout(dialog)
 

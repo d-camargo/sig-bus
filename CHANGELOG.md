@@ -12,6 +12,34 @@ o **Diagrama de Blocos** (alocação de frota). Feed de referência nos testes: 
 
 ---
 
+## 0.8.2 — A janela "Ajustar horários" cabe na tela do notebook
+
+Esta versão não muda nada no dado nem no cálculo: o feed **GTFS**, a alocação de embarques nos tramos, o **Diagrama de Blocos** e os relatórios em PDF saem exatamente iguais aos da 0.8.1. O que muda é a ergonomia das janelas grandes do plugin em telas menores e a matriz de horários que sumia sufocada pelo texto de instruções (decisões 148-154).
+
+### Do lado de transporte público: a janela nasce do tamanho que cabe
+
+- **"Ajustar Horários" e "Diagrama de Blocos" não nascem mais maiores que a tela.** Antes as duas abriam sempre no mesmo tamanho fixo (1180×620 e 1100×640) e, em notebook de tela pequena, parte da janela ficava fora da área visível e não dava para maximizar. Agora as duas abrem já ajustadas à área útil da tela em que o QGIS está rodando — em monitor grande o tamanho desejado continua igual — e ganham os botões de maximizar/minimizar.
+- **Só "Ajustar Horários" volta do jeito que foi deixada.** Ao fechar essa janela (aplicando ao feed ou cancelando), o tamanho e a posição são lembrados; reabrindo, ela volta assim — mas só se ainda couber na tela atual. Quem fechou num monitor externo grande e reabre no notebook não recebe de volta uma janela cortada: nesse caso ela nasce no tamanho ajustado à tela menor. O "Diagrama de Blocos" não guarda geometria; ele só ganhou o mesmo ajuste de nascer do tamanho da tela.
+- **A tabela de paradas × viagens volta a aparecer.** No editor único de horários (diagrama de blocos à esquerda, matriz à direita, separados por um divisor arrastável), a frase de instruções no topo do painel esquerdo não quebrava linha e forçava uma largura mínima que sufocava a matriz. Agora a frase quebra linha, o divisor tem mínimos razoáveis para os dois lados e proporção inicial de 3:2 — nenhum dos dois painéis colapsa a zero.
+
+### Do lado de código
+
+- **Novo módulo `sig_bus/ui_geometry.py`**, sem dependência de Qt nas funções de cálculo: `ajustar_ao_disponivel` (nunca devolve mais que a área útil da tela menos uma margem, nunca devolve valor ≤ 0), `divisao_splitter` (reparte uma largura total entre dois painéis respeitando mínimos, dividindo proporcionalmente quando os dois não cabem) e `cabe_na_tela` (testa se um retângulo de janela está contido na área útil). Só duas funções tocam Qt de fato: `preparar_janela` (clampa o tamanho, liga maximizar/minimizar, centraliza — e em ambiente sem tela resolvível apenas redimensiona, sem levantar exceção) e `restaurar_se_couber`.
+- **`SigBus_dialog.py` e `block_diagram_dialog.py`** trocam o `resize()` fixo por `preparar_janela(...)`. `SigBus_dialog.py` também grava a geometria da janela de horários no sinal `finished` (cobre tanto "Aplicar ao feed" quanto "Cancelar"), na chave `SIG-Bus/schedule_dialog/geometry` do `QSettings` do QGIS — mesma política já usada pela configuração de geocodificação: preferência de quem usa mora no perfil do QGIS, **nunca** no arquivo de projeto e **nunca** no `feed_edit.gpkg`.
+- **`schedule_editor_widget.py`** ganha `setWordWrap(True)` no rótulo de instruções e `setChildrenCollapsible(False)` no divisor, com larguras mínimas de 320 px (diagrama) e 280 px (matriz) e divisão inicial calculada por `divisao_splitter(900)`.
+
+### Testes
+
+- `sig_bus/test_ui_geometry.py` (novo) cobre as funções puras e `preparar_janela` sob `QApplication` real.
+- `sig_bus/test_schedule_editor_widget.py` ganha regressão de quebra de linha, divisor não colapsável e larguras mínimas de cada painel.
+- `sig_bus/test_gtfs_edit_stop_times.py` ganha um teste de que a janela de horários cabe na tela e grava a geometria no `QSettings`.
+
+#### Arquivos tocados
+
+`ui_geometry.py` (novo), `SigBus_dialog.py`, `block_diagram_dialog.py`, `schedule_editor_widget.py`, `test_ui_geometry.py` (novo), `test_schedule_editor_widget.py`, `test_gtfs_edit_stop_times.py`, `metadata.txt`, `CHANGELOG.md`, `README.md`, `GUIA_EDICAO_GTFS.md`.
+
+---
+
 ## 0.8.1 — Versão em três algarismos: só a numeração muda
 
 Esta versão **não muda comportamento nenhum do plugin**. Ela existe para alinhar o número de versão do SIG-Bus ao padrão dos demais projetos da VPS, que usam três algarismos (`X.Y.Z`). Nada foi acrescentado, removido ou corrigido no que o plugin faz.
