@@ -221,7 +221,7 @@ route, plus the out-of-order check in the validator) and
 
 To package and release a new version of the SIG-Bus plugin:
 
-1. **Update version:** Edit `sig_bus/metadata.txt` to increment `version=X.Y` (keeping `qgisMinimumVersion=3.34`, `qgisMaximumVersion=4.99` and `supportsQt6=True` — without the maximum, QGIS assumes `3.99` and rejects every QGIS 4.x).
+1. **Update version:** Edit `sig_bus/metadata.txt` to increment `version=X.Y.Z` (keeping `qgisMinimumVersion=3.34`, `qgisMaximumVersion=4.99` and `supportsQt6=True` — without the maximum, QGIS assumes `3.99` and rejects every QGIS 4.x). The third digit is **mandatory**: three-digit versions are the standard across the other projects, and `test_metadata.py` rejects any other format.
 2. **Update Changelog:** Add release notes under a new version heading in `CHANGELOG.md`.
 3. **Run Test Suite:** Execute `pytest` to verify all tests and guards pass.
 4. **Probe the installed QGIS:** Run `python3 sig_bus/scripts/check_qgis_compat.py` against the QGIS you are targeting — it imports every module, builds a `QgsField`, checks the qualified-enum inventory and loads the `.ui`, printing `OK`/`FAIL` per item.
@@ -462,7 +462,7 @@ filtrados por linha, mais a checagem de horário fora de ordem no validador) e
 
 Para empacotar e publicar uma nova versão do plugin SIG-Bus:
 
-1. **Atualizar versão:** Edite `sig_bus/metadata.txt` para incrementar `version=X.Y` (mantendo `qgisMinimumVersion=3.34`, `qgisMaximumVersion=4.99` e `supportsQt6=True` — sem o máximo, o QGIS assume `3.99` e recusa todo QGIS 4.x).
+1. **Atualizar versão:** Edite `sig_bus/metadata.txt` para incrementar `version=X.Y.Z` (mantendo `qgisMinimumVersion=3.34`, `qgisMaximumVersion=4.99` e `supportsQt6=True` — sem o máximo, o QGIS assume `3.99` e recusa todo QGIS 4.x). O terceiro algarismo é **obrigatório**: três algarismos é o padrão dos demais projetos, e o `test_metadata.py` recusa qualquer outro formato.
 2. **Atualizar Changelog:** Registre as novidades em `CHANGELOG.md` sob o cabeçalho da nova versão.
 3. **Executar Testes:** Rode `pytest` no repositório para garantir que todos os testes e guardas passem.
 4. **Sondar o QGIS instalado:** Rode `python3 sig_bus/scripts/check_qgis_compat.py` contra o QGIS alvo — ele importa cada módulo, constrói um `QgsField`, confere o inventário de enums qualificados e carrega o `.ui`, imprimindo `OK`/`FAIL` item a item.

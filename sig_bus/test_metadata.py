@@ -15,6 +15,9 @@ import pytest
 METADATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "metadata.txt")
 CHANGELOG_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CHANGELOG.md")
+# Formato de versão em três algarismos (ex: 0.8.1, 1.0.0) — padrão dos projetos
+# da VPS. É a regra: a guarda e o teste da regra usam este mesmo regex (decisão 146).
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 
 def _read_metadata():
@@ -59,12 +62,21 @@ def test_metadata_version_guard():
 
     version = general.get("version", "").strip()
     assert version, "Versão do plugin não pode ser vazia"
-    # Formato de versão (ex: 0.5, 0.5.1, etc.)
-    assert re.match(r"^\d+\.\d+(\.\d+)?$", version), f"Formato de versão inválido: {version!r}"
+    assert VERSION_RE.match(version), (
+        f"Formato de versão inválido: {version!r} — versão deve ter três "
+        "algarismos, X.Y.Z (padrão dos projetos da VPS; ver decisão 146)")
 
     # Impedir regressão abaixo de 0.4
     parts = [int(p) for p in version.split(".")]
     assert parts >= [0, 4], f"Versão do plugin regrediu para abaixo de 0.4: {version}"
+
+
+def test_version_regex_exige_tres_algarismos():
+    """Exercita a regra, não só o valor que estiver no metadata.txt hoje (decisão 146)."""
+    for aceito in ("0.8.1", "1.0.0", "0.10.2"):
+        assert VERSION_RE.match(aceito), f"deveria aceitar {aceito!r}"
+    for recusado in ("0.8", "1", "0.8.1.2", "0.8.1a"):
+        assert not VERSION_RE.match(recusado), f"deveria recusar {recusado!r}"
 
 
 def _version_tuple(text):

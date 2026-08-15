@@ -12,6 +12,36 @@ o **Diagrama de Blocos** (alocação de frota). Feed de referência nos testes: 
 
 ---
 
+## 0.8.1 — Versão em três algarismos: só a numeração muda
+
+Esta versão **não muda comportamento nenhum do plugin**. Ela existe para alinhar o número de versão do SIG-Bus ao padrão dos demais projetos da VPS, que usam três algarismos (`X.Y.Z`). Nada foi acrescentado, removido ou corrigido no que o plugin faz.
+
+### Do lado de transporte público: nada muda
+
+- A leitura do feed **GTFS** para o GeoPackage, a importação dos dados de demanda por parada, a alocação de embarques nos tramos das linhas, o **Diagrama de Blocos** e os relatórios em PDF continuam exatamente como na 0.8. Os assistentes **Construir GTFS** e **Edição GTFS**, o editor único de horários e o validador/exportador também.
+- Para o analista, a única diferença visível é o número que o Gerenciador de Complementos do QGIS mostra: `0.8.1` no lugar de `0.8`. Feed carregado, projeto salvo e `.zip` exportado com a 0.8 continuam válidos — não há migração a fazer.
+- A faixa de QGIS declarada fica intocada (`qgisMinimumVersion=3.34`, `qgisMaximumVersion=4.99`, `supportsQt6=True`): o plugin continua instalável do LTR 3.34 ao fim da série 4.x.
+
+### Por que três algarismos, e por que `0.8.1` (decisões 143 e 144)
+
+- **A divergência era de omissão, não de regra (decisão 143).** Nenhum arquivo deste repositório mandava usar dois algarismos — o que havia era a *permissão*: a guarda de formato em `test_metadata.py` aceitava `^\d+\.\d+(\.\d+)?$`, com o terceiro algarismo opcional, e o passo 1 do "Ritual de Release" do `README.md`, nas duas metades (EN e PT-BR), ensinava literalmente `version=X.Y`. Com o formato de duas partes escrito no ritual e aceito pelo teste, cada release seguiu o exemplo. Os outros projetos da VPS usam três; o alinhamento é trazer o SIG-Bus para três, não afrouxar os outros.
+- **`0.8.1`, e não `0.8.0` (decisão 144).** A 0.8 **já foi lançada**: a seção dela está fechada neste arquivo e o pacote correspondente já foi publicado. Reescrever aquele número como `0.8.0` renomearia uma versão publicada e desalinharia CHANGELOG, `.zip` e qualquer instalação já feita. A normalização entra, portanto, como um **release de patch novo**, cujo conteúdo é a própria mudança de convenção. Há precedente no próprio arquivo: a `0.5.1` também foi uma versão de três algarismos publicada por cima de uma de dois.
+
+### A história publicada fica como foi publicada (decisão 145)
+
+- As seções `0.8`, `0.7`, `0.6`, `0.5.1`, `0.5`, `v0.4`, `v0.3` e `v0.2` continuam idênticas ao que saiu — inclusive a inconsistência do prefixo "v" nas mais antigas. A regra dos três algarismos vale **daqui para frente**; retroagir seria mentir sobre o que foi publicado. Na prática, o diff deste release só **acrescenta** linhas no topo do arquivo.
+
+### Um só ponto de edição, e uma guarda que impede a recaída (decisões 146 e 147)
+
+- **A convenção passa a ser guarda de teste, não disciplina (decisão 146).** O regex de `test_metadata_version_guard` aperta para exigir os três algarismos, com teste próprio da regra — `0.8.1`, `1.0.0` e `0.10.2` aceitos; `0.8`, `1` e `0.8.1.2` recusados —, porque sem isso o próximo release voltaria a `0.9` por hábito, exatamente como a permissão da decisão 143 produziu a série atual. A guarda de não-regressão (`parts >= [0, 4]`) continua valendo sem ajuste: ela compara tupla de inteiros, e `[0, 8, 1] >= [0, 4]`.
+- **O número mora num lugar só (decisão 147).** Nenhum `.py` do plugin carrega a versão hardcoded: ela vive na linha `version=` de `sig_bus/metadata.txt`, e tanto este CHANGELOG quanto o nome do `.zip` são derivados. Esta versão não cria constante `__version__` nem duplica o número em lugar nenhum. Empacotar o `.zip` e criar a tag `v0.8.1` continuam sendo ritual de release, fora deste registro.
+
+#### Arquivos tocados
+
+`metadata.txt`, `test_metadata.py`, `README.md`, `CHANGELOG.md`.
+
+---
+
 ## 0.8 — Editor único de horários (diagrama + matriz), retorno automático da janela e guardas na edição
 
 Esta versão entrega, de fato, o `ScheduleEditorWidget`: o ciclo da 0.7 deu a peça como pronta sem que ela existisse no repositório — nenhum arquivo, nenhuma menção (decisão 133). Aqui ela é escrita, e vira o editor de horários único das duas telas: a página "Horários" do assistente **Construir GTFS** e a janela "Ajustar horários" da aba **Edição GTFS** passam a compartilhar o mesmo componente, em vez de duas implementações paralelas. Além disso, o fluxo de edição no QGIS fica mais seguro contra descarte acidental de trabalho, e a matriz de horários fica mais legível para quem não decorou o `trip_id`.
