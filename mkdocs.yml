@@ -1,0 +1,65 @@
+site_name: SIG-Bus
+site_description: Plugin QGIS que integra GTFS com dados de demanda de embarque por parada
+site_url: https://sigbus.dcamargo.com.br/
+repo_url: https://github.com/d-camargo/sig-bus
+docs_dir: docs
+
+# `docs/topicos/` é pasta de trabalho dos agentes: existe no disco, é ignorada
+# pelo git e não pode ser publicada (decisão 161).
+exclude_docs: |
+  topicos/
+
+theme:
+  name: material
+  language: pt-BR
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Mudar para o modo escuro
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Mudar para o modo claro
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+plugins:
+  - search:
+      lang: pt
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+      # Âncoras no estilo do GitHub (acento preservado): é assim que os `.md`
+      # canônicos escrevem seus próprios sumários internos.
+      slugify: !!python/object/apply:pymdownx.slugs.slugify {kwds: {case: lower}}
+  - pymdownx.superfences
+  - pymdownx.highlight
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Início: index.md
+  - Visão geral: visao-geral.md
+  - Instalação: instalacao.md
+  - Guias:
+      - Construir um GTFS: guias/construir-gtfs.md
+      - Editar um GTFS: guias/editar-gtfs.md
+      - Paradas por CSV: guias/paradas-csv.md
+  - Referência:
+      - Funcionalidades: referencia/funcionalidades.md
+      - Método de alocação: referencia/metodo.md
+      - Diagrama de Blocos: referencia/diagrama-de-blocos.md
+  - Arquitetura:
+      - Construir GTFS: arquitetura/construir-gtfs.md
+      - Editar GTFS: arquitetura/editar-gtfs.md
+  - Histórico de versões: changelog.md
+  - English: en/overview.md

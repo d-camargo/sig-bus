@@ -8,3 +8,7 @@ CLAUDE.md export-ignore
 AGENTS.md export-ignore
 GEMINI.md export-ignore
 PLAN.md export-ignore
+mkdocs.yml export-ignore
+requirements-docs.txt export-ignore
+scripts/ export-ignore
+docs/ export-ignore

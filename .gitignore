@@ -19,6 +19,16 @@ gtfs_corrigido.zip
 # Pacotes de build (gerados por `make zip`/`make package`, não código-fonte)
 dist/
 
+# Site de documentação: saída do MkDocs e páginas derivadas geradas por
+# `scripts/build_docs_site.py` (decisão 160 — a fonte é `sig_bus/*.md`)
+site/
+docs/guias/
+docs/referencia/
+docs/arquitetura/
+docs/changelog.md
+docs/visao-geral.md
+docs/en/
+
 # Sistema
 .DS_Store
 Thumbs.db

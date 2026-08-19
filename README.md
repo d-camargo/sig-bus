@@ -64,6 +64,8 @@ plugin by CTU GeoForAll Lab (GPL v2+). No external plugin is required.
 
 ## Documentation
 
+The same documentation is browsable at **<https://sigbus.dcamargo.com.br>**. The files in the table below are the offline copy that ships with the plugin.
+
 | Document | What it answers |
 |---|---|
 | [`sig_bus/DOCUMENTACAO.md`](sig_bus/DOCUMENTACAO.md) | What each button does, output layer fields, and known limitations (EN + PT-BR) |
@@ -303,6 +305,8 @@ necessário.
 - **Relatório PDF:** gera um layout de impressão A4 paisagem com o mapa da linha filtrada, legenda, cabeçalho e dois gráficos de barras (ida e volta) dos embarques agrupados por cluster K-means.
 
 ## Documentação
+
+A mesma documentação está navegável em **<https://sigbus.dcamargo.com.br>**. Os arquivos da tabela abaixo são a versão offline que acompanha o plugin.
 
 | Documento | O que responde |
 |---|---|

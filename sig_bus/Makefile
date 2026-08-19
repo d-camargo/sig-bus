@@ -216,6 +216,24 @@ doc:
 	@echo "------------------------------------"
 	cd help; make html
 
+# Site de documentação. O gerador tem de rodar ANTES do MkDocs: as páginas
+# derivadas de `sig_bus/*.md` não estão no git (decisão 160). Os dois alvos
+# rodam de dentro de `sig_bus/`, daí o `cd ..`.
+.PHONY: docs-build docs-serve
+docs-build:
+	@echo
+	@echo "------------------------------------"
+	@echo "Building the documentation site."
+	@echo "------------------------------------"
+	cd .. && python3 scripts/build_docs_site.py && python3 -m mkdocs build --strict
+
+docs-serve:
+	@echo
+	@echo "------------------------------------"
+	@echo "Serving the documentation site."
+	@echo "------------------------------------"
+	cd .. && python3 scripts/build_docs_site.py && python3 -m mkdocs serve
+
 pylint:
 	@echo
 	@echo "-----------------"

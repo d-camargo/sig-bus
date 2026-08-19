@@ -12,7 +12,7 @@ qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 supportsQt6=True
 description=Carrega dados GTFS e dados de demanda no QGIS para análise de transporte público.
-version=0.8.3
+version=0.8.4
 author=Diego Camargo
 email=diegocamargo.bft@gmail.com
 
@@ -30,7 +30,7 @@ hasProcessingProvider=no
 # Tags are comma separated with spaces allowed
 tags=python, gtfs, transporte público, demanda, sig
 
-homepage=https://github.com/d-camargo/sig-bus
+homepage=https://sigbus.dcamargo.com.br
 category=Plugins
 icon=icon.png
 # experimental flag

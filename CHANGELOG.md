@@ -12,6 +12,35 @@ o **Diagrama de Blocos** (alocação de frota). Feed de referência nos testes: 
 
 ---
 
+## 0.8.4 — A documentação vira um site, e o Gerenciador de Plugins passa a apontar para ele
+
+Esta versão não muda **uma linha** do que o plugin faz: o feed **GTFS**, a alocação de embarques nos tramos, o **Diagrama de Blocos** e os relatórios em PDF saem idênticos aos da 0.8.3. O que muda é onde a documentação se lê. Os oito documentos que hoje estão soltos dentro de `sig_bus/` passam a formar um site navegável em **<https://sigbus.dcamargo.com.br>**, montado a cada `push` (decisões 158-164).
+
+### Do lado de transporte público
+
+- **Um endereço para mandar ao analista.** O `homepage=` do `metadata.txt` deixa de apontar para o repositório de código e passa a apontar para o site (decisão 164) — é esse link que o Gerenciador de Complementos do QGIS mostra. Quem recebe a indicação do plugin cai numa página que explica o que ele faz, não num diretório de arquivos `.py`. É a única mudança que o usuário do QGIS percebe nesta versão.
+- **Uma porta de entrada e uma página de instalação.** `docs/index.md` resume em dois parágrafos o que o SIG-Bus junta — o GTFS da operação e a demanda de embarque por parada — e leva, por cartões, a instalação, guias, referência e arquitetura. `docs/instalacao.md` reúne o que estava espalhado no README: a faixa de QGIS suportada, o diretório de plugins em Linux e Windows, a ativação em *Complementos → Gerenciar e Instalar*, e a configuração opcional da geocodificação — inclusive o aviso de que o Nominatim e o Photon impõem **1 s por requisição por host**, então geocodificar uma linha inteira leva minutos por política do serviço, não por lentidão do plugin.
+- **Busca em português e leitura no celular**, que os arquivos `.md` soltos no GitHub não davam: o tema Material traz índice lateral, busca com stemmer PT-BR e modo claro/escuro.
+- **O README continua sendo o resumo** e agora aponta para o site nas duas metades, EN e PT-BR, mantendo a simetria de cabeçalhos que o `test_readme.py` cobra.
+
+### Do lado de código
+
+- **A documentação continua morando em `sig_bus/`; o site a copia no build (decisão 159).** Esses `.md` são lidos offline por quem instalou o plugin — `sig_bus/` é a pasta que se copia para o QGIS — e são linkados pelo README, com link relativo guardado por `test_readme.py`. Movê-los quebraria as duas coisas. Em vez disso, `scripts/build_docs_site.py` copia os nove arquivos canônicos para dentro de `docs/` segundo um mapa explícito (`guias/`, `referencia/`, `arquitetura/`, `changelog.md`) e **reescreve todo link relativo**: alvo `.md` conhecido vira caminho relativo à página de destino, alvo que não é página (`modelo_paradas.csv`, `docs/gtfsfiles.zip`, `docs/PyQGIS_PIBIC.pdf`) vira URL do GitHub, e alvo desconhecido **levanta erro** em vez de gerar link morto. Mesmo espírito do `gtfs_schema.py`: um lugar só descreve cada coisa, o resto deriva. `sig_bus/GUIA_EDICAO_GTFS_RASCUNHO.md` fica de fora — é rascunho superado pelo guia final.
+- **O site é PT-BR, e o inglês entra por uma página só (decisão 162).** O gerador parte o `README.md` no divisor `# SIG-Bus — Plugin QGIS` e produz `visao-geral.md` (metade PT-BR) e `en/overview.md` (metade EN, ponto de entrada em inglês). Montar tradução do site inteiro criaria uma obrigação que ninguém cumpriria; os dois documentos com conteúdo em inglês (`DOCUMENTACAO.md` e `METHODS.md`) já são alcançáveis dali.
+- **As páginas derivadas não vão para o git (decisão 160).** Um segundo commit da mesma prosa dentro de `docs/` apodrece no dia em que alguém edita só um dos dois. O `.gitignore` bloqueia `docs/guias/`, `docs/referencia/`, `docs/arquitetura/`, `docs/changelog.md`, `docs/visao-geral.md`, `docs/en/` e `site/`; quem quiser rodar o site local roda o gerador antes, que é o que os alvos `docs-build`/`docs-serve` do `sig_bus/Makefile` fazem.
+- **MkDocs + Material, não Jekyll (decisão 158).** O repositório é 100% Python; introduzir `bundler` só para o site criaria uma segunda cadeia de ferramentas para manter. `requirements-docs.txt` fixa `mkdocs`, `mkdocs-material` e `pymdown-extensions` em faixas `~=` e diz no topo que é dependência **só do site** — o plugin continua rodando com o Python embutido do QGIS, sem dependência nenhuma.
+- **`docs/` vira o `docs_dir` do MkDocs, sem mover os binários (decisão 161).** `docs/PyQGIS_PIBIC.pdf` e `docs/gtfsfiles.zip` já eram rastreados e já eram linkados pelo README; ficam onde estão e passam a ser baixáveis direto do site. Como `docs/topicos/` é pasta de trabalho de agente (ignorada pelo git, presente no disco), o `mkdocs.yml` traz `exclude_docs: topicos/` — senão o build local publica arquivo que o CI não tem.
+- **Deploy por `actions/deploy-pages`, sem branch `gh-pages` (decisão 163).** O workflow `.github/workflows/docs.yml` roda em `push` para `main` e em `workflow_dispatch`: gera as páginas, faz `mkdocs build --strict` e publica o artefato. `docs/CNAME` guarda o domínio — sem ele o Pages perde o domínio próprio na primeira republicação.
+- **Nada disso entra no `.zip` do plugin:** `mkdocs.yml`, `requirements-docs.txt`, `scripts/` e `docs/` ganharam `export-ignore` no `.gitattributes`, junto dos testes que já saíam.
+
+### Testes
+
+- `sig_bus/test_docs_site.py` gera o site num diretório temporário — sem precisar do MkDocs instalado — e confere que todas as páginas do mapa saem preenchidas, que nenhum link relativo do site aponta para arquivo inexistente, que o rascunho não foi publicado, que as duas páginas do README ficaram cada uma com a sua língua, e que um alvo de link desconhecido estoura em vez de virar link morto.
+
+#### Arquivos tocados
+
+`scripts/build_docs_site.py`, `sig_bus/test_docs_site.py`, `mkdocs.yml`, `requirements-docs.txt`, `docs/index.md`, `docs/instalacao.md`, `docs/CNAME`, `docs/stylesheets/extra.css`, `.github/workflows/docs.yml`, `.gitignore`, `.gitattributes`, `sig_bus/Makefile`, `sig_bus/metadata.txt`, `README.md`, `CHANGELOG.md`.
+
 ## 0.8.3 — A matriz de horários sobe para cima do diagrama, e a seleção anda junto nos dois
 
 Esta versão não muda nada no dado nem no cálculo: o feed **GTFS**, a alocação de embarques nos tramos, o **Diagrama de Blocos** e os relatórios em PDF saem exatamente iguais aos da 0.8.2. O que muda é o arranjo do editor único de horários — a matriz deixa de ficar ao lado do diagrama e passa a ficar **acima** dele — e o fato de a viagem selecionada num painel passar a ficar selecionada também no outro (decisões 155-157).
