@@ -913,6 +913,60 @@ class _AlocacaoTask(QgsTask):
                 level=Qgis.MessageLevel.Warning, duration=8)
 
 
+class _CnefeBuildTask(QgsTask):
+    """Gera a base local do CNEFE de um município, fora da thread da GUI.
+
+    Baixar os *row groups* do município e escrever o SQLite leva ~10 s para
+    uma cidade do porte de Belo Horizonte — tempo demais para congelar o
+    QGIS. O DuckDB só é usado aqui (decisão 166): consultar a base pronta
+    depende apenas do `sqlite3` da biblioteca padrão."""
+
+    def __init__(self, estado, municipio, destino, ao_terminar=None):
+        super().__init__('Gerando base do CNEFE', QgsTask.Flag.CanCancel)
+        self.estado = estado
+        self.municipio = municipio
+        self.destino = destino
+        self.ao_terminar = ao_terminar
+        self.info = None
+        self.error = None
+
+    def run(self):
+        from sig_bus.cnefe_base import construir_base
+        try:
+            self.setProgress(5)
+            # `construir_base` não sabe quantas etapas faltam; cada aviso
+            # empurra a barra um pouco, sem nunca fingir que terminou.
+            self.info = construir_base(
+                self.estado, self.municipio, self.destino,
+                progresso=lambda _msg: self.setProgress(min(95, self.progress() + 20)))
+            self.setProgress(100)
+        except Exception as e:  # noqa: BLE001 — reporta qualquer falha à GUI
+            self.error = str(e)
+            return False
+        return True
+
+    def finished(self, result):
+        if not result:
+            iface.messageBar().pushMessage(
+                "Erro",
+                "Falha ao gerar a base do CNEFE: {}".format(
+                    self.error or "tarefa cancelada ou interrompida."),
+                level=Qgis.MessageLevel.Critical, duration=12)
+            return
+
+        info = self.info or {}
+        iface.messageBar().pushMessage(
+            "Info",
+            "Base do CNEFE gerada em '{}': {} endereços e {} vias de {}/{}.".format(
+                os.path.basename(self.destino), info.get("enderecos", 0),
+                info.get("logradouros", 0), info.get("municipio", ""),
+                info.get("estado", "")),
+            level=Qgis.MessageLevel.Success, duration=12)
+
+        if self.ao_terminar:
+            self.ao_terminar(self.destino)
+
+
 class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
     # Paleta qualitativa (até 10 cores distintas) compartilhada entre o mapa
     # (tramos_demanda categorizado por cluster) e o gráfico de barras, para
@@ -4013,6 +4067,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
     #: do Google (pago, nível-rooftop) e um centro de via adivinhado por
     #: similaridade no Overpass não merecem o mesmo status.
     _PROVIDER_LABELS = {
+        "cnefe": "base CNEFE",
         "google": "Google",
         "nominatim": "Nominatim",
         "photon": "Photon",
@@ -4035,7 +4090,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
 
     @staticmethod
     def _candidate_provider_label(candidate):
-        """Rótulo de procedência do candidato (decisão 70), ou None para os
+        """Rótulo de procedência do candidato (decisão 70 e 173), ou None para os
         provedores que não levam rótulo e para candidatos antigos sem o
         campo `provider`."""
         return SigBusDialog._PROVIDER_LABELS.get(candidate.get("provider"))
@@ -4043,8 +4098,15 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
     @staticmethod
     def _candidate_item_label(candidate):
         """Texto de um candidato na lista do `QInputDialog` de múltiplos
-        candidatos, com a procedência anexada (decisão 70)."""
+        candidatos, com a procedência anexada (decisão 70 e 173)."""
         display = candidate.get("display_name", str(candidate))
+        # O CNEFE grava o desvio como REAL; "± 6 m" lê melhor que "± 6.0 m".
+        desvio = candidate.get("desvio_metros")
+        if desvio is not None:
+            try:
+                display = "{} — ± {:.0f} m".format(display, float(desvio))
+            except (TypeError, ValueError):
+                pass
         origem = SigBusDialog._candidate_provider_label(candidate)
         return "{} ({})".format(display, origem) if origem else display
 
@@ -4156,7 +4218,13 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             set_provider_mode,
             get_google_api_key,
             set_google_api_key,
+            get_cnefe_base_path,
+            set_cnefe_base_path,
+            get_cnefe_habilitado,
+            set_cnefe_habilitado,
+            pasta_padrao_bases,
         )
+        from sig_bus.cnefe_base import BaseInvalida, descrever_base
 
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("Configuração de Geocodificação")
@@ -4199,6 +4267,116 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
             lambda: lbl_teste.setText(self._testar_chave_google(input_key.text().strip()))
         )
 
+        # --- Base de endereços do Brasil (CNEFE/IPEA) ---------------------
+        # A base é opcional e local: sem ela, nada muda. Com ela, endereço
+        # brasileiro do município da agência é resolvido no disco, sem rede e
+        # sem gastar requisição (decisões 165 e 171).
+        lbl_cnefe_titulo = QtWidgets.QLabel("<b>Base de endereços do Brasil (CNEFE/IPEA)</b>")
+
+        check_cnefe = QtWidgets.QCheckBox(
+            "Usar a base local quando o endereço for brasileiro")
+        check_cnefe.setChecked(get_cnefe_habilitado())
+
+        layout_cnefe = QtWidgets.QHBoxLayout()
+        input_cnefe = QtWidgets.QLineEdit()
+        input_cnefe.setPlaceholderText("Arquivo .sqlite da base do município (opcional)")
+        input_cnefe.setText(get_cnefe_base_path())
+        btn_cnefe = QtWidgets.QPushButton("Procurar…")
+
+        lbl_cnefe_status = QtWidgets.QLabel("")
+        lbl_cnefe_status.setWordWrap(True)
+
+        def _atualizar_status_cnefe():
+            caminho = input_cnefe.text().strip()
+            if not caminho:
+                lbl_cnefe_status.setText(
+                    "Nenhuma base configurada — a geocodificação segue por "
+                    "Google/OpenStreetMap, como sempre.")
+                return
+            try:
+                info = descrever_base(caminho)
+            except BaseInvalida as exc:
+                lbl_cnefe_status.setText("<b>Base recusada:</b> {}".format(exc))
+                return
+            lbl_cnefe_status.setText(
+                "{}/{} — {} endereços e {} vias. Dados {}, gerada em {} "
+                "({:.1f} MB).".format(
+                    info.get("municipio", ""), info.get("estado", ""),
+                    info.get("enderecos", 0), info.get("logradouros", 0),
+                    info.get("data_release", ""), info.get("gerado_em", ""),
+                    info.get("tamanho_bytes", 0) / (1024.0 * 1024.0)))
+
+        def _selecionar_cnefe():
+            inicial = input_cnefe.text().strip() or pasta_padrao_bases()
+            caminho, _ = QtWidgets.QFileDialog.getOpenFileName(
+                dialog, "Escolher a base do CNEFE", inicial,
+                "Base do CNEFE (*.sqlite);;Todos os arquivos (*)")
+            if caminho:
+                input_cnefe.setText(caminho)
+                _atualizar_status_cnefe()
+
+        def _gerar_base_cnefe():
+            municipio, ok = QtWidgets.QInputDialog.getText(
+                dialog, "Gerar base do município", "Município:",
+                text=self.input_city.text().strip())
+            if not ok or not municipio.strip():
+                return
+            estado, ok = QtWidgets.QInputDialog.getText(
+                dialog, "Gerar base do município", "Estado (UF):",
+                text=self.input_state.text().strip())
+            if not ok or not estado.strip():
+                return
+
+            try:
+                import duckdb  # noqa: F401 — só interessa se importa
+            except ImportError:
+                QtWidgets.QMessageBox.information(
+                    dialog, "DuckDB não encontrado",
+                    "Gerar a base precisa do DuckDB — <b>usá-la não precisa</b>.\n\n"
+                    "Instale no Python do QGIS:\n    pip install duckdb\n\n"
+                    "Ou gere a base fora do QGIS, em qualquer Python 3.9+:\n"
+                    "    python3 scripts/preparar_base_cnefe.py "
+                    "--estado {} --municipio \"{}\" --saida base.sqlite".format(
+                        estado.strip(), municipio.strip()))
+                return
+
+            pasta = pasta_padrao_bases()
+            if not os.path.isdir(pasta):
+                os.makedirs(pasta)
+            sugestao = os.path.join(
+                pasta, "cnefe_{}.sqlite".format(
+                    municipio.strip().lower().replace(" ", "_")))
+            destino, _ = QtWidgets.QFileDialog.getSaveFileName(
+                dialog, "Salvar a base do CNEFE", sugestao, "Base do CNEFE (*.sqlite)")
+            if not destino:
+                return
+            if os.path.exists(destino):
+                # `construir_base` recusa destino existente de propósito, para
+                # nunca destruir um arquivo por engano.
+                QtWidgets.QMessageBox.warning(
+                    dialog, "Arquivo já existe",
+                    "Já existe um arquivo em {}. Apague-o ou escolha outro "
+                    "nome.".format(destino))
+                return
+
+            def _pronto(caminho):
+                input_cnefe.setText(caminho)
+                _atualizar_status_cnefe()
+
+            task = _CnefeBuildTask(estado.strip(), municipio.strip(), destino, _pronto)
+            self._cnefe_task = task
+            QgsApplication.taskManager().addTask(task)
+
+        btn_cnefe.clicked.connect(_selecionar_cnefe)
+        input_cnefe.editingFinished.connect(_atualizar_status_cnefe)
+        layout_cnefe.addWidget(input_cnefe)
+        layout_cnefe.addWidget(btn_cnefe)
+
+        btn_gerar_cnefe = QtWidgets.QPushButton("Gerar base do município…")
+        btn_gerar_cnefe.clicked.connect(_gerar_base_cnefe)
+
+        _atualizar_status_cnefe()
+
         layout.addWidget(lbl_provider)
         layout.addWidget(combo_provider)
         layout.addSpacing(10)
@@ -4207,6 +4385,12 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         layout.addWidget(lbl_aviso)
         layout.addWidget(btn_testar)
         layout.addWidget(lbl_teste)
+        layout.addSpacing(10)
+        layout.addWidget(lbl_cnefe_titulo)
+        layout.addWidget(check_cnefe)
+        layout.addLayout(layout_cnefe)
+        layout.addWidget(lbl_cnefe_status)
+        layout.addWidget(btn_gerar_cnefe)
         layout.addSpacing(15)
 
         layout_botoes = QtWidgets.QHBoxLayout()
@@ -4221,8 +4405,14 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         if dialog.exec():
             selected_mode = combo_provider.currentData()
             entered_key = input_key.text().strip()
+            cnefe_path = input_cnefe.text().strip()
             set_provider_mode(selected_mode)
             set_google_api_key(entered_key)
+            set_cnefe_base_path(cnefe_path)
+            set_cnefe_habilitado(check_cnefe.isChecked())
+            # A base pode ter mudado: descarta conexão e índice em cache.
+            from sig_bus.cnefe_geocoder import CnefeGeocoder
+            CnefeGeocoder.esquecer()
 
     @staticmethod
     def _testar_chave_google(chave):
@@ -4294,6 +4484,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
         }
 
         localizadas = 0
+        da_base_local = 0
         nao_localizadas = 0
         falharam = []
 
@@ -4333,6 +4524,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 else:
                     self._set_stop_row_localizado(row_data, address, candidate)
                     localizadas += 1
+                    if candidate.get("provider") == "cnefe":
+                        da_base_local += 1
             else:
                 items = [self._candidate_item_label(c) for c in results]
                 item, ok = QInputDialog.getItem(
@@ -4360,6 +4553,8 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     else:
                         self._set_stop_row_localizado(row_data, address, candidate)
                         localizadas += 1
+                        if candidate.get("provider") == "cnefe":
+                            da_base_local += 1
                 else:
                     row_data["lat"] = None
                     row_data["lon"] = None
@@ -4380,6 +4575,7 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                     row_data["checkbox_reuse"].setChecked(False)
 
         if iface and iface.messageBar():
+            base_info = f" ({da_base_local} da base local)" if da_base_local > 0 else ""
             if localizadas == 0 and nao_localizadas > 0:
                 # A causa medida (decisão 56) é grafia do logradouro, não
                 # município errado — a mensagem cita os endereços que falharam
@@ -4400,13 +4596,13 @@ class SigBusDialog(QtWidgets.QDialog, FORM_CLASS):
                 resto = f" (e mais {len(falharam) - 3})" if len(falharam) > 3 else ""
                 msg = (
                     f"Geocodificação concluída ({city}/{state}): "
-                    f"{localizadas} parada(s) localizada(s), {nao_localizadas} não localizada(s) ({exemplos}{resto})."
+                    f"{localizadas} parada(s) localizada(s){base_info}, {nao_localizadas} não localizada(s) ({exemplos}{resto})."
                 )
                 nivel = Qgis.MessageLevel.Warning
             else:
                 msg = (
                     f"Geocodificação concluída ({city}/{state}): "
-                    f"{localizadas} parada(s) localizada(s), {nao_localizadas} não localizada(s)."
+                    f"{localizadas} parada(s) localizada(s){base_info}, {nao_localizadas} não localizada(s)."
                 )
                 nivel = Qgis.MessageLevel.Info
 

@@ -6,6 +6,7 @@
  ***************************************************************************/
 """
 
+import os
 import re
 import time
 import json
@@ -17,10 +18,14 @@ from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
 from .address_format import parse_address
 from .street_index import corrigir
+from .cnefe_base import BaseInvalida, descrever_base
+from .cnefe_geocoder import CnefeGeocoder
+from .cnefe_padrao import normalizar_municipio, normalizar_texto, normalizar_uf
 from .geocoding_config import (
     NOMINATIM_SEARCH_URL, PHOTON_SEARCH_URL, GOOGLE_SEARCH_URL, HOSTS_COM_LIMITE,
     USER_AGENT, INTERVALO_MINIMO_SEGUNDOS, LOG_TAG,
     get_provider_mode, get_google_api_key,
+    get_cnefe_base_path, get_cnefe_habilitado,
 )
 
 
@@ -672,6 +677,58 @@ def _degrau_corretor(endereco, contexto):
     }]
 
 
+#: (caminho, mtime) -> procedência da base. `descrever_base` conta as linhas
+#: das duas tabelas; sem cache isso rodaria uma vez por parada do lote.
+_CACHE_BASE = {}
+
+#: País aceito para consultar o CNEFE. Vazio conta como Brasil porque o campo
+#: País do assistente Construir GTFS é fixo em "Brasil".
+PAISES_BRASIL = ("", "BRASIL", "BRAZIL", "BR")
+
+
+def _descrever_base_cacheado(caminho):
+    try:
+        chave = (caminho, os.path.getmtime(caminho))
+    except OSError:
+        return None
+    if chave not in _CACHE_BASE:
+        try:
+            _CACHE_BASE[chave] = descrever_base(caminho)
+        except BaseInvalida:
+            _CACHE_BASE[chave] = None
+    return _CACHE_BASE[chave]
+
+
+def _base_cnefe_aplicavel(contexto):
+    """Caminho da base a usar, ou `None` (decisão 171).
+
+    O CNEFE só entra quando o país é o Brasil **e** o município da base é o
+    município da agência. Base de outro município nunca é usada: um acerto
+    silencioso na cidade errada é pior que nenhum acerto.
+    """
+    caminho = get_cnefe_base_path()
+    if not caminho or not get_cnefe_habilitado():
+        return None
+
+    contexto = contexto or {}
+    if normalizar_texto(contexto.get("country")) not in PAISES_BRASIL:
+        return None
+
+    info = _descrever_base_cacheado(caminho)
+    if not info:
+        return None
+
+    cidade = normalizar_municipio(contexto.get("city"))
+    if not cidade or cidade != normalizar_municipio(info.get("municipio")):
+        return None
+
+    uf = normalizar_uf(contexto.get("state"))
+    if uf and uf != normalizar_uf(info.get("estado")):
+        return None
+
+    return caminho
+
+
 def geocode(endereco, contexto=None):
     """
     Ponto de entrada da geocodificação: percorre os provedores em ordem e
@@ -681,6 +738,14 @@ def geocode(endereco, contexto=None):
     passa a ser Google → Nominatim → Photon (decisão 63).
     Sem chave, ou com o modo `"osm"`, a lista fica (Nominatim → Photon) e nenhuma
     requisição sai para `maps.googleapis.com`.
+
+    Antes de tudo, se o endereço for brasileiro e houver base local do CNEFE
+    do município da agência (`_base_cnefe_aplicavel`, decisão 171), a base é
+    consultada primeiro: acerto com número devolve na hora, sem gastar
+    requisição nenhuma (decisão 168). Acerto que só localiza a **via** fica
+    guardado e só é usado se todo o resto voltar vazio — o centroide de uma
+    avenida longa pode ficar a quilômetros do ponto certo, e nesse caso um
+    acerto com número do Nominatim é melhor.
 
     Com todos os provedores vazios e `viewbox` no contexto, ainda roda o
     corretor de grafia sobre o banco vivo do OSM (`_degrau_corretor`, decisão 68).
@@ -700,6 +765,20 @@ def geocode(endereco, contexto=None):
     modo = get_provider_mode()
     chave = get_google_api_key()
 
+    # A base local é acréscimo, nunca regressão: qualquer problema aqui deixa
+    # a cascata exatamente como era antes dela existir.
+    de_via = []
+    try:
+        caminho_cnefe = _base_cnefe_aplicavel(contexto)
+        if caminho_cnefe:
+            candidatos = CnefeGeocoder.geocode(endereco, contexto, caminho_cnefe)
+            if candidatos:
+                if candidatos[0].get("preciso"):
+                    return candidatos
+                de_via = candidatos
+    except Exception:
+        de_via = []
+
     provedores = []
     if modo == "auto" and chave:
         provedores.append(GoogleGeocoder)
@@ -715,6 +794,9 @@ def geocode(endereco, contexto=None):
             resultados = []
         if resultados:
             return resultados
+
+    if de_via:
+        return de_via
 
     if contexto and contexto.get("viewbox"):
         try:

@@ -13,6 +13,9 @@ sys.path.insert(0, '/home/diego/projects/sig-bus')
 from sig_bus.geocoding_config import (
     get_provider_mode, set_provider_mode,
     get_google_api_key, set_google_api_key,
+    get_cnefe_base_path, set_cnefe_base_path,
+    get_cnefe_habilitado, set_cnefe_habilitado,
+    pasta_padrao_bases,
 )
 
 
@@ -85,6 +88,69 @@ class TestGoogleApiKey(unittest.TestCase):
         self.assertEqual(get_google_api_key(settings=s), "")
 
 
+class TestCnefeBasePath(unittest.TestCase):
+    """Caminho da base local do CNEFE (passo 7)."""
+
+    def test_default_e_vazio(self):
+        self.assertEqual(get_cnefe_base_path(settings=_SettingsFalso()), "")
+
+    def test_ida_e_volta(self):
+        s = _SettingsFalso()
+        set_cnefe_base_path("/caminho/para/cnefe_bh.sqlite", settings=s)
+        self.assertEqual(get_cnefe_base_path(settings=s), "/caminho/para/cnefe_bh.sqlite")
+
+    def test_caminho_so_com_espacos_conta_como_ausente(self):
+        s = _SettingsFalso({"SIG-Bus/geocoding/cnefe_base_path": "   "})
+        self.assertEqual(get_cnefe_base_path(settings=s), "")
+
+        s2 = _SettingsFalso()
+        set_cnefe_base_path("   ", settings=s2)
+        self.assertEqual(get_cnefe_base_path(settings=s2), "")
+
+    def test_none_conta_como_ausente(self):
+        s = _SettingsFalso({"SIG-Bus/geocoding/cnefe_base_path": None})
+        self.assertEqual(get_cnefe_base_path(settings=s), "")
+
+    def test_valor_nao_textual_conta_como_ausente(self):
+        s = _SettingsFalso({"SIG-Bus/geocoding/cnefe_base_path": object()})
+        self.assertEqual(get_cnefe_base_path(settings=s), "")
+
+
+class TestCnefeHabilitado(unittest.TestCase):
+    """Chave liga/desliga da base local (passo 7).
+
+    O padrão é ligado, e isso não muda nada para quem não tem base: sem
+    caminho configurado a base nunca é consultada."""
+
+    def test_default_e_ligado(self):
+        self.assertTrue(get_cnefe_habilitado(settings=_SettingsFalso()))
+
+    def test_ida_e_volta(self):
+        s = _SettingsFalso()
+        set_cnefe_habilitado(False, settings=s)
+        self.assertFalse(get_cnefe_habilitado(settings=s))
+        set_cnefe_habilitado(True, settings=s)
+        self.assertTrue(get_cnefe_habilitado(settings=s))
+
+    def test_texto_do_ini_conta_como_booleano(self):
+        """O `QSettings` em arquivo `.ini` devolve a string 'false'."""
+        s = _SettingsFalso({"SIG-Bus/geocoding/cnefe_habilitado": "false"})
+        self.assertFalse(get_cnefe_habilitado(settings=s))
+        s = _SettingsFalso({"SIG-Bus/geocoding/cnefe_habilitado": "true"})
+        self.assertTrue(get_cnefe_habilitado(settings=s))
+
+    def test_valor_estranho_volta_ao_padrao(self):
+        s = _SettingsFalso({"SIG-Bus/geocoding/cnefe_habilitado": object()})
+        self.assertTrue(get_cnefe_habilitado(settings=s))
+
+
+class TestPastaPadraoBases(unittest.TestCase):
+
+    def test_termina_em_sig_bus_cnefe(self):
+        caminho = pasta_padrao_bases()
+        self.assertTrue(caminho.endswith(os.path.join("sig_bus", "cnefe")), caminho)
+
+
 class TestQSettingsReal(unittest.TestCase):
     """Mesmo ida-e-volta contra um `QSettings` de verdade, em arquivo temporário
     — o dublê acima não provaria que a chave/formato batem com o Qt."""
@@ -103,12 +169,17 @@ class TestQSettingsReal(unittest.TestCase):
 
             set_provider_mode("osm", settings=s)
             set_google_api_key("AIza-CHAVE-DE-TESTE", settings=s)
+            set_cnefe_base_path("/caminho/para/cnefe_bh.sqlite", settings=s)
+            set_cnefe_habilitado(False, settings=s)
             s.sync()
 
             s2 = QSettings(caminho, QSettings.Format.IniFormat)
             self.assertEqual(get_provider_mode(settings=s2), "osm")
             self.assertEqual(get_google_api_key(settings=s2), "AIza-CHAVE-DE-TESTE")
+            self.assertEqual(get_cnefe_base_path(settings=s2), "/caminho/para/cnefe_bh.sqlite")
+            self.assertFalse(get_cnefe_habilitado(settings=s2))
 
 
 if __name__ == '__main__':
     unittest.main()
+

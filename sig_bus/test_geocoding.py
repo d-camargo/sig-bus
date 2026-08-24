@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import contextlib
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 import os
@@ -913,6 +915,53 @@ class TestGeocodingConfigUI(unittest.TestCase):
         from sig_bus.SigBus_dialog import SigBusDialog
         self.assertTrue(hasattr(SigBusDialog, '_open_geocoding_config'))
 
+    @patch('sig_bus.geocoding_config.set_provider_mode')
+    @patch('sig_bus.geocoding_config.set_google_api_key')
+    @patch('sig_bus.geocoding_config.set_cnefe_habilitado')
+    @patch('sig_bus.geocoding_config.set_cnefe_base_path')
+    @patch('sig_bus.geocoding_config.get_provider_mode', return_value='osm')
+    @patch('sig_bus.geocoding_config.get_cnefe_habilitado', return_value=True)
+    @patch('sig_bus.geocoding_config.get_cnefe_base_path',
+           return_value='/caminho/cnefe_bh.sqlite')
+    @patch('qgis.PyQt.QtWidgets.QDialog.exec', return_value=True)
+    def test_open_geocoding_config_salva_cnefe(
+            self, mock_exec, mock_get_path, mock_get_hab, mock_get_mode,
+            mock_set_path, mock_set_hab, mock_set_key, mock_set_mode):
+        """Passo 9: o OK grava as duas chaves novas da base local.
+
+        O método só usa `self` como pai do diálogo, então um `QDialog` real
+        basta — `__new__` sem `__init__` daria `RuntimeError` no construtor do
+        Qt, e o remédio é o teste montar um pai de verdade, não o código de
+        produção virar defensivo."""
+        from qgis.PyQt.QtWidgets import QApplication, QDialog
+        from sig_bus.SigBus_dialog import SigBusDialog
+        app = QApplication.instance() or QApplication([])  # noqa: F841
+        pai = QDialog()
+        SigBusDialog._open_geocoding_config(pai)
+        mock_set_path.assert_called_with('/caminho/cnefe_bh.sqlite')
+        mock_set_hab.assert_called_with(True)
+
+    @patch('qgis.PyQt.QtWidgets.QDialog.exec', return_value=True)
+    def test_config_nao_oferece_cnefe_como_provedor(self, mock_exec):
+        """Decisão 171: o CNEFE é degrau automático para endereço brasileiro,
+        nunca um modo de provedor que o usuário escolhe no lugar do OSM."""
+        from sig_bus.geocoding_config import get_provider_mode, set_provider_mode
+
+        class _S:
+            def __init__(self):
+                self.d = {}
+
+            def value(self, k, default=None):
+                return self.d.get(k, default)
+
+            def setValue(self, k, v):
+                self.d[k] = v
+
+        s = _S()
+        set_provider_mode('cnefe', settings=s)
+        self.assertEqual(get_provider_mode(settings=s), 'auto')
+
+
 
 @unittest.skipUnless(_QGIS_REAL, _SEM_QGIS)
 class TestProviderOrigin(unittest.TestCase):
@@ -921,10 +970,32 @@ class TestProviderOrigin(unittest.TestCase):
 
     def test_rotulo_por_provider(self):
         from sig_bus.SigBus_dialog import SigBusDialog
+        self.assertEqual(SigBusDialog._candidate_provider_label({"provider": "cnefe"}), "base CNEFE")
         self.assertEqual(SigBusDialog._candidate_provider_label({"provider": "google"}), "Google")
         self.assertEqual(SigBusDialog._candidate_provider_label({"provider": "osm-overpass"}), "OSM")
         self.assertEqual(SigBusDialog._candidate_provider_label({"provider": "nominatim"}), "Nominatim")
         self.assertEqual(SigBusDialog._candidate_provider_label({"provider": "photon"}), "Photon")
+
+    def test_rotulo_cnefe_e_desvio_metros(self):
+        """Decisão 173 (passo 10): _candidate_item_label exibe ' — ± N m' e '(base CNEFE)'."""
+        from sig_bus.SigBus_dialog import SigBusDialog
+        cand_cnefe = {"display_name": "Av. Amazonas, 1020", "provider": "cnefe", "desvio_metros": 6}
+        self.assertEqual(
+            SigBusDialog._candidate_item_label(cand_cnefe),
+            "Av. Amazonas, 1020 — ± 6 m (base CNEFE)"
+        )
+        # O desvio vem do SQLite como REAL: o rótulo arredonda para inteiro.
+        cand_float = {"display_name": "Av. Amazonas, 1020", "provider": "cnefe",
+                      "desvio_metros": 6.0}
+        self.assertEqual(
+            SigBusDialog._candidate_item_label(cand_float),
+            "Av. Amazonas, 1020 — ± 6 m (base CNEFE)"
+        )
+        cand_sem_desvio = {"display_name": "Av. Amazonas, 1020", "provider": "cnefe"}
+        self.assertEqual(
+            SigBusDialog._candidate_item_label(cand_sem_desvio),
+            "Av. Amazonas, 1020 (base CNEFE)"
+        )
 
     def test_candidato_antigo_sem_provider_nao_quebra(self):
         from sig_bus.SigBus_dialog import SigBusDialog
@@ -979,6 +1050,51 @@ class TestProviderOrigin(unittest.TestCase):
             self.assertIn('"Rua Inexistente ZZZ, 999"', args[1])
             self.assertEqual(kwargs.get("level"), Qgis.MessageLevel.Warning)
 
+    def test_mensagem_fim_de_lote_com_base_local(self):
+        """Passo 10 (decisão 173): mensagem de fim de lote informa paradas da base local."""
+        from sig_bus.SigBus_dialog import SigBusDialog, Qgis
+
+        dialog = SigBusDialog.__new__(SigBusDialog)
+        dialog.input_city = MagicMock()
+        dialog.input_city.text.return_value = "Belo Horizonte"
+        dialog.input_state = MagicMock()
+        dialog.input_state.text.return_value = "MG"
+        dialog.input_country = MagicMock()
+        dialog.input_country.text.return_value = "Brasil"
+        dialog._working_copy = None
+
+        row1 = {"input_address": MagicMock(), "lat": None, "lon": None}
+        row1["input_address"].text.return_value = "Av. Amazonas, 1000"
+        dialog.stop_rows = [row1]
+
+        def mock_set_status(r, status, ok):
+            pass
+        def mock_set_localizado(r, addr, cand):
+            r["lat"] = float(cand["lat"])
+            r["lon"] = float(cand["lon"])
+        dialog._set_stop_row_status = mock_set_status
+        dialog._set_stop_row_localizado = mock_set_localizado
+
+        mock_bar = MagicMock()
+        mock_iface = MagicMock()
+        mock_iface.messageBar.return_value = mock_bar
+
+        with patch('sig_bus.SigBus_dialog.iface', mock_iface), \
+             patch('sig_bus.geocoding.geocode') as mock_geo, \
+             patch('sig_bus.geocoding.NominatimGeocoder.city_bbox', return_value="-44.0,-20.0,-43.8,-19.8"):
+
+            mock_geo.return_value = [{
+                "lat": -19.92, "lon": -43.94,
+                "display_name": "Av. Amazonas, 1020",
+                "provider": "cnefe",
+                "desvio_metros": 6,
+            }]
+            dialog._geocode_stops()
+
+            mock_bar.pushMessage.assert_called_once()
+            args, kwargs = mock_bar.pushMessage.call_args
+            self.assertIn("1 parada(s) localizada(s) (1 da base local)", args[1])
+
     def test_pista_sem_chave_oferece_configurar(self):
         """Passo 115: sem chave, a mensagem de fim de lote oferece a saída paga."""
         from sig_bus.SigBus_dialog import SigBusDialog
@@ -1012,6 +1128,164 @@ class TestProviderOrigin(unittest.TestCase):
         GoogleGeocoder.ultimo_erro = None
         with patch('sig_bus.geocoding_config.get_google_api_key', return_value="CHAVE"):
             self.assertEqual(SigBusDialog._pista_de_geocodificacao(), "")
+
+
+
+class TestCascataCnefe(unittest.TestCase):
+    """Passo 8: onde a base local entra na cascata (decisões 168 e 171).
+
+    Roda contra uma base SQLite fabricada de verdade — sem rede e sem
+    `duckdb`, como manda o critério de aceite."""
+
+    def setUp(self):
+        from sig_bus.test_cnefe_geocoder import _montar_base
+        from sig_bus.cnefe_geocoder import CnefeGeocoder
+        import sig_bus.geocoding as geocoding
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = _montar_base(os.path.join(self._tmp.name, "bh.sqlite"))
+        self.geocoding = geocoding
+        self.CnefeGeocoder = CnefeGeocoder
+        geocoding._CACHE_BASE.clear()
+        CnefeGeocoder.esquecer()
+
+        self.contexto_bh = {"city": "Belo Horizonte", "state": "MG",
+                            "country": "Brasil"}
+
+    def tearDown(self):
+        self.geocoding._CACHE_BASE.clear()
+        self.CnefeGeocoder.esquecer()
+        self._tmp.cleanup()
+
+    def _patches(self, caminho=None, habilitado=True):
+        """Liga a base (ou não) e mantém Google/Nominatim/Photon mudos."""
+        return [
+            patch.object(self.geocoding, 'get_cnefe_base_path',
+                         return_value=caminho if caminho is not None else self.base),
+            patch.object(self.geocoding, 'get_cnefe_habilitado',
+                         return_value=habilitado),
+            patch.object(self.geocoding, 'get_provider_mode', return_value='osm'),
+            patch.object(self.geocoding, 'get_google_api_key', return_value=''),
+        ]
+
+    def _rodar(self, endereco, contexto, patches, nominatim=None, photon=None):
+        """Roda `geocode` registrando se os provedores online foram chamados."""
+        chamados = []
+
+        def _nominatim(end, ctx):
+            chamados.append('nominatim')
+            return nominatim or []
+
+        def _photon(end, ctx):
+            chamados.append('photon')
+            return photon or []
+
+        with contextlib.ExitStack() as pilha:
+            for pat in patches:
+                pilha.enter_context(pat)
+            pilha.enter_context(patch.object(
+                self.geocoding.NominatimGeocoder, 'geocode', staticmethod(_nominatim)))
+            pilha.enter_context(patch.object(
+                self.geocoding.PhotonGeocoder, 'geocode', staticmethod(_photon)))
+            resultado = self.geocoding.geocode(endereco, contexto)
+        return resultado, chamados
+
+    def test_acerto_preciso_curto_circuita_a_cascata(self):
+        """Endereço com número resolvido na base: nenhum provedor online é
+        chamado — o lote não gasta uma requisição sequer."""
+        r, chamados = self._rodar(
+            "Avenida Amazonas, 1020, Centro", self.contexto_bh, self._patches())
+        self.assertEqual(len(r), 1)
+        self.assertEqual(r[0]["provider"], "cnefe")
+        self.assertEqual(r[0]["tipo_resultado"], "dn03")
+        self.assertEqual(chamados, [])
+
+    def test_pais_estrangeiro_nao_abre_a_base(self):
+        """Decisão 171: fora do Brasil, Google/OSM como sempre."""
+        chamou = []
+        patches = self._patches() + [
+            patch.object(self.geocoding.CnefeGeocoder, 'geocode',
+                         staticmethod(lambda *a, **k: chamou.append(a) or [])),
+        ]
+        contexto = {"city": "Belo Horizonte", "state": "MG", "country": "Portugal"}
+        r, chamados = self._rodar("Avenida Amazonas, 1020", contexto, patches)
+        self.assertEqual(chamou, [], "a base foi consultada para endereço estrangeiro")
+        self.assertEqual(chamados, ['nominatim', 'photon'])
+        self.assertEqual(r, [])
+
+    def test_municipio_divergente_nao_abre_a_base(self):
+        """Base de outro município não é usada: acerto silencioso na cidade
+        errada é pior que nenhum acerto."""
+        chamou = []
+        patches = self._patches() + [
+            patch.object(self.geocoding.CnefeGeocoder, 'geocode',
+                         staticmethod(lambda *a, **k: chamou.append(a) or [])),
+        ]
+        contexto = {"city": "Contagem", "state": "MG", "country": "Brasil"}
+        r, chamados = self._rodar("Avenida Amazonas, 1020", contexto, patches)
+        self.assertEqual(chamou, [])
+        self.assertEqual(chamados, ['nominatim', 'photon'])
+
+    def test_estado_divergente_nao_abre_a_base(self):
+        chamou = []
+        patches = self._patches() + [
+            patch.object(self.geocoding.CnefeGeocoder, 'geocode',
+                         staticmethod(lambda *a, **k: chamou.append(a) or [])),
+        ]
+        contexto = {"city": "Belo Horizonte", "state": "SP", "country": "Brasil"}
+        self._rodar("Avenida Amazonas, 1020", contexto, patches)
+        self.assertEqual(chamou, [])
+
+    def test_desligado_na_configuracao_nao_abre_a_base(self):
+        chamou = []
+        patches = self._patches(habilitado=False) + [
+            patch.object(self.geocoding.CnefeGeocoder, 'geocode',
+                         staticmethod(lambda *a, **k: chamou.append(a) or [])),
+        ]
+        self._rodar("Avenida Amazonas, 1020", self.contexto_bh, patches)
+        self.assertEqual(chamou, [])
+
+    def test_acerto_de_via_perde_para_o_online(self):
+        """Centroide de via só vale se o resto falhar: um acerto com número do
+        Nominatim é melhor que o meio de uma avenida longa."""
+        online = [{"lat": "-19.93", "lon": "-43.93",
+                   "display_name": "Rua Só Centroide, 10", "provider": "nominatim"}]
+        r, chamados = self._rodar(
+            "Rua Só Centroide", self.contexto_bh, self._patches(), nominatim=online)
+        self.assertEqual(chamados, ['nominatim'])
+        self.assertEqual(r[0]["provider"], "nominatim")
+
+    def test_acerto_de_via_vale_quando_o_online_volta_vazio(self):
+        r, chamados = self._rodar(
+            "Rua Só Centroide", self.contexto_bh, self._patches())
+        self.assertEqual(chamados, ['nominatim', 'photon'])
+        self.assertEqual(len(r), 1)
+        self.assertEqual(r[0]["provider"], "cnefe")
+        self.assertEqual(r[0]["tipo_resultado"], "dl04")
+        self.assertFalse(r[0]["preciso"])
+
+    def test_sem_base_configurada_a_cascata_e_a_de_sempre(self):
+        """Não-regressão: com o `QSettings` sem caminho, `geocode` se comporta
+        byte a byte como na 0.8.4."""
+        chamou = []
+        patches = self._patches(caminho='') + [
+            patch.object(self.geocoding.CnefeGeocoder, 'geocode',
+                         staticmethod(lambda *a, **k: chamou.append(a) or [])),
+        ]
+        r, chamados = self._rodar(
+            "Avenida Amazonas, 1020", self.contexto_bh, patches)
+        self.assertEqual(chamou, [])
+        self.assertEqual(chamados, ['nominatim', 'photon'])
+        self.assertEqual(r, [])
+
+    def test_base_invalida_nao_derruba_a_cascata(self):
+        caminho = os.path.join(self._tmp.name, "lixo.sqlite")
+        with open(caminho, "wb") as fh:
+            fh.write(b"isto nao e um sqlite")
+        r, chamados = self._rodar(
+            "Avenida Amazonas, 1020", self.contexto_bh, self._patches(caminho=caminho))
+        self.assertEqual(chamados, ['nominatim', 'photon'])
+        self.assertEqual(r, [])
 
 
 if __name__ == '__main__':

@@ -45,3 +45,8 @@ docs/topicos/
 .planexec/
 .claude/
 .idea/
+
+# --- Bases locais do CNEFE (dado gerado, nao codigo-fonte) ---
+# Sao geradas por scripts/preparar_base_cnefe.py e ocupam dezenas de MB
+# (44 MB so Belo Horizonte). Nunca entram no repositorio nem no .zip do plugin.
+*.sqlite
